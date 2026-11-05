@@ -1,0 +1,7 @@
+# keep LF in the repository, native endings in the working copy
+* text=auto
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.ico binary
+*.ttf binary
