@@ -1,0 +1,171 @@
+# Dental Desk — offline shell for Dentist Plus
+
+A Windows desktop app that keeps a dental clinic working when the internet or the power goes down —
+an offline shell over the clinic's cloud system, **Dentist Plus**.
+
+Built for a private dental clinic that loses electricity and connectivity several times a month.
+One `.exe`, installs itself, no admin rights, no server.
+
+![Calendar](docs/screenshots/01-calendar.png)
+
+---
+
+## The problem
+
+The clinic runs everything in Dentist Plus, a cloud MIS: schedule, patient cards, documents, payments.
+When the connection drops, the whole front desk stops. Nobody can see who is booked to which doctor,
+open a patient's allergy list, or print a consent form — while patients are already in the chair.
+
+Paper backups go stale within a day. Exports are manual and nobody remembers to make them.
+
+## The solution
+
+A local app on the reception laptop that silently mirrors Dentist Plus every five minutes and keeps
+working without it.
+
+- **While online** it pulls the schedule (30 days back, 30 ahead), doctors, branches and full patient
+  cards through the Dentist Plus partner API into a local database.
+- **While offline** staff work as usual: book and move appointments, fill in the medical record,
+  print contracts and consent forms, take payments. The top bar shows how fresh the data is.
+- **When the link is back** it syncs again within 30 seconds, and everything done offline is waiting
+  in one checklist — or is sent to Dentist Plus automatically, if the clinic switches that on.
+
+## What's inside
+
+| | |
+|---|---|
+| **Calendar** | Day / 2 days / week, by doctor or by chair, doctor filter, click an empty slot to book, overlap warnings, print the day |
+| **Patient card** | Visits, dental formula (permanent and milk teeth), treatments, payments, treatment plans, documents, notes, full history feed |
+| **Medical record** | Complaints, anamnesis, examination, treatment with one-click phrase templates, ICD-10 dental codes, interactive tooth chart |
+| **Documents** | 11 templates (consents, contract, plan, act, extract, form 043/u, receipt) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
+| **Money** | Invoices from the price list with per-line discounts, partial payments, staged treatment plans billed step by step, daily cash report |
+| **Transfer to Dentist Plus** | A checklist of everything created offline — or automatic sending of new patients and appointments |
+
+| Patient card | Dental formula |
+|---|---|
+| ![Patient card](docs/screenshots/04-patient-card.png) | ![Dental formula](docs/screenshots/05-dental-formula.png) |
+
+| Medical record | Document from a template |
+|---|---|
+| ![Medical record](docs/screenshots/07-medical-record.png) | ![Contract](docs/screenshots/08-document.png) |
+
+| Invoice | Transfer checklist |
+|---|---|
+| ![Invoice](docs/screenshots/09-invoice.png) | ![Transfer](docs/screenshots/10-transfer-journal.png) |
+
+## Three decisions worth explaining
+
+**A tolerant reader instead of a fixed schema.** The partner API documents only its login endpoint.
+Rather than guess one format and break on the first real response, every field is read through a list
+of candidate names and formats — `start`, `date` + `time`, ISO with a timezone, Unix seconds,
+`dd.mm.yyyy`; patient as an id or a nested object; doctor as an object or a list. The raw JSON is
+always stored too, so nothing is lost, and a built-in **API diagnostics** screen shows real responses
+so the mapping can be tuned without a rebuild. The sync is tested against four differently shaped fake
+servers.
+
+**Writes that can't create duplicates.** Automatic sending to the clinic's live system is the riskiest
+part, so it follows strict rules: an item counts as sent only on a 2xx answer; a write that timed out
+is never retried automatically (status "check by hand"); before creating a visit the app looks for the
+same visit in Dentist Plus; after creating it re-reads the day and compares time and doctor. Endpoint
+paths and field names live in settings, so they can be corrected on site. Medical records, documents
+and payments stay manual — payments need a fiscal receipt anyway.
+
+**Local edits as an overlay, not a fork.** Offline changes never touch the synced tables. A moved
+appointment is a local row that hides the synced one; the calendar is a `UNION` of both. When the next
+sync brings the change back from Dentist Plus, the overlay disappears on its own and a temporary patient
+card is merged into the real one. Sync can replace its data at any time without losing anything typed
+by staff.
+
+## Architecture
+
+```
+Dentist Plus partner API
+        │  every 5 min while online (7-day chunks, paged, retries with Retry-After)
+        ▼
+  sync.py ── api_client.py ── normalize.py (tolerant field reader)
+        │                         pusher.py (optional automatic sending)
+        ▼
+  SQLite (WAL, one transaction per chunk — safe on power loss)
+        ▲
+  main.py (pywebview, Python ↔ JS bridge)
+        ▲
+  ui/  plain HTML/CSS/JS, no framework, works fully offline (fonts bundled)
+```
+
+| File | Role |
+|---|---|
+| `app/main.py` | Window, JS API, self-install and update, autostart |
+| `app/config.py` | Paths, settings, DPAPI password protection, clinic branding |
+| `app/sync.py` | Background worker: online check, pull, purge, push, offline mode |
+| `app/api_client.py` | Partner API client: auth, paging in any shape, retries, writes |
+| `app/normalize.py` | Field extraction across naming and date formats |
+| `app/db.py` | Schema, migrations, combined synced + local views |
+| `app/local.py` | Everything created in the app: visits, records, documents, invoices, payments, transfer journal |
+| `app/pusher.py` | Automatic sending to Dentist Plus with dedupe and verification |
+| `app/catalog.py` | ICD-10 dental codes, phrase and document templates |
+| `app/demo.py` | Invented demo clinic for showing the app without an account |
+
+## Details that were harder than they looked
+
+- **Power cuts mid-sync.** Visits are replaced one 7-day chunk per transaction with SQLite in WAL and
+  `synchronous=FULL`; a cut leaves the previous data intact.
+- **Endpoints that ignore filters.** If the server returns visits outside the requested dates, or
+  ignores `?page`, the client notices and stops instead of looping.
+- **One bad record.** A 500 on a single patient card used to stall the sync for over a minute; now two
+  short retries and the sync moves on, counting the error.
+- **Shipping to a non-technical client.** The `.exe` installs itself to the user profile on first run,
+  creates desktop and Start menu shortcuts, and running a newer `.exe` updates it in place.
+- **Secrets.** The API password is encrypted with Windows DPAPI and only decrypts under the same
+  Windows account.
+
+## Stack
+
+Python 3.11 · pywebview (Edge WebView2) · SQLite · requests · vanilla HTML/CSS/JS ·
+PyInstaller (single-file exe) · Playwright for screenshots
+
+No web framework, no server, no cloud — the only network calls go to Dentist Plus.
+
+## Running it
+
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python app\main.py          # desktop window, demo data
+.venv\Scripts\python app\devserver.py     # same UI in a browser at http://127.0.0.1:8765
+powershell -File build.ps1                # release\DentalDesk.exe
+```
+
+The app starts in demo mode with an invented clinic.
+
+**Branding.** The public build is called *Dental Desk*. A clinic build puts its own name, mark,
+icon and data folder into `app/brand.json` (kept out of the repository):
+
+```json
+{"name": "My Clinic", "short": "MC", "sub": "clinic", "exe": "MyClinic", "folder": "MyClinic"}
+``` To connect a real account: Settings → untick
+demo mode → partner API login and password → *Check connection* → *Save and sync*.
+
+## Tests
+
+```powershell
+.venv\Scripts\python tests\test_api_all_functions.py     # 112 checks over every app function
+.venv\Scripts\python tests\test_push_to_dentist_plus.py  # automatic sending against a fake API
+.venv\Scripts\python tests\test_sync_api_formats.py      # sync against 4 differently shaped APIs
+```
+
+Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,
+treatment plans, CSV price import (including Windows-1251 files from Excel), the transfer journal,
+settings, dedupe and validation errors on write, paging variants, timezones and partial server failures.
+
+## Status and privacy
+
+Version 1.3, delivered to the clinic. All screenshots use an invented demo clinic — no real patient
+appears anywhere in this repository. The app stores medical data locally only; the clinic is advised
+to use Windows login and BitLocker.
+
+Document templates are generic drafts written for this project and are meant to be reviewed by the
+clinic's lawyer.
+
+## License
+
+Code — MIT. Bundled font Playfair Display SC — SIL Open Font License 1.1 (`app/ui/fonts/OFL.txt`).

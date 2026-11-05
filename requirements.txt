@@ -1,0 +1,8 @@
+# runtime
+pywebview==6.2.1
+requests==2.34.2
+
+# build and dev tools
+pyinstaller==6.22.3
+pillow==13.0.0      # icon generation
+playwright==1.64.1   # screenshots (uses installed Microsoft Edge)

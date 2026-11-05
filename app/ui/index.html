@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Dental Desk</title>
+<link rel="stylesheet" href="styles.css?v=1.3.0">
+<link rel="stylesheet" href="styles-v2.css?v=1.3.0">
+<link rel="stylesheet" href="styles-brand.css?v=1.3.0">
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="logo" title="Dental Desk"><span class="brandmark"><b>DD</b><i></i><small>offline</small></span></div>
+    <nav>
+      <button data-view="schedule" class="nav active" title="Календарь"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span>Календарь</span></button>
+      <button data-view="patients" class="nav" title="Пациенты (Ctrl+K)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1-4 4-6 7.5-6s6.5 2 7.5 6"/></svg><span>Пациенты</span></button>
+      <button data-view="cash" class="nav" title="Касса"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18M7 15h3"/></svg><span>Касса</span></button>
+      <button data-view="journal" class="nav" title="Перенос в Dentist Plus"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg><span>Перенос</span><i class="badge" id="pendingBadge" hidden></i></button>
+      <button data-view="refs" class="nav" title="Шаблоны, услуги, реквизиты"><svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5V8H19M9 12.5h7M9 16h5"/></svg><span>Шаблоны</span></button>
+    </nav>
+    <button data-view="settings" class="nav" title="Настройки"><svg viewBox="0 0 24 24"><path d="M19.06 9.18 L21.72 9.67 L21.72 14.33 L19.06 14.82 L18.98 15.00 L20.53 17.23 L17.23 20.53 L15.00 18.98 L14.82 19.06 L14.33 21.72 L9.67 21.72 L9.18 19.06 L9.00 18.98 L6.77 20.53 L3.47 17.23 L5.02 15.00 L4.94 14.82 L2.28 14.33 L2.28 9.67 L4.94 9.18 L5.02 9.00 L3.47 6.77 L6.77 3.47 L9.00 5.02 L9.18 4.94 L9.67 2.28 L14.33 2.28 L14.82 4.94 L15.00 5.02 L17.23 3.47 L20.53 6.77 L18.98 9.00 Z"/><circle cx="12" cy="12" r="3.2"/></svg><span>Настройки</span></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="gsearch">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        <input id="gSearch" placeholder="Поиск пациента (Ctrl+K)" autocomplete="off">
+        <div class="gs-drop" id="gDrop" hidden></div>
+      </div>
+      <button class="tb-btn" id="tbAddPatient"><svg viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M3 20c1-4 3.5-6 7-6 1.6 0 3 .4 4.1 1.2M18 14v6M15 17h6"/></svg>Добавить пациента</button>
+      <button class="tb-btn" id="tbJournal"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg>Перенести в DP<i class="badge sm" id="pendingBadge2" hidden></i></button>
+      <div class="sync-pill" id="syncCard" title="">
+        <span class="dot" id="syncDot"></span>
+        <span class="sp-text"><b id="syncTitle">Загрузка…</b><small id="syncSub"></small></span>
+        <div class="bar"><i id="syncBar"></i></div>
+        <button class="icon-btn" id="syncBtn" title="Обновить сейчас"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.4M4 4v3.5h3.5M4 13a8 8 0 0 0 14.6 4.4M20 20v-3.5h-3.5"/></svg></button>
+      </div>
+    </header>
+    <div class="banner" id="banner" hidden></div>
+
+    <!-- ===================== SCHEDULE ===================== -->
+    <section class="view" id="view-schedule">
+      <header class="cal-bar">
+        <span class="cb-label">Расписание:</span>
+        <div class="dd" id="ddDays"><button class="dd-btn"><span id="ddDaysLbl">На день</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+          <div class="dd-menu"><button data-days="1">На день</button><button data-days="2">2 дня</button><button data-days="3">3 дня</button><button data-days="7">Неделя</button></div></div>
+        <div class="dd" id="ddBy"><button class="dd-btn"><span id="ddByLbl">По докторам</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+          <div class="dd-menu"><button data-by="doctor">По докторам</button><button data-by="chair">По креслам</button></div></div>
+        <div class="dd" id="ddMode"><button class="dd-btn"><span id="ddModeLbl">Сетка</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+          <div class="dd-menu" id="modeSeg"><button data-mode="grid">Сетка</button><button data-mode="list">Список</button></div></div>
+        <select id="branchSel" class="input sm-sel"></select>
+        <span class="cb-gap"></span>
+        <div class="dd right" id="ddDocs"><button class="dd-btn pill-btn"><span id="ddDocsLbl">Выбрано докторов: все</span></button>
+          <div class="dd-menu docs-menu" id="docsMenu"></div></div>
+        <div class="datenav">
+          <button id="prevDay" title="Назад (←)">‹</button>
+          <input type="date" id="dayPick">
+          <button id="nextDay" title="Вперёд (→)">›</button>
+        </div>
+        <button class="pill-btn" id="todayBtn">Сегодня</button>
+        <button class="icon-btn" id="printBtn" title="Распечатать расписание"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button>
+        <button class="btn" id="newVisitBtn"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M12 9.5v7M8.5 13h7"/></svg>Новый визит</button>
+      </header>
+      <div class="cal-sub"><h1 id="dayTitle">Расписание</h1><span class="muted" id="daySub"></span></div>
+      <div class="week" id="weekStrip" hidden></div>
+      <div class="sched-wrap">
+        <div id="grid" class="grid"></div>
+        <div id="list" class="list" hidden></div>
+        <div id="dayEmpty" class="empty" hidden>
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+          <b>На этот день записей нет</b>
+          <span id="dayEmptySub"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PATIENTS ===================== -->
+    <section class="view" id="view-patients" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Пациенты</h1><span class="muted" id="patCount"></span></div>
+      </header>
+      <div class="search-row">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        <input id="patSearch" placeholder="ФИО, телефон или номер карты" autocomplete="off">
+      </div>
+      <div class="table-wrap">
+        <table class="tbl" id="patTable">
+          <thead><tr><th>Пациент</th><th>Телефон</th><th>Дата рождения</th><th>Последний визит</th><th>Следующий визит</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="patEmpty" hidden><b>Никого не нашли</b><span>Проверьте написание или поищите по телефону</span></div>
+      </div>
+    </section>
+
+    <!-- ===================== PATIENT CARD ===================== -->
+    <section class="view" id="view-patient" hidden>
+      <div class="card-scroll" id="patientCard"></div>
+    </section>
+
+    <!-- ===================== CASH ===================== -->
+    <section class="view" id="view-cash" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Касса</h1><span class="muted">Оплаты, принятые в программе</span></div>
+        <div class="tools"><input type="date" id="cashDay" class="input"><button class="btn ghost" id="cashPrint">Отчёт за день</button></div>
+      </header>
+      <div class="card-scroll" id="cashBody"></div>
+    </section>
+
+    <!-- ===================== JOURNAL ===================== -->
+    <section class="view" id="view-journal" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Перенос в Dentist Plus</h1><span class="muted">Всё, что сделано в этой программе. Внесите в Dentist Plus и отметьте галочкой</span></div>
+        <div class="tools">
+          <label class="switch-row" style="margin:0"><input type="checkbox" id="jDone"><span class="sw"></span>Показать перенесённое</label>
+          <button class="btn ghost" id="jPrint">Распечатать список</button>
+        </div>
+      </header>
+      <div class="card-scroll" id="journalBody"></div>
+    </section>
+
+    <!-- ===================== REFERENCES ===================== -->
+    <section class="view" id="view-refs" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Шаблоны и прайс</h1><span class="muted">Документы, фразы для медкарты, услуги, реквизиты клиники</span></div>
+        <div class="seg" id="refTabs">
+          <button data-r="docs" class="on">Документы</button><button data-r="phrases">Фразы медкарты</button>
+          <button data-r="price">Прайс-лист</button><button data-r="clinic">Реквизиты</button>
+        </div>
+      </header>
+      <div class="card-scroll" id="refsBody"></div>
+    </section>
+
+    <!-- ===================== SETTINGS ===================== -->
+    <section class="view" id="view-settings" hidden>
+      <header class="top"><div class="title-block"><h1>Настройки</h1><span class="muted" id="verLbl"></span></div></header>
+      <div class="settings">
+        <div class="panel">
+          <h3>Подключение к Dentist Plus</h3>
+          <p class="hint">Логин и пароль партнёрского API выдаёт поддержка Dentist Plus. Пароль хранится зашифрованным средствами Windows и не покидает этот компьютер.</p>
+          <label class="switch-row"><input type="checkbox" id="sDemo"><span class="sw"></span>Демо-режим (тестовые данные без подключения)</label>
+          <div class="form">
+            <label>Логин API<input class="input" id="sLogin" autocomplete="off"></label>
+            <label>Пароль API<input class="input" id="sPass" type="password" autocomplete="new-password" placeholder="••••••••"></label>
+            <label class="wide">Адрес API<input class="input" id="sBase"></label>
+          </div>
+          <div class="row">
+            <button class="btn" id="sSave">Сохранить и синхронизировать</button>
+            <button class="btn ghost" id="sTest">Проверить подключение</button>
+            <span class="msg" id="sMsg"></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Перенос изменений в Dentist Plus</h3>
+          <p class="hint">Как попадают в Dentist Plus записи и новые пациенты, созданные в этой программе.</p>
+          <div class="mode-cards">
+            <label class="mode-card"><input type="radio" name="tmode" value="manual" id="tmManual">
+              <span class="mc-t">Вручную</span>
+              <span class="mc-d">Администратор вносит изменения в Dentist Plus сам по списку «Перенос» и отмечает галочкой. Ничего не отправляется без участия человека.</span></label>
+            <label class="mode-card"><input type="radio" name="tmode" value="auto" id="tmAuto">
+              <span class="mc-t">Автоматически</span>
+              <span class="mc-d">Как только есть интернет, программа сама отправляет новых пациентов и записи (создание, перенос, статус, отмена) в Dentist Plus. Ошибки видны в списке «Перенос».</span></label>
+          </div>
+          <div class="warn-line" id="tmNote">Автоматически отправляются только пациенты и записи. Медкарта, документы, счета и оплаты пока переносятся вручную: для них в API Dentist Plus нет описанного способа записи, а оплатам нужен кассовый чек.</div>
+        </div>
+
+        <div class="panel">
+          <h3>Что хранить</h3>
+          <div class="form">
+            <label>Дней назад<input class="input" id="sBack" type="number" min="1" max="365"></label>
+            <label>Дней вперёд<input class="input" id="sFwd" type="number" min="1" max="365"></label>
+            <label>Обновлять каждые, мин<input class="input" id="sInt" type="number" min="1" max="120"></label>
+            <label>Рабочий день, часы<span class="pair"><input class="input" id="sDs" type="number" min="0" max="23"><input class="input" id="sDe" type="number" min="1" max="24"></span></label>
+          </div>
+          <label class="switch-row"><input type="checkbox" id="sAllPat"><span class="sw"></span>Скачивать всю базу пациентов (не только тех, у кого есть записи)</label>
+          <label class="switch-row"><input type="checkbox" id="sAuto"><span class="sw"></span>Запускать вместе с Windows (свёрнуто) — синхронизация идёт в фоне</label>
+        </div>
+
+        <div class="panel">
+          <h3>История синхронизаций</h3>
+          <table class="tbl compact" id="histTable"><thead><tr><th>Время</th><th>Результат</th><th>Записей</th><th>Пациентов</th></tr></thead><tbody></tbody></table>
+          <div class="row"><span class="muted" id="dataDir"></span><button class="btn ghost small" id="openDir">Открыть папку с данными</button></div>
+        </div>
+
+        <details class="panel adv">
+          <summary>Для специалиста: тонкая настройка API</summary>
+          <div class="form">
+            <label>Параметр «дата с»<input class="input" id="sFromP"></label>
+            <label>Параметр «дата по»<input class="input" id="sToP"></label>
+            <label>Размер окна запроса, дней<input class="input" id="sChunk" type="number" min="1" max="31"></label>
+            <label>Записей на страницу<input class="input" id="sPer" type="number" min="10" max="500"></label>
+            <label class="wide">Доп. разделы карты (JSON)<textarea class="input mono" id="sExtras" rows="4"></textarea></label>
+            <label class="wide">Запись в Dentist Plus: адреса и поля (JSON, пусто — значения по умолчанию)<textarea class="input mono" id="sWriteMap" rows="6" placeholder="{}"></textarea>
+              <button class="linkbtn" id="sWriteMapDef" type="button" style="align-self:flex-start">показать значения по умолчанию</button></label>
+          </div>
+          <div class="row"><button class="btn ghost" id="sDiag">Диагностика API (показать сырые ответы)</button></div>
+          <pre class="diag" id="diagOut" hidden></pre>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <!-- visit drawer -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" aria-hidden="true"></aside>
+</div>
+<div class="modal-wrap" id="modal" hidden><div class="modal" id="modalBox"></div></div>
+<div class="toast" id="toast" hidden></div>
+<div id="printArea" class="print-only"></div>
+<script src="app.js?v=1.3.0"></script>
+<script src="booking.js?v=1.3.0"></script>
+<script src="record.js?v=1.3.0"></script>
+<script src="docs.js?v=1.3.0"></script>
+<script src="billing.js?v=1.3.0"></script>
+<script src="journal.js?v=1.3.0"></script>
+<script src="refs.js?v=1.3.0"></script>
+</body>
+</html>

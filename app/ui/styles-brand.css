@@ -1,0 +1,112 @@
+/* ===== Theme: white / graphite / beige, burgundy accent, serif small caps ===== */
+/* Playfair Display SC — SIL Open Font License 1.1, see fonts/OFL.txt. Bundled so it works offline. */
+@font-face{font-family:"Playfair Display SC";src:url("fonts/PlayfairDisplaySC-Regular.ttf") format("truetype");font-weight:300 500;font-style:normal;font-display:block}
+@font-face{font-family:"Playfair Display SC";src:url("fonts/PlayfairDisplaySC-Bold.ttf") format("truetype");font-weight:600 900;font-style:normal;font-display:block}
+:root{
+  --bg:#F6F6F6; --panel:#FFFFFF; --line:#E5E3DF; --line2:#EFEDEA;
+  --ink:#1E1E1E; --ink2:#4A4744; --muted:#949494;
+  --accent:#6D0100; --accent-ink:#6D0100; --accent-soft:#F5ECEA;
+  --graphite:#2B2B2B; --beige:#E8E2DE; --beige2:#F3EFEC;
+  --ok:#3E8E5E; --ok-soft:#E8F3EC; --blue:#3E5C8A; --blue-soft:#EAEFF6;
+  --warn:#A8742A; --warn-soft:#F7F0E4; --danger:#B3261E; --danger-soft:#F9EAE8; --gray-soft:#F1F0EE;
+  --r:6px; --shadow:0 1px 2px rgba(30,30,30,.04);
+  --font:"TildaSans","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --font-d:"Playfair Display SC","Playfair Display",Georgia,"Times New Roman",serif;
+}
+body{letter-spacing:.005em}
+
+/* headings in serif small caps, like the site */
+h1,h2,.m-h h3,.panel h3,.phead2 h2,.ph-main h2,.sub-h,.cal-sub h1,.g-day,.doc-cat .muted{font-family:var(--font-d);font-weight:500;font-variant:small-caps;letter-spacing:.02em}
+h1{font-size:24px}
+.cal-sub h1{font-size:20px}
+.m-h h3{font-size:19px}
+.phead2 h2,.ph-main h2{font-size:23px}
+
+/* buttons: graphite like «Записаться» on the site */
+.btn{background:var(--graphite);border-color:var(--graphite);border-radius:4px;font-weight:600;letter-spacing:.01em}
+.btn:hover{background:#000;border-color:#000}
+.btn.ghost{background:#fff;color:var(--ink);border-color:var(--line)}
+.btn.ghost:hover{background:var(--beige2)}
+.crumb-acts .dd-btn.btn{background:var(--graphite);border-color:var(--graphite);border-radius:4px}
+.crumb-acts .dd-btn.btn:hover{background:#000}
+.pill-btn,.datenav,.input.sm-sel{border-radius:4px}
+.input,.seg,.icon-btn{border-radius:4px}
+.input:focus{border-color:var(--ink);box-shadow:0 0 0 3px rgba(30,30,30,.06)}
+.seg button.on{background:var(--graphite);color:#fff}
+.dd-btn{color:var(--ink);font-weight:600}
+.dd-btn:hover{background:var(--beige2)}
+.dd-menu>button:hover,.pp-row:hover,.dm-row:hover{background:var(--beige2)}
+.linkbtn{color:var(--accent)}
+.lnk{color:var(--accent)}
+a{color:var(--accent)}
+
+/* shell */
+.rail{background:#fff;border-right:1px solid var(--line)}
+.rail .logo{margin:2px 0 10px}
+.brandmark{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--ink);text-decoration:none}
+.brandmark b{font-family:var(--font-d);font-weight:400;font-size:20px;letter-spacing:.06em;line-height:1}
+.brandmark i{display:block;width:34px;height:1.5px;background:var(--accent)}
+.brandmark small{font-size:8.5px;letter-spacing:.32em;text-transform:uppercase;color:var(--muted);margin-left:.3em}
+.nav{color:var(--ink2);border-radius:4px}
+.nav:hover{background:var(--beige2)}
+.nav.active{background:transparent;color:var(--ink);box-shadow:inset 3px 0 0 var(--accent)}
+.rail .nav.active{background:var(--beige2)}
+.rail .nav.active svg{color:var(--accent)}
+.badge{background:var(--accent)}
+.topbar{border-bottom:1px solid var(--line)}
+.gsearch{border-radius:4px;background:var(--bg)}
+.gsearch:focus-within{border-color:var(--ink);box-shadow:0 0 0 3px rgba(30,30,30,.06)}
+.sync-pill{border-radius:4px}
+.dot.on{background:var(--ok)}
+.bar i{background:var(--accent)}
+
+/* calendar */
+.sched-wrap,.pbody,.table-wrap,.phead2,.panel,.stat,.search-row{border-radius:var(--r);box-shadow:none}
+.g-day{background:var(--beige2);font-size:14px}
+.g-day.today{background:var(--beige);color:var(--ink)}
+.g-day.today::after{content:"сегодня";margin-left:8px;font-family:var(--font);font-variant:normal;font-size:11px;color:#fff;background:var(--accent);padding:1px 7px;border-radius:3px;vertical-align:1px}
+.gh-band{padding:6px 8px}
+.ev{border-radius:4px}
+.now-line{border-color:var(--accent)}
+.now-line::before{background:var(--accent)}
+.slot-hover{border-color:var(--ink);background:rgba(30,30,30,.04);color:var(--ink);border-radius:4px}
+.g-col.is-today{background:#FCFBFA}
+.off-hours{background:repeating-linear-gradient(135deg,#F3F1EE 0 6px,#fff 6px 12px)}
+
+/* patient card */
+.av{background:var(--beige);color:var(--ink);font-family:var(--font-d)}
+.av.lg{font-size:22px}
+.tab.on{color:var(--ink);border-color:var(--accent)}
+.tab{font-weight:500}
+.alert{border-radius:4px}
+.tbl th{color:var(--muted);letter-spacing:.06em}
+.tbl tr.future td{background:#FCFAF8}
+.ia.on{color:var(--accent)}
+.chip:hover{border-color:var(--ink);color:var(--ink);background:var(--beige2)}
+.ft:hover{background:var(--beige2);border-color:var(--beige)}
+.pill{border-radius:3px}
+.stat:first-child{background:var(--beige2);border-color:var(--beige)}
+.stat b{font-family:var(--font-d);font-weight:500}
+.modal{border-radius:8px}
+.toast{background:var(--graphite);border-radius:4px}
+.switch-row input:checked+.sw{background:var(--graphite)}
+.doc-pick svg{color:var(--accent)}
+.doc-pick:hover{border-color:var(--ink);background:var(--beige2)}
+.svc:hover{background:var(--beige2)}
+.j-kind{border-radius:3px}
+.k-record{background:var(--beige2);color:var(--ink)}
+.local-note,.warn-line{border-radius:4px}
+.empty svg{color:#CFC9C4}
+
+/* transfer mode */
+.mode-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0 10px}
+.mode-card{display:flex;flex-direction:column;gap:4px;border:1px solid var(--line);border-radius:6px;padding:12px 14px;cursor:pointer;position:relative}
+.mode-card input{position:absolute;top:14px;right:14px;accent-color:var(--accent)}
+.mode-card.on{border-color:var(--ink);background:var(--beige2)}
+.mc-t{font-weight:600}
+.mc-d{color:var(--ink2);font-size:13px;padding-right:22px}
+.j-mode{background:var(--beige2);border:1px solid var(--line);border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:13.5px}
+.j-mode.auto{border-color:#BFD8C7;background:#EEF6F0}
+.pl{display:block;font-size:12px;margin-top:2px}
+.pl.ok{color:var(--ok)} .pl.bad{color:var(--danger)} .pl.warn{color:var(--warn)} .pl.wait,.pl.manual{color:var(--muted)}
+.k-patient{background:#EEF6F0;color:var(--ok)}
