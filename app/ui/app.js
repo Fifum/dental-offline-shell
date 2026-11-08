@@ -206,7 +206,8 @@ async function refreshStatus() {
     banner.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>${esc(st.last_error)} · сохранённые данные на ${esc(fmtDT(st.last_ok))}`;
   } else { dot.classList.add("on"); title.textContent = "Онлайн"; sub.textContent = `Обновлено ${ago(st.last_ok)}`; }
   $("#syncBtn").disabled = !!st.running;
-  const sb = $("#stockBadge"); if (sb) { sb.hidden = !st.stock_low; sb.textContent = st.stock_low || ""; }
+  const sb = $("#stockBadge"); if (sb) { const n = st.stock_alerts ?? st.stock_low; sb.hidden = !n; sb.textContent = n || "";
+    sb.title = [st.stock_low ? `Заканчиваются: ${st.stock_low}` : "", st.stock_exp ? `Истекает срок: ${st.stock_exp}` : ""].filter(Boolean).join(" · "); }
   const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
   if (st.backup_warn && st.backup_warn !== S.backupWarned) { S.backupWarned = st.backup_warn; toast(st.backup_warn + " Настройки → «Резервные копии».", true); }
   for (const id of ["#pendingBadge", "#pendingBadge2"]) { const pb = $(id); pb.hidden = !st.pending; pb.textContent = st.pending || ""; }

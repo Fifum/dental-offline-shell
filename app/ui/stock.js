@@ -32,6 +32,7 @@ function statRow() {
   return `<div class="stat-row">
     <div class="stat"><span>Материалов</span><b>${STK.materials}</b></div>
     <div class="stat ${STK.low ? "warn" : ""}"><span>Заканчиваются</span><b>${STK.low}</b></div>
+    <div class="stat ${STK.expired ? "bad" : STK.expiring ? "warn" : ""}" title="Партии с истёкшим сроком или сроком до 30 дней"><span>Истекает срок</span><b>${(STK.expired || 0) + (STK.expiring || 0)}</b></div>
     <div class="stat"><span>Сумма остатков</span><b>${money(STK.value)}</b></div>
     <div class="stat"><span>Оборудование в работе</span><b>${STK.equipment}</b></div>
     <div class="stat ${STK.service_due ? "warn" : ""}"><span>Пора на ТО</span><b>${STK.service_due}</b></div></div>`;
@@ -40,30 +41,35 @@ function statRow() {
 /* ------------------------------------------------------------ balances */
 async function stockBalance() {
   const body = $("#stockBody");
-  const q = S.stockQ || "", low = !!S.stockLow;
-  const rows = await api.materials(q, low);
+  const q = S.stockQ || "", low = !!S.stockLow, exp = !!S.stockExp;
+  const rows = await api.materials(q, low, exp);
   S.stockRows = rows;
   const edit = can("stock_edit");
   body.innerHTML = statRow() + `<div class="tab-tools">
       <div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="stQ" placeholder="Материал, код, штрихкод" value="${esc(q)}"></div>
       <label class="switch-row" style="margin:0"><input type="checkbox" id="stLow" ${low ? "checked" : ""}><span class="sw"></span>Только заканчиваются</label>
+      <label class="switch-row" style="margin:0"><input type="checkbox" id="stExp" ${exp ? "checked" : ""}><span class="sw"></span>Истекает срок</label>
       <span class="grow"></span>
+      <button class="btn ghost" id="stOrder" title="Что и сколько заказать, у кого дешевле">Заказ поставщикам</button>
+      ${edit && STK.expired ? `<button class="btn ghost danger-t" id="stExpOut">Списать просроченное</button>` : ""}
       ${edit ? `<button class="btn" id="stIn">Приход</button><button class="btn ghost" id="stOut">Списание</button><button class="btn ghost" id="stInv">Инвентаризация</button><button class="btn ghost" id="stNew">Новый материал</button>` : ""}
       <button class="icon-btn" id="stPrint" title="Печать остатков"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button></div>
     <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Код</th><th>Материал</th><th>Раздел</th><th class="num">Остаток</th><th class="num">Минимум</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr></thead><tbody>${
-      rows.map(m => `<tr data-m="${esc(m.id)}" class="${m.balance < 0 ? "neg" : ""}"><td class="muted">${esc(m.code)}</td><td class="lnk"><b>${esc(m.name)}</b></td><td>${esc(m.category)}</td>
+      rows.map(m => `<tr data-m="${esc(m.id)}" class="${m.balance < 0 ? "neg" : ""} ${m.exp_state ? "exp-" + m.exp_state : ""}"><td class="muted">${esc(m.code)}</td><td class="lnk"><b>${esc(m.name)}</b>${expLine(m)}</td><td>${esc(m.category)}</td>
         <td class="num"><b>${qtyFmt(m.balance, m.unit)}</b></td><td class="num muted">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td><td class="num">${money(m.price)}</td><td class="num">${money(m.value)}</td>
-        <td>${m.balance < 0 ? '<span class="pill st-cancel">меньше нуля</span>' : m.low ? '<span class="pill st-cancel">заканчивается</span>' : '<span class="pill st-ok">есть</span>'}</td></tr>`).join("")}</tbody></table>`
-      : `<div class="empty"><b>${q || low ? "Ничего не найдено" : "Склад пока пуст"}</b><span>${edit ? "Добавьте материалы и оформите приход по накладной" : ""}</span></div>`}</div>`;
+        <td class="pills">${m.balance < 0 ? '<span class="pill st-cancel">меньше нуля</span>' : m.low ? '<span class="pill st-cancel">заканчивается</span>' : m.exp_state ? "" : '<span class="pill st-ok">есть</span>'}${m.exp_state === "expired" ? '<span class="pill exp-pill expired">просрочено</span>' : m.exp_state === "soon" ? '<span class="pill exp-pill soon">истекает срок</span>' : ""}</td></tr>`).join("")}</tbody></table>`
+      : `<div class="empty"><b>${q || low || exp ? "Ничего не найдено" : "Склад пока пуст"}</b><span>${edit ? "Добавьте материалы и оформите приход по накладной" : ""}</span></div>`}</div>`;
   let t; $("#stQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { S.stockQ = e.target.value; stockBalance().then(() => { const i = $("#stQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
   $("#stLow").onchange = e => { S.stockLow = e.target.checked; stockBalance(); };
+  $("#stExp").onchange = e => { S.stockExp = e.target.checked; stockBalance(); };
   $$("#stockBody tr[data-m]").forEach(tr => tr.onclick = () => openMaterial(tr.dataset.m));
   const on = (id, f) => { const el = $(id); if (el) el.onclick = f; };
   on("#stIn", () => openStockDoc("receipt")); on("#stOut", () => openStockDoc("writeoff")); on("#stInv", openInventory);
   on("#stNew", () => editMaterial({})); on("#stPrint", printBalance);
+  on("#stOrder", () => openPurchase()); on("#stExpOut", writeOffExpired);
 }
 
-function editMaterial(m) {
+function editMaterial(m, {onSaved} = {}) {
   const box = modal(`<div class="m-h"><h3>${m.id ? "Материал" : "Новый материал"}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
       <label class="fl">Название*<input class="input" id="mName" value="${esc(m.name || "")}" autofocus></label>
@@ -73,7 +79,7 @@ function editMaterial(m) {
       <div class="grid3"><label class="fl">Минимальный остаток<input class="input" id="mMin" type="number" step="any" min="0" value="${m.min_qty ?? ""}"></label>
         <label class="fl">Цена за единицу, ₽<input class="input" id="mPrice" type="number" step="any" min="0" value="${m.price ?? ""}"></label>
         ${m.id ? `<label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>` : `<label class="fl">Начальный остаток<input class="input" id="mStart" type="number" step="any" min="0"></label>`}</div>
-      ${m.id ? "" : `<label class="fl">Штрихкод<input class="input" id="mBar"></label>`}
+      ${m.id ? "" : `<label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>`}
       <label class="fl">Комментарий<input class="input" id="mCom" value="${esc(m.comment || "")}"></label>
       <datalist id="mUnits">${STK.units.map(u => `<option value="${u}">`).join("")}</datalist>
       <datalist id="mCats">${[...new Set((S.stockRows || []).map(r => r.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join("")}</datalist>
@@ -82,9 +88,10 @@ function editMaterial(m) {
       <button class="btn ghost" data-close>Отмена</button><button class="btn" id="mOk">Сохранить</button></div>`);
   $("#mOk", box).onclick = async () => {
     try {
-      await api.save_material({id: m.id, name: $("#mName").value, code: $("#mCode").value, category: $("#mCat").value, unit: $("#mUnit").value,
+      const id = await api.save_material({id: m.id, name: $("#mName").value, code: $("#mCode").value, category: $("#mCat").value, unit: $("#mUnit").value,
         min_qty: $("#mMin").value, price: $("#mPrice").value, barcode: $("#mBar").value, comment: $("#mCom").value, start_qty: m.id ? null : $("#mStart").value});
       closeModal(); toast("Сохранено"); loadStock();
+      if (onSaved) onSaved(id);
     } catch (e) { $("#mErr").textContent = errText(e); }
   };
   const del = $("#mDel", box);
@@ -98,6 +105,8 @@ async function openMaterial(id) {
     <div class="m-b">
       <div class="stat-row"><div class="stat"><span>Остаток</span><b>${qtyFmt(m.balance, m.unit)}</b></div><div class="stat"><span>Минимум</span><b>${m.min_qty ? qtyFmt(m.min_qty, m.unit) : "—"}</b></div>
         <div class="stat"><span>Цена</span><b>${money(m.price)}</b></div><div class="stat"><span>Сумма</span><b>${money(m.value)}</b></div></div>
+      <h4 class="sub-h">Партии и сроки годности</h4>
+      ${lotsTable(m.lot_list, m.unit, edit)}
       <h4 class="sub-h">Списывается по услугам</h4>
       ${m.norms.length ? `<div class="chips">${m.norms.map(n => `<span class="chip">${esc(n.title)} · ${qtyFmt(n.qty, m.unit)}</span>`).join("")}</div>` : `<div class="muted">Не привязан к услугам. Нормы задаются во вкладке «Нормы списания».</div>`}
       <h4 class="sub-h">Движение</h4>
@@ -109,6 +118,8 @@ async function openMaterial(id) {
   on("#mEdit", () => editMaterial(m));
   on("#mInOne", () => openStockDoc("receipt", [{material_id: m.id, qty: "", price: m.price}]));
   on("#mOutOne", () => openStockDoc("writeoff", [{material_id: m.id, qty: ""}]));
+  $$("[data-lot-out]", box).forEach(b => b.onclick = () => { const g = m.lot_list.lots.find(x => String(x.id) === b.dataset.lotOut);
+    openStockDoc("writeoff", [{material_id: m.id, qty: g.left, lot_id: g.id, lot: g.lot, expires: g.expires}], {reason: g.state === "expired" ? "Истёк срок годности" : ""}); });
 }
 
 function movesTable(moves, withMaterial = true) {
@@ -120,37 +131,75 @@ function movesTable(moves, withMaterial = true) {
 }
 
 /* ---------------------------------------------- receipt and write-off */
-async function openStockDoc(kind, preset) {
-  const [mats, sups] = await Promise.all([api.materials(""), kind === "receipt" ? api.suppliers() : Promise.resolve([])]);
-  const st = {lines: preset && preset.length ? preset.map(x => ({...x})) : [{material_id: "", qty: "", price: ""}]};
+async function openStockDoc(kind, preset, opts = {}) {
+  let [mats, sups] = await Promise.all([api.materials(""), kind === "receipt" ? api.suppliers() : Promise.resolve([])]);
+  const blank = () => ({material_id: "", qty: "", price: "", lot: "", expires: ""});
+  const st = {lines: preset && preset.length ? preset.map(x => ({...blank(), ...x})) : [blank()]};
   const isIn = kind === "receipt";
   const box = modal(`<div class="m-h"><h3>${isIn ? "Приход по накладной" : "Списание материалов"}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
-      ${isIn ? `<div class="grid3"><label class="fl">Поставщик<select class="input" id="dSup"><option value="">—</option>${sups.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("")}</select></label>
-        <label class="fl">Номер накладной<input class="input" id="dNum"></label><label class="fl">Дата<input class="input" type="date" id="dDate" value="${iso(new Date())}"></label></div>`
-      : `<div class="grid2"><label class="fl">Причина списания*<input class="input" id="dReason" list="woReasons" placeholder="например: истёк срок годности"></label><label class="fl">Дата<input class="input" type="date" id="dDate" value="${iso(new Date())}"></label></div>
+      ${isIn ? `<div class="grid3"><label class="fl">Поставщик<select class="input" id="dSup"><option value="">—</option>${sups.map(s => `<option value="${esc(s.id)}" ${s.id === opts.supplier_id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
+        <label class="fl">Номер накладной<input class="input" id="dNum"></label><label class="fl">Дата<input class="input" type="date" id="dDate" value="${iso(new Date())}"></label></div>
+        <div class="scan-row"><svg viewBox="0 0 24 24"><path d="M4 6v12M7 6v12M10 6v12M13.5 6v12M16 6v12M20 6v12"/></svg><input class="input" id="dScan" placeholder="Сканируйте штрихкод" autocomplete="off" autofocus>
+          <span class="muted" id="dScanMsg">Сканер добавит строку или прибавит 1 к количеству. Код с партией и сроком («Честный знак», GS1) заполнит их сам.</span></div>`
+      : `<div class="grid2"><label class="fl">Причина списания*<input class="input" id="dReason" list="woReasons" placeholder="например: истёк срок годности" value="${esc(opts.reason || "")}"></label><label class="fl">Дата<input class="input" type="date" id="dDate" value="${iso(new Date())}"></label></div>
         <datalist id="woReasons"><option value="Истёк срок годности"><option value="Повреждение, брак"><option value="Использовано вне услуг (общие нужды)"><option value="Утеря"></datalist>`}
-      <table class="tbl compact doc-lines"><thead><tr><th>Материал</th><th class="num">Остаток</th><th class="num" style="width:120px">Количество</th>${isIn ? `<th class="num" style="width:130px">Цена, ₽</th><th class="num">Сумма</th>` : ""}<th></th></tr></thead><tbody id="dLines"></tbody></table>
+      <table class="tbl compact doc-lines"><thead><tr><th>Материал</th><th class="num">Остаток</th>${isIn ? `<th style="width:120px">Партия</th><th style="width:150px">Годен до</th>` : ""}<th class="num" style="width:110px">Количество</th>${isIn ? `<th class="num" style="width:120px">Цена, ₽</th><th class="num">Сумма</th>` : ""}<th></th></tr></thead><tbody id="dLines"></tbody></table>
       <div><button class="btn ghost small" id="dAdd">+ Ещё материал</button></div>
-      <label class="fl">Комментарий<input class="input" id="dCom"></label>
+      <label class="fl">Комментарий<input class="input" id="dCom" value="${esc(opts.comment || "")}"></label>
       <div class="auth-err" id="dErr"></div></div>
     <div class="m-f"><span class="muted" id="dTotal"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="dOk">${isIn ? "Оприходовать" : "Списать"}</button></div>`, {wide: true});
-  const byId = Object.fromEntries(mats.map(m => [m.id, m]));
+  let byId = Object.fromEntries(mats.map(m => [m.id, m]));
   const draw = () => {
     $("#dLines").innerHTML = st.lines.map((l, i) => { const m = byId[l.material_id];
-      return `<tr><td><select class="input" data-i="${i}" data-f="material_id"><option value="">— выберите материал —</option>${mats.map(x => `<option value="${esc(x.id)}" ${x.id === l.material_id ? "selected" : ""}>${esc(x.name)}${x.code ? " · " + esc(x.code) : ""}</option>`).join("")}</select></td>
+      const lotTag = !isIn && l.lot_id ? `<small class="lot-tag ${l.expires && l.expires < iso(new Date()) ? "expired" : ""}">партия ${esc(l.lot || "без номера")}${l.expires ? " · годен до " + fmtDate(l.expires) : ""}</small>` : "";
+      return `<tr><td><select class="input" data-i="${i}" data-f="material_id" ${l.lot_id ? "disabled" : ""}><option value="">— выберите материал —</option>${mats.map(x => `<option value="${esc(x.id)}" ${x.id === l.material_id ? "selected" : ""}>${esc(x.name)}${x.code ? " · " + esc(x.code) : ""}</option>`).join("")}</select>${lotTag}</td>
         <td class="num muted">${m ? qtyFmt(m.balance, m.unit) : ""}</td>
+        ${isIn ? `<td><input class="input" data-i="${i}" data-f="lot" value="${esc(l.lot)}" placeholder="№ партии"></td><td><input class="input" type="date" data-i="${i}" data-f="expires" value="${esc(l.expires)}"></td>` : ""}
         <td><input class="input num" type="number" step="any" min="0" data-i="${i}" data-f="qty" value="${esc(l.qty)}"></td>
         ${isIn ? `<td><input class="input num" type="number" step="any" min="0" data-i="${i}" data-f="price" value="${esc(l.price)}"></td><td class="num">${money((+l.qty || 0) * (+l.price || 0))}</td>` : ""}
         <td><button class="linkbtn" data-rm="${i}">убрать</button></td></tr>`; }).join("");
     const total = st.lines.reduce((a, l) => a + (+l.qty || 0) * (+(isIn ? l.price : (byId[l.material_id] || {}).price) || 0), 0);
-    $("#dTotal").textContent = `Строк: ${st.lines.length} · на сумму ${money(total)}`;
+    $("#dTotal").textContent = `Строк: ${st.lines.filter(l => l.material_id).length} · на сумму ${money(total)}`;
     $$("#dLines [data-f]").forEach(el => el.onchange = () => { const l = st.lines[+el.dataset.i]; l[el.dataset.f] = el.value;
       if (el.dataset.f === "material_id" && isIn && byId[el.value] && !l.price) l.price = byId[el.value].price; draw(); });
-    $$("#dLines [data-rm]").forEach(b => b.onclick = () => { st.lines.splice(+b.dataset.rm, 1); if (!st.lines.length) st.lines.push({material_id: "", qty: "", price: ""}); draw(); });
+    $$("#dLines [data-rm]").forEach(b => b.onclick = () => { st.lines.splice(+b.dataset.rm, 1); if (!st.lines.length) st.lines.push(blank()); draw(); });
   };
   draw();
-  $("#dAdd", box).onclick = () => { st.lines.push({material_id: "", qty: "", price: ""}); draw(); };
+  $("#dAdd", box).onclick = () => { st.lines.push(blank()); draw(); };
+  const scan = $("#dScan", box);
+  if (scan) {
+    const msg = (t, bad) => { const el = $("#dScanMsg"); el.textContent = t; el.className = bad ? "bad-t" : "muted"; };
+    const addMaterial = (m, p) => {
+      byId[m.id] = m;
+      const same = st.lines.find(l => l.material_id === m.id && (l.lot || "") === (p.lot || "") && (l.expires || "") === (p.expires || ""));
+      if (same) same.qty = String((+same.qty || 0) + 1);
+      else {
+        const empty = st.lines.findIndex(l => !l.material_id);
+        const line = {...blank(), material_id: m.id, qty: "1", price: m.price || "", lot: p.lot || "", expires: p.expires || ""};
+        if (empty >= 0) st.lines[empty] = line; else st.lines.push(line);
+      }
+      draw(); msg(`✓ ${m.name}${p.lot ? " · партия " + p.lot : ""}${p.expires ? " · годен до " + fmtDate(p.expires) : ""}`);
+    };
+    scan.onkeydown = async e => {
+      if (e.key !== "Enter") return;
+      e.preventDefault(); e.stopPropagation();
+      const code = scan.value.trim(); scan.value = "";
+      if (!code) return;
+      let p;
+      try { p = await api.stock_scan(code); } catch (err) { msg(errText(err), true); return; }
+      if (p.material) return addMaterial(p.material, p);
+      const vals = await askInput("Новый материал", [{label: "Название", value: ""}, {label: "Единица", value: "шт"}, {label: "Цена за единицу, ₽", type: "number", required: false}],
+        {text: `Штрихкода ${p.barcode} нет в справочнике. Создать материал с этим штрихкодом и добавить в приход?`, ok: "Создать и добавить"});
+      scan.focus();
+      if (!vals) { msg(`Штрихкод ${p.barcode} не найден`, true); return; }
+      try {
+        const id = await api.save_material({name: vals[0], unit: vals[1], price: vals[2], barcode: p.barcode});
+        mats = await api.materials(""); byId = Object.fromEntries(mats.map(m => [m.id, m]));
+        addMaterial(byId[id], p); toast("Материал добавлен в справочник");
+      } catch (err) { msg(errText(err), true); }
+    };
+  }
   $("#dOk", box).onclick = async () => {
     const lines = st.lines.filter(l => l.material_id);
     const f = {date: $("#dDate").value, comment: $("#dCom").value, lines};

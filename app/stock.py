@@ -9,7 +9,10 @@ Equipment: a register with inventory numbers, location, service history and a wr
 """
 from __future__ import annotations
 
+import calendar
 import json
+import math
+import re
 import uuid
 from datetime import date, datetime
 
@@ -37,7 +40,15 @@ CREATE TABLE IF NOT EXISTS equipment(
 CREATE TABLE IF NOT EXISTS equipment_events(
     id INTEGER PRIMARY KEY AUTOINCREMENT, equipment_id TEXT, kind TEXT, date TEXT, text TEXT,
     cost REAL DEFAULT 0, user_name TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS stock_lots(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, material_id TEXT, move_id INTEGER, lot TEXT, expires TEXT,
+    qty REAL, created_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_lots_mat ON stock_lots(material_id);
 """
+SOON_DAYS = 30          # a lot expiring within this many days is highlighted
+USAGE_DAYS = 60         # the average daily use for the purchase list is taken over this period
+MIN_DAYS_LEFT = 14      # a material that lasts fewer days goes into the purchase list
+EXPIRED_REASON = "Истёк срок годности"
 
 MOVE_KINDS = {"receipt": "Приход", "writeoff": "Списание", "service": "По услуге", "inventory": "Инвентаризация",
               "return": "Возврат поставщику"}
@@ -67,6 +78,76 @@ def _clean(s, n=300):
     return str(s or "").strip()[:n]
 
 
+def _day(v, name="Годен до"):
+    """A date from the form: 2027-03-31, 31.03.2027 or a month only (2027-03, 03.2027 → its last day)."""
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        y, mo, d = int(m[1]), int(m[2]), int(m[3])
+    elif (m := re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", s)):
+        y, mo, d = int(m[3]), int(m[2]), int(m[1])
+    elif (m := re.fullmatch(r"(\d{4})-(\d{1,2})", s)) or (m := re.fullmatch(r"(\d{1,2})\.(\d{4})", s)):
+        y, mo = (int(m[1]), int(m[2])) if "-" in s else (int(m[2]), int(m[1]))
+        d = calendar.monthrange(y, mo)[1] if 1 <= mo <= 12 else 0
+    else:
+        raise ValueError(f"{name}: укажите дату, например 31.12.2027")
+    try:
+        return date(y, mo, d).isoformat()
+    except ValueError:
+        raise ValueError(f"{name}: такой даты нет") from None
+
+
+GS = "\x1d"  # GS1 group separator (FNC1) that scanners send between variable-length fields
+_GS1_FIXED = {"00": 18, "01": 14, "02": 14, "11": 6, "13": 6, "15": 6, "17": 6}
+_GS1_VAR = ("10", "21", "240", "91", "92", "93")
+
+
+def parse_scan(code):
+    """What a scanner typed: a plain EAN/UPC/internal code, or a GS1 code (DataMatrix «Честный знак», GS1-128)
+    with the GTIN, the lot (10) and the expiry date (17, YYMMDD). Returns {code, barcode, gtin, lot, expires}."""
+    raw = str(code or "").strip().replace("\\x1d", GS).replace("<GS>", GS)
+    for pre in ("]d2", "]C1", "]Q3", "]e0"):  # symbology identifiers some scanners prefix
+        if raw.startswith(pre):
+            raw = raw[len(pre):]
+    out = {"code": raw.replace(GS, ""), "barcode": raw.replace(GS, ""), "gtin": "", "lot": "", "expires": ""}
+    s = raw.replace("(", GS).replace(")", "") if raw.startswith("(") else raw
+    s = s.lstrip(GS)
+    if not (s.startswith("01") and len(s) >= 16 and s[2:16].isdigit()):
+        return out
+    i, fields = 0, {}
+    while i < len(s):
+        if s[i] == GS:
+            i += 1
+            continue
+        ai = s[i:i + 2]
+        if ai in _GS1_FIXED:
+            n = _GS1_FIXED[ai]
+            fields[ai] = s[i + 2:i + 2 + n]
+            i += 2 + n
+            continue
+        ai = next((a for a in _GS1_VAR if s.startswith(a, i)), None)
+        if not ai:
+            break
+        end = s.find(GS, i)
+        end = len(s) if end < 0 else end
+        fields[ai] = s[i + len(ai):end]
+        i = end
+    gtin = fields.get("01", "")
+    out.update(gtin=gtin, barcode=gtin[1:] if gtin.startswith("0") else gtin, lot=fields.get("10", "")[:60])
+    exp = fields.get("17", "")
+    if len(exp) == 6 and exp.isdigit():
+        y, mo, d = 2000 + int(exp[:2]), int(exp[2:4]), int(exp[4:])
+        if d == 0 and 1 <= mo <= 12:  # «00» in GS1 means the end of the month
+            d = calendar.monthrange(y, mo)[1]
+        try:
+            out["expires"] = date(y, mo, d).isoformat()
+        except ValueError:
+            pass
+    return out
+
+
 class Stock:
     def __init__(self, db):
         self.db = db
@@ -74,7 +155,7 @@ class Stock:
         db.conn.commit()
 
     # ============================================================ materials --
-    def materials(self, q="", only_low=False, with_inactive=False):
+    def materials(self, q="", only_low=False, with_inactive=False, only_expiring=False):
         rows = self.db.q("""
             SELECT m.*, COALESCE(SUM(s.qty), 0) AS balance,
                    MAX(CASE WHEN s.kind IN ('service','writeoff') THEN s.at END) AS last_used
@@ -82,21 +163,100 @@ class Stock:
             WHERE (? OR m.active = 1)
             GROUP BY m.id ORDER BY m.category, m.name""", (1 if with_inactive else 0,))
         q = (q or "").strip().lower()
+        lots = self._lots_by_material({r["id"]: r["balance"] for r in rows})
         for r in rows:
             r["balance"] = round(r["balance"], 3)
             r["low"] = r["min_qty"] > 0 and r["balance"] <= r["min_qty"]
             r["value"] = round(r["balance"] * (r["price"] or 0), 2)
+            ls = [x for x in lots.get(r["id"], {}).get("lots", []) if x["left"] > 0]
+            r["lots"] = len(ls)
+            r["expired_qty"] = round(sum(x["left"] for x in ls if x["state"] == "expired"), 3)
+            r["soon_qty"] = round(sum(x["left"] for x in ls if x["state"] == "soon"), 3)
+            r["expires"] = min((x["expires"] for x in ls if x["expires"]), default="")
+            r["exp_state"] = "expired" if r["expired_qty"] > 0 else "soon" if r["soon_qty"] > 0 else ""
         if q:
             rows = [r for r in rows if q in f"{r['code']} {r['name']} {r['category']} {r['barcode']}".lower()]
         if only_low:
             rows = [r for r in rows if r["low"]]
+        if only_expiring:
+            rows = [r for r in rows if r["exp_state"]]
         return rows
+
+    # ------------------------------------------------- lots and expiry dates --
+    def _lots_by_material(self, balances, mid=None):
+        """Lots left on hand, worked out from the move ledger instead of being stored (FEFO).
+
+        Whatever leaves the stock is taken from the lot that expires first. So, going from the latest expiry to
+        the earliest, each lot keeps min(its quantity, what is still unassigned of the balance); what no lot covers
+        is stock «без срока». A write-off of a specific expired lot is stored as a negative row of that lot.
+        Nothing here depends on move ids staying put, so on_invoice can delete and re-create its moves freely."""
+        sql = """SELECT l.id, l.material_id, l.lot, l.expires, l.qty, l.created_at, s.at, s.doc_id, d.number AS doc_number,
+                        sp.name AS supplier_name
+                 FROM stock_lots l JOIN stock_moves s ON s.id = l.move_id
+                 LEFT JOIN stock_docs d ON d.id = s.doc_id LEFT JOIN suppliers sp ON sp.id = d.supplier_id"""
+        rows = self.db.q(sql + (" WHERE l.material_id=?" if mid else "") + " ORDER BY l.id", (mid,) if mid else ())
+        groups = {}
+        for r in rows:  # one lot = one material + lot number + expiry date, however many receipts brought it
+            key = (r["material_id"], r["lot"] or "", r["expires"] or "")
+            g = groups.get(key)
+            if g is None:
+                if r["qty"] <= 0:
+                    continue
+                g = groups[key] = {"id": r["id"], "material_id": r["material_id"], "lot": r["lot"] or "", "expires": r["expires"] or "",
+                                   "qty": 0.0, "received": r["at"][:10] if r["at"] else "", "doc_number": r["doc_number"] or "",
+                                   "supplier_name": r["supplier_name"] or ""}
+            g["qty"] += r["qty"]
+        today = date.today()
+        soon = (today.toordinal() + SOON_DAYS)
+        out = {}
+        for g in groups.values():
+            out.setdefault(g["material_id"], {"lots": []})["lots"].append(g)
+        for m_id, rec in out.items():
+            left = max(0.0, balances.get(m_id, 0) or 0)
+            # latest expiry first; a lot without a date is consumed last of all; among equal dates the newest is kept
+            rec["lots"].sort(key=lambda g: (g["expires"] or "9999-12-31", g["id"]), reverse=True)
+            for g in rec["lots"]:
+                g["qty"] = round(max(0.0, g["qty"]), 3)
+                g["left"] = round(min(g["qty"], left), 3)
+                left = round(left - g["left"], 3)
+                if g["expires"]:
+                    e = date.fromisoformat(g["expires"])
+                    g["days"] = (e - today).days
+                    g["state"] = "expired" if e < today else "soon" if e.toordinal() <= soon else "ok"
+                else:
+                    g["days"], g["state"] = None, "ok"
+            rec["lots"].reverse()  # show the earliest expiry first
+            rec["no_lot"] = round(left, 3)
+        return out
+
+    def lots(self, mid):
+        """The lots of one material on hand: earliest expiry first, plus the part not covered by any lot."""
+        bal = self.balance(mid)
+        rec = self._lots_by_material({mid: bal}, mid).get(mid, {"lots": [], "no_lot": max(0.0, bal)})
+        return {"lots": [g for g in rec["lots"] if g["left"] > 0], "no_lot": rec["no_lot"], "balance": bal}
+
+    def expired_lines(self):
+        """Ready lines for «Списать просроченное»: every expired lot that is still on hand."""
+        out = []
+        mats = {m["id"]: m for m in self.materials()}
+        bal = {k: v["balance"] for k, v in mats.items()}
+        for mid, rec in self._lots_by_material(bal).items():
+            if mid not in mats:
+                continue
+            for g in rec["lots"]:
+                if g["state"] == "expired" and g["left"] > 0:
+                    m = mats[mid]
+                    out.append({"material_id": mid, "name": m["name"], "unit": m["unit"], "qty": g["left"], "lot_id": g["id"],
+                                "lot": g["lot"], "expires": g["expires"], "price": m["price"]})
+        out.sort(key=lambda x: (x["expires"], x["name"]))
+        return out
 
     def material(self, mid):
         rows = [r for r in self.materials(with_inactive=True) if r["id"] == mid]
         if not rows:
             return None
         m = rows[0]
+        m["lot_list"] = self.lots(mid)
         m["moves"] = self.moves(material_id=mid, limit=200)
         m["norms"] = self.db.q("""SELECT sm.service_id, sm.qty, s.title, s.code FROM service_materials sm
                                   JOIN services s ON s.id = sm.service_id WHERE sm.material_id=? ORDER BY s.title""", (mid,))
@@ -107,6 +267,11 @@ class Stock:
         if not name:
             raise ValueError("Укажите название материала")
         mid = f.get("id") or _id("M")
+        bar = _clean(f.get("barcode"), 60)
+        if bar:
+            dup = self.db.one("SELECT name FROM materials WHERE barcode=? AND id<>? AND active=1", (bar, mid))
+            if dup:
+                raise ValueError(f"Штрихкод {bar} уже указан у материала «{dup['name']}»")
         with self.db.tx() as c:
             c.execute("""INSERT INTO materials(id, code, name, unit, category, min_qty, price, barcode, comment, active, created_at)
                          VALUES(?,?,?,?,?,?,?,?,?,1,?)
@@ -115,7 +280,7 @@ class Stock:
                          barcode=excluded.barcode, comment=excluded.comment, active=1""",
                       (mid, _clean(f.get("code"), 50), name, _clean(f.get("unit"), 20) or "шт", _clean(f.get("category"), 100),
                        max(0, _num(f.get("min_qty"), "Минимальный остаток")), max(0, _num(f.get("price"), "Цена")),
-                       _clean(f.get("barcode"), 60), _clean(f.get("comment"), 500), _now()))
+                       bar, _clean(f.get("comment"), 500), _now()))
             if f.get("start_qty") and not f.get("id"):
                 q = _num(f["start_qty"])
                 if q:
@@ -170,6 +335,8 @@ class Stock:
         lines = self._lines(f.get("lines"))
         if any(q <= 0 for _, q, _ in lines):
             raise ValueError("Количество в приходе должно быть больше нуля")
+        # lot number and expiry date of each line (optional; any of the two makes a lot)
+        lots = [(_clean(ln.get("lot"), 60), _day(ln.get("expires"))) for ln in f.get("lines") or []]
         did, at = _id("R"), _now()
         day = f.get("date") or date.today().isoformat()
         total = round(sum(q * p for _, q, p in lines), 2)
@@ -177,9 +344,12 @@ class Stock:
             c.execute("INSERT INTO stock_docs VALUES(?,?,?,?,?,?,?,?,?,?)",
                       (did, "receipt", _clean(f.get("number"), 50), day, f.get("supplier_id") or None, "",
                        _clean(f.get("comment"), 500), total, user, at))
-            for mid, q, p in lines:
-                c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",
-                          (mid, q, p, "receipt", did, user, f"{day} {at[11:]}"))
+            for (mid, q, p), (lot, exp) in zip(lines, lots):
+                cur = c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",
+                                (mid, q, p, "receipt", did, user, f"{day} {at[11:]}"))
+                if lot or exp:
+                    c.execute("INSERT INTO stock_lots(material_id, move_id, lot, expires, qty, created_at) VALUES(?,?,?,?,?,?)",
+                              (mid, cur.lastrowid, lot, exp, q, at))
                 if p > 0:
                     c.execute("UPDATE materials SET price=? WHERE id=?", (p, mid))
         return did
@@ -200,6 +370,22 @@ class Stock:
             if q > bal + 1e-9:
                 name = self.db.one("SELECT name FROM materials WHERE id=?", (mid,))["name"]
                 raise ValueError(f"«{name}»: на складе {bal:g}, списать {q:g} нельзя")
+        # a line may name the lot it takes from (write-off of an expired lot): that lot shrinks, not the undated stock
+        lot_of, taken = [], {}
+        for (mid, q, _), ln in zip(lines, f.get("lines") or []):
+            lid = ln.get("lot_id")
+            if not lid:
+                lot_of.append(None)
+                continue
+            g = next((x for x in self.lots(mid)["lots"] if str(x["id"]) == str(lid)), None)
+            if not g:
+                raise ValueError("Партия не найдена или уже списана")
+            taken[g["id"]] = taken.get(g["id"], 0) + q
+            if taken[g["id"]] > g["left"] + 1e-9:
+                q = taken[g["id"]]
+                name = self.db.one("SELECT name FROM materials WHERE id=?", (mid,))["name"]
+                raise ValueError(f"«{name}», партия {g['lot'] or '—'}: осталось {g['left']:g}, списать {q:g} нельзя")
+            lot_of.append(g)
         did, at = _id("W"), _now()
         day = f.get("date") or date.today().isoformat()
         prices = {r["id"]: r["price"] for r in self.db.q("SELECT id, price FROM materials")}
@@ -208,9 +394,13 @@ class Stock:
             c.execute("INSERT INTO stock_docs VALUES(?,?,?,?,?,?,?,?,?,?)",
                       (did, "writeoff", self._next_number("writeoff"), day, None, reason, _clean(f.get("comment"), 500),
                        total, user, at))
-            for mid, q, _ in lines:
-                c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at) VALUES(?,?,?,?,?,?,?,?)",
-                          (mid, -q, prices.get(mid) or 0, "writeoff", did, reason, user, f"{day} {at[11:]}"))
+            for (mid, q, _), g in zip(lines, lot_of):
+                why = reason + (f" (партия {g['lot']})" if g and g["lot"] else "")
+                cur = c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at) VALUES(?,?,?,?,?,?,?,?)",
+                                (mid, -q, prices.get(mid) or 0, "writeoff", did, why[:300], user, f"{day} {at[11:]}"))
+                if g:
+                    c.execute("INSERT INTO stock_lots(material_id, move_id, lot, expires, qty, created_at) VALUES(?,?,?,?,?,?)",
+                              (mid, cur.lastrowid, g["lot"], g["expires"], -q, at))
         return did
 
     def inventory(self, f, user=""):
@@ -335,11 +525,92 @@ class Stock:
                            "; ".join(dict.fromkeys(titles[mid]))[:200], user, _now()))
         return len(need)
 
+    # ======================================================= purchase list --
+    def offers(self):
+        """The last purchase price of every material from every supplier: {material_id: [offer, …] cheapest first}."""
+        rows = self.db.q("""SELECT m.material_id, d.supplier_id, s.name AS supplier_name, m.price, substr(m.at,1,10) AS day, m.id
+                            FROM stock_moves m JOIN stock_docs d ON d.id = m.doc_id JOIN suppliers s ON s.id = d.supplier_id
+                            WHERE m.kind='receipt' AND m.price > 0 AND s.active = 1 ORDER BY m.at, m.id""")
+        last = {}
+        for r in rows:  # later receipts overwrite earlier ones: one, latest price per supplier
+            last[(r["material_id"], r["supplier_id"])] = r
+        out = {}
+        for r in last.values():
+            out.setdefault(r["material_id"], []).append({"supplier_id": r["supplier_id"], "supplier_name": r["supplier_name"],
+                                                         "price": r["price"], "date": r["day"]})
+        for v in out.values():
+            v.sort(key=lambda o: (o["price"], -date.fromisoformat(o["date"]).toordinal() if o["date"] else 0))
+        return out
+
+    def purchase_list(self, cover_days=30):
+        """What to order now, grouped by the cheapest supplier.
+
+        Daily use = what services and write-offs took over the last 60 days / 60. Target stock =
+        max(2 × minimum, minimum + daily use × cover_days). A material is ordered when its usable stock
+        (expired lots do not count) is at or below the minimum, or lasts fewer than 14 days."""
+        try:
+            cover = max(1, min(365, int(float(cover_days or 30))))
+        except (TypeError, ValueError):
+            cover = 30
+        since = date.fromordinal(date.today().toordinal() - USAGE_DAYS).isoformat()
+        used = {r["material_id"]: -r["q"] for r in self.db.q(
+            """SELECT material_id, SUM(qty) AS q FROM stock_moves WHERE kind IN ('service','writeoff') AND substr(at,1,10) > ?
+               GROUP BY material_id""", (since,))}
+        offers = self.offers()
+        sups = {s["id"]: s for s in self.suppliers()}
+        groups = {}
+        for m in self.materials():
+            daily = max(0.0, used.get(m["id"], 0) or 0) / USAGE_DAYS
+            have = round(m["balance"] - m["expired_qty"], 3)
+            days_left = round(have / daily, 1) if daily > 0 else None
+            mn = m["min_qty"] or 0
+            if not (have <= mn or (days_left is not None and days_left < MIN_DAYS_LEFT)):
+                continue
+            target = max(mn * 2, mn + daily * cover)
+            qty = math.ceil(round(target - max(0.0, have), 6))
+            if qty <= 0:
+                continue
+            offs = offers.get(m["id"], [])
+            best = offs[0] if offs else None
+            price = best["price"] if best else (m["price"] or 0)
+            sid = best["supplier_id"] if best else ""
+            g = groups.setdefault(sid, {"supplier_id": sid, "supplier_name": best["supplier_name"] if best else "Поставщик не выбран",
+                                        "phone": (sups.get(sid) or {}).get("phone", ""), "inn": (sups.get(sid) or {}).get("inn", ""),
+                                        "lines": [], "total": 0})
+            g["lines"].append({"material_id": m["id"], "code": m["code"], "name": m["name"], "unit": m["unit"], "category": m["category"],
+                               "balance": m["balance"], "usable": have, "expired_qty": m["expired_qty"], "min_qty": mn,
+                               "daily": round(daily, 3), "days_left": days_left, "target": round(target, 3), "qty": qty,
+                               "price": price, "sum": round(qty * price, 2), "offers": offs,
+                               "why": "ниже минимума" if have <= mn else f"хватит на {days_left:g} дн."})
+            g["total"] = round(g["total"] + qty * price, 2)
+        out = sorted(groups.values(), key=lambda g: (not g["supplier_id"], g["supplier_name"]))
+        return {"cover_days": cover, "groups": out, "count": sum(len(g["lines"]) for g in out),
+                "total": round(sum(g["total"] for g in out), 2)}
+
+    # ============================================================ scanner --
+    def scan(self, code):
+        """A barcode from the scanner → the material with this code (plain EAN or GTIN of a GS1 code) + lot and expiry."""
+        p = parse_scan(code)
+        if not p["code"]:
+            raise ValueError("Пустой штрихкод")
+        keys = [k for k in dict.fromkeys((p["code"], p["barcode"], p["gtin"], p["gtin"].lstrip("0"),
+                                                  "0" + p["code"] if len(p["code"]) == 13 and p["code"].isdigit() else "")) if k]
+        m = None
+        for k in keys:
+            m = self.db.one("SELECT id FROM materials WHERE barcode=? AND active=1", (k,))
+            if m:
+                break
+        mat = next((x for x in self.materials() if x["id"] == m["id"]), None) if m else None
+        return {**p, "material": mat}
+
     def summary(self):
         mats = self.materials()
         today = date.today().isoformat()
         eq = self.equipment_list()
         return {"materials": len(mats), "low": sum(1 for m in mats if m["low"]),
+                "expired": sum(1 for m in mats if m["exp_state"] == "expired"),
+                "expiring": sum(1 for m in mats if m["exp_state"] == "soon"),
+                "alerts": sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"]),
                 "value": round(sum(m["value"] for m in mats if m["balance"] > 0), 2),
                 "equipment": sum(1 for e in eq if e["status"] != "written_off"),
                 "service_due": sum(1 for e in eq if e["status"] != "written_off" and e["next_service"] and e["next_service"] <= today)}

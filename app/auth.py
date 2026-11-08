@@ -145,6 +145,8 @@ METHOD_PERMS = {
     "save_material": "stock_edit", "delete_material": "stock_edit", "save_supplier": "stock_edit",
     "delete_supplier": "stock_edit", "stock_receive": "stock_edit", "stock_write_off": "stock_edit",
     "stock_inventory": "stock_edit", "save_norms": "stock_edit",
+    "stock_lots": ("stock_view", "stock_edit"), "stock_expired": ("stock_view", "stock_edit"),
+    "purchase_list": ("stock_view", "stock_edit"), "stock_scan": ("stock_view", "stock_edit"),
     "equipment_list": ("equipment", "stock_view"), "equipment": ("equipment", "stock_view"),
     "save_equipment": "equipment", "equipment_event": "equipment", "write_off_equipment": "equipment",
     # fiscal receipts

@@ -63,6 +63,7 @@ class Api:
         if config.load_settings().get("demo"):
             import demo
             demo.ensure_stock(self._stock)
+            demo.ensure_stock_lots(self._stock)
 
     # ------------------------------------------------- stock and equipment --
     @staticmethod
@@ -74,8 +75,20 @@ class Api:
         from stock import EQ_STATUS, MOVE_KINDS, UNITS
         return {**self._stock.summary(), "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS}
 
-    def materials(self, q="", only_low=False):
-        return self._stock.materials(q, bool(only_low))
+    def materials(self, q="", only_low=False, only_expiring=False):
+        return self._stock.materials(q, bool(only_low), only_expiring=bool(only_expiring))
+
+    def stock_lots(self, mid):
+        return self._stock.lots(mid)
+
+    def stock_expired(self):
+        return self._stock.expired_lines()
+
+    def purchase_list(self, cover_days=30):
+        return self._stock.purchase_list(cover_days)
+
+    def stock_scan(self, code):
+        return self._stock.scan(code)
 
     def material(self, mid):
         return self._stock.material(mid)
@@ -802,7 +815,10 @@ class Api:
             from auth import _current, Auth
             u = getattr(_current, "user", None)
             if u is None or {"stock_view", "stock_edit"} & set(Auth.effective_perms(u)):
-                st["stock_low"] = sum(1 for m in self._stock.materials() if m["low"] or m["balance"] < 0)
+                mats = self._stock.materials()
+                st["stock_low"] = sum(1 for m in mats if m["low"] or m["balance"] < 0)
+                st["stock_exp"] = sum(1 for m in mats if m["exp_state"])
+                st["stock_alerts"] = sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"])
         except Exception:  # noqa: BLE001
             pass
         try:

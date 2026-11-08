@@ -202,6 +202,42 @@ def ensure_stock(stock):
                        "Плановое техобслуживание, замена фильтров", rnd.choice([0, 3500, 6000]), "Демо", utcnow()))
 
 
+def _ean13(body12):
+    s = sum(int(ch) * (3 if i % 2 else 1) for i, ch in enumerate(body12))
+    return body12 + str((10 - s % 10) % 10)
+
+
+DEMO_LOTS = [  # material, lot, expires in days from today (negative = already expired), qty, price
+    ("m1", "A2611", -10, 20, 60), ("m1", "A2803", 420, 60, 60),
+    ("m5", "G-118", 12, 6, 42), ("m4", "BD-0925", 25, 4, 540), ("m12", "SR-4471", 300, 10, 150),
+]
+
+
+def ensure_stock_lots(stock):
+    """A demo receipt with lots and expiry dates (one lot already expired, two run out soon) and demo barcodes.
+    Separate from ensure_stock so that demo databases made by older versions get it too (once)."""
+    db = stock.db
+    if not db.one("SELECT 1 AS x FROM materials WHERE id='demo_m1'") or db.one("SELECT 1 AS x FROM stock_docs WHERE id='demo_r2'"):
+        return
+    today = date.today()
+    day = (today - timedelta(days=20)).isoformat()
+    total = sum(q * p for _, _, _, q, p in DEMO_LOTS)
+    with db.tx() as c:
+        for n, (mid, *_rest) in enumerate(DEMO_MATERIALS):
+            c.execute("UPDATE materials SET barcode=? WHERE id=? AND COALESCE(barcode,'')=''", (_ean13(f"46070000{n + 1:04d}"), "demo_" + mid))
+        c.execute("INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at) "
+                  "VALUES(?,?,?,?,?,?,?,?,?,?)", ("demo_r2", "receipt", "1131", day, "demo_s2", "", "", total, "Демо", f"{day} 11:00:00"))
+        for mid, lot, days, q, price in DEMO_LOTS:
+            cur = c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",
+                            ("demo_" + mid, q, price, "receipt", "demo_r2", "Демо", f"{day} 11:00:00"))
+            c.execute("INSERT INTO stock_lots(material_id, move_id, lot, expires, qty, created_at) VALUES(?,?,?,?,?,?)",
+                      ("demo_" + mid, cur.lastrowid, lot, (today + timedelta(days=days)).isoformat(), q, f"{day} 11:00:00"))
+        # the second supplier is cheaper for the polishing paste: the purchase list shows both offers
+        c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",
+                  ("demo_m13", 10, 5.5, "receipt", "demo_r2", "Демо", f"{day} 11:00:00"))
+        c.execute("UPDATE stock_docs SET total=total+55 WHERE id='demo_r2'")
+
+
 # ------------------------------------------- demo money, expenses, sources and shifts --
 DEMO_SOURCES = ["Рекомендация знакомых", "Рекомендация знакомых", "Яндекс Карты", "Яндекс Карты", "2ГИС", "Сайт клиники",
                 "Соцсети", "Проходили мимо", "Поиск в интернете", ""]

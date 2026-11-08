@@ -57,6 +57,9 @@ working without it.
 | **Double bookings** | Overlaps between laptops that worked offline are flagged in the calendar and the transfer list, and are not sent to Dentist Plus until resolved |
 | **Fiscal receipts** | 54-FZ receipts on ATOL (DTO 10 web server) or Shtrih-M (COM driver) registers, or a test mode: receipt on payment, partial payment and credit rules, returns, shifts, X/Z reports, failed receipts kept for retry |
 | **Stock** | Materials with minimum levels, supplier invoices, write-offs with a printed act, stock counts, consumption norms per service — billing a service writes its materials off automatically |
+| **Expiry dates and lots** | Lot number and expiry date on every receipt line; lots on hand worked out from the move ledger first-expired-first-out (nothing stored, so edited invoices never break them); expired and soon-to-expire materials highlighted with a filter and a counter on the menu badge; one-click write-off of everything expired |
+| **Purchase list** | One button: everything below the minimum or lasting under 14 days, quantity from the last 60 days' use to cover 30 days, the cheapest supplier by last purchase price with the other offers alongside, grouped by supplier with a printed request, Excel and a pre-filled receipt |
+| **Barcode scanner** | Keyboard-mode USB scanners in the receipt form: a known code adds a line or +1, an unknown one offers to create the material; GS1 / «Честный знак» DataMatrix codes fill the lot and expiry date |
 | **Equipment** | Register with inventory numbers, location, warranty and service dates, service history, write-off with a commission and a printed act |
 | **Sterilization journal** | Autoclave and dry-heat cycles with mode, chemical and biological indicators, load and operator; cycle numbers per sterilizer and year, failed cycles flagged, printable for inspections |
 | **Clinic network** | One computer is the server; reception, surgeries and the director's PC connect over the local network and find it automatically |
@@ -144,7 +147,8 @@ Dentist Plus partner API
 | `app/ai.py` | Optional language-model layer (OpenAI-compatible), anonymization, validation |
 | `app/conflicts.py` | Double-booking detection |
 | `app/fiscal.py` | Fiscal receipts: receipt rules, test mode, ATOL web server and Shtrih-M drivers, shifts, returns |
-| `app/stock.py` | Materials as a ledger of moves, receipts, write-offs, stock counts, service norms, equipment register |
+| `app/stock.py` | Materials as a ledger of moves, receipts, write-offs, stock counts, service norms, lots and expiry (FEFO), purchase list, barcode parsing (GS1), equipment register |
+| `app/ui/stock-lots.js` | Lots in the material card, expired write-off, purchase list window and supplier requests |
 | `app/backup.py` | Automatic backups: online copy, integrity check, rotation, second folder, restore with a safety copy |
 | `app/security.py` | Disk encryption state (BitLocker / Device Encryption) without admin rights |
 | `app/waitlist.py` | Waiting list: entries, filters by doctor and day, booked / removed |
@@ -228,6 +232,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_medcard_tools.py        # 105 checks: allergy rules, sterilization, periodontal chart and voice, files, DICOM, visiograph folder
 .venv\Scripts\python tests\test_documents_tools.py      # 92 checks: signatures, questionnaire, tablet over HTTP, tax certificate, Excel
 .venv\Scripts\python tests\test_money_tools.py          # 107 checks: lab orders and payroll, certificates, bonuses, families, SBP, fiscal rules
+.venv\Scripts\python tests\test_stock_lots.py           # 55 checks: FEFO lots, expiry, expired write-off, purchase list, cheapest supplier, barcode scanner, rights
 ```
 
 Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,
