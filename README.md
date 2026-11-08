@@ -65,6 +65,11 @@ working without it.
 | **Clinic network** | One computer is the server; reception, surgeries and the director's PC connect over the local network and find it automatically |
 | **Staff accounts** | Self-registration, director approval, password sign-in, roles (director, administrator, doctor, assistant) with per-person permission overrides, action journal |
 | **Backups** | A verified, compressed copy of the whole database at start, every 2 hours and on exit, made with SQLite's online backup while the app keeps working; rotation (everything for 2 days, one per day for 30); an optional second folder on a flash drive; one-click restore that first saves the current data and then restarts the app |
+| **Cloud sync** | Every laptop keeps working on its own; when there is internet, changes meet through a multi-clinic cloud server. Row-level replication with a three-way merge: edits of different fields both survive, a clash of one field keeps the later edit and saves the other value in a journal with a «bring back» button, a row deleted on one laptop and edited on another is kept. End-to-end encrypted (AES-256-GCM, clinic key never leaves the clinic), X-rays included |
+| **Subscriptions** | Clinics (tenants) with a 30-day trial, three plans by number of computers, grace period; an expired subscription pauses the sync, never the work on the laptops |
+| **One-click updates** | The program checks a signed `latest.json` (Ed25519, public key built in), downloads the installer, checks size and SHA-256 and lets the director update; the installer closes the program, which makes a backup on exit |
+| **PIN sign-in** | On a shared computer staff pick themselves and type a 4–6-digit PIN; five mistakes lock the PIN until a password sign-in |
+| **Moving a base in** | Patients from IDENT, Dentist Plus or any table (.xlsx / CSV, Windows-1251 too): columns recognised by their titles, editable mapping, preview, duplicates by phone or name + birth date skipped |
 | **Disk encryption check** | Settings show whether the drive with the database is protected by BitLocker / Device Encryption (read without admin rights) and how to turn it on |
 
 | Patient card | Dental formula |
@@ -135,11 +140,17 @@ Dentist Plus partner API
   main.py on every computer (pywebview window, server or client)
         ▲
   ui/  plain HTML/CSS/JS, no framework, works fully offline (fonts bundled)
+
+  replica.py  triggers → sync_dirty · three-way merge · conflict journal
+        │  cloud.py: AES-GCM rows under HMAC names, pull → merge → push (optimistic versions)
+        ▼  https
+  cloud/cloud_server.py  many clinics, one SQLite file each, tenant taken from the device token only
 ```
 
 | File | Role |
 |---|---|
 | `app/main.py` | Window, server/client start, data API, autostart |
+| `app/ui/platform.js` | Settings for the cloud, updates and import; PIN sign-in |
 | `app/installer.py` | Install and update the program folder for the current user: close the running copy, swap folders safely, shortcuts |
 | `app/setup_main.py` | The shipped `.exe`: a small installer carrying the program folder as a zip |
 | `app/server.py` | Clinic server: HTTP API, permission checks, UI files, network discovery |
@@ -164,6 +175,13 @@ Dentist Plus partner API
 | `app/xlsx.py` | Minimal .xlsx writer |
 | `app/lab.py` | Dental lab orders, labs, paying labs |
 | `app/loyalty.py` | Gift certificates, bonus points, families |
+| `app/replica.py` | Replication: change capture by triggers, integer ids made stable (uid / login), three-way merge, conflict journal |
+| `app/cloud.py` | Cloud client: connection codes, clinic key, AES-GCM encryption, pull / merge / push loop, encrypted file transfer |
+| `cloud/cloud_server.py` | Multi-clinic sync server (standard library only): devices, plans and trials, versioned rows, files; admin commands |
+| `app/updates.py` | Update check: signed latest.json, download with size and SHA-256 check, starting the installer |
+| `app/importer.py` | Patient import from .xlsx / CSV: column recognition, phone and date clean-up, duplicates |
+| `tools/update_sign.py` | Developer side: signing key (DPAPI, outside the repository), signing a release |
+| `tools/publish_update.py` | Uploading an update to Yandex Object Storage (S3, SigV4) or a folder |
 | `app/config.py` | Paths, settings, DPAPI password protection, clinic branding |
 | `app/sync.py` | Background worker: online check, pull, purge, push, offline mode |
 | `app/api_client.py` | Partner API client: auth, paging in any shape, retries, writes |
@@ -190,14 +208,20 @@ Dentist Plus partner API
   to a ready server on the test laptop; more on slower disks). The start-up backup and the first sync wait until the window is up.
 - **Secrets.** The API password is encrypted with Windows DPAPI and only decrypts under the same
   Windows account.
+- **Two laptops, no network, same patient.** Integer primary keys (notes, stock moves, staff) differ between
+  laptops, so replicated rows travel under a stable key (a random uid, or the login) and references between
+  tables are translated on the way. A row changed on both sides is merged against the last synced copy, so
+  only a real clash of one field needs a decision — and the losing value is kept, not dropped.
+- **Sending to Dentist Plus twice.** With the cloud, a new patient created on laptop A reaches laptop B too;
+  only the laptop where a row was created sends it to Dentist Plus.
 
 ## Stack
 
 Python 3.11 · pywebview (Edge WebView2) · SQLite · requests · faster-whisper · vanilla HTML/CSS/JS ·
 PyInstaller (single-file exe) · Playwright for screenshots
 
-No web framework and no cloud: the server is the standard-library HTTP server on a clinic computer,
-and the only internet calls go to Dentist Plus.
+No web framework: the clinic server is the standard-library HTTP server on a clinic computer, and the
+cloud server is a single standard-library Python file. Encryption and signatures: `cryptography`.
 
 ## Running it
 
@@ -207,7 +231,11 @@ python -m venv .venv
 .venv\Scripts\python app\main.py          # desktop window, demo data
 .venv\Scripts\python app\devserver.py     # same UI in a browser at http://127.0.0.1:8765
 powershell -File build.ps1                # release\DentalDesk-<version>.exe, older builds move to release\old\
+python cloud\cloud_server.py serve --port 8780          # test cloud (see cloud/README.md for a VPS)
+python cloud\cloud_server.py create-tenant "Clinic"     # prints the connection code
 ```
+
+Set `DD_SIGN_THUMBPRINT` to a code-signing certificate's thumbprint and `build.ps1` signs both exe files.
 
 The app starts in demo mode with an invented clinic.
 
@@ -240,6 +268,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_money_tools.py          # 107 checks: lab orders and payroll, certificates, bonuses, families, SBP, fiscal rules
 .venv\Scripts\python tests\test_stock_lots.py           # 55 checks: FEFO lots, expiry, expired write-off, purchase list, cheapest supplier, barcode scanner, rights
 .venv\Scripts\python tests\test_installer.py            # 15 checks: folder install, in-place update, broken installer, leftovers, data folder untouched
+.venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 
 Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,
@@ -248,7 +277,7 @@ settings, dedupe and validation errors on write, paging variants, timezones and 
 
 ## Status and privacy
 
-Version 2.0: clinic network, staff accounts, stock and equipment, fiscal receipts. All screenshots use an invented demo clinic — no real patient
+Version 2.7: cloud sync between laptops, subscriptions, signed updates, PIN sign-in, base import. All screenshots use an invented demo clinic — no real patient
 appears anywhere in this repository. The app stores medical data locally only; the clinic is advised
 to use Windows login and BitLocker.
 

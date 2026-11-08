@@ -84,11 +84,19 @@ class ClinicServer:
             return a.login(*(list(args) + ["", ""])[:2], ip, agent)
         if name == "logout":
             return a.logout(token)
+        if name == "pin_users":
+            return a.pin_users()
+        if name == "pin_login":
+            return a.pin_login(*(list(args) + ["", ""])[:2], ip, agent)
         user = a.user_for(token)
         if not user:
             raise AuthError("Войдите в программу заново")
         if name == "change_password":
             return a.change_password(user, *(list(args) + ["", ""])[:2])
+        if name == "set_pin":
+            return a.set_pin(user, *(list(args) + ["", ""])[:2])
+        if name == "clear_pin":
+            return a.clear_pin(user)
         if "staff" not in a.effective_perms(user):
             raise AuthError("Раздел «Сотрудники» доступен только директору", 403)
         if name == "staff_list":

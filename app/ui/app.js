@@ -210,6 +210,7 @@ async function refreshStatus() {
   const sb = $("#stockBadge"); if (sb) { const n = st.stock_alerts ?? st.stock_low; sb.hidden = !n; sb.textContent = n || "";
     sb.title = [st.stock_low ? `Заканчиваются: ${st.stock_low}` : "", st.stock_exp ? `Истекает срок: ${st.stock_exp}` : ""].filter(Boolean).join(" · "); }
   const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
+  if (typeof platformStatus === "function") platformStatus(st);
   if (st.backup_warn && st.backup_warn !== S.backupWarned) { S.backupWarned = st.backup_warn; toast(st.backup_warn + " Настройки → «Резервные копии».", true); }
   for (const id of ["#pendingBadge", "#pendingBadge2"]) { const pb = $(id); pb.hidden = !st.pending; pb.textContent = st.pending || ""; }
   // data changed -> refresh current screen
@@ -963,6 +964,7 @@ async function loadSettings() {
   if (typeof loadFilesSettings === "function") loadFilesSettings();
   if (typeof loadTabletSettings === "function") loadTabletSettings();
   if (typeof loadMoneySettings === "function") loadMoneySettings();
+  if (typeof loadPlatformSettings === "function") loadPlatformSettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = (n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
       : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.") + (n.public ? `<div class="warn-line" style="margin-top:6px">${NET_PUBLIC_HINT}</div>` : "");
@@ -1176,12 +1178,14 @@ function renderAuth(mode, note) {
       <label>Пароль<input class="input" type="password" id="aPass" autocomplete="current-password" required></label>
       <div class="auth-ok" id="aOk">${esc(note && /отправлена|изменён/.test(note) ? note : "")}</div>
       <div class="auth-err" id="aErr">${esc(note && !/отправлена|изменён/.test(note) ? note : "")}</div><button class="btn">Войти</button></form>
+      ${st.has_pins ? `<button class="btn ghost pin-entry" id="toPin" type="button">Вход по ПИН-коду</button>` : ""}
       <div class="auth-switch">Новый сотрудник? <button id="toReg">Подать заявку</button></div>`;
   }
   const f = $("#af", box), err = t => { $("#aErr").textContent = t; };
   const tl = $("#toLogin", box); if (tl) tl.onclick = () => renderAuth("login");
   const tr = $("#toReg", box); if (tr) tr.onclick = () => renderAuth("register");
   const rt = $("#retry", box); if (rt) rt.onclick = boot;
+  const tp = $("#toPin", box); if (tp) tp.onclick = () => renderPinLogin();
   setTimeout(() => { const a = box.querySelector("[autofocus]"); if (a) a.focus(); }, 30);
   if (!f) return;
   f.onsubmit = async e => {
@@ -1212,6 +1216,7 @@ async function boot() {
   S.status = {...S.status, brand: st.brand};
   applyBrand(st.brand);
   if (st.user) return startApp(st.user);
+  if (st.has_pins && typeof renderPinLogin === "function") return renderPinLogin();  // shared computer: pick yourself, type the PIN
   renderAuth(st.can_bootstrap ? "bootstrap" : "login");
 }
 boot();

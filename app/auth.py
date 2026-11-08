@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import threading
 import time
@@ -166,6 +167,12 @@ METHOD_PERMS = {
     # work schedules
     "shifts_month": ("schedule_view", "shifts_edit", "staff"), "save_shift": "shifts_edit", "fill_shifts": "shifts_edit",
     "clear_shifts": "shifts_edit",
+    # SaaS platform: cloud sync, updates, moving a base in (director-only actions are checked again in Api)
+    "cloud_status": "settings", "cloud_join": "settings", "cloud_sync": "settings", "cloud_code": "settings",
+    "cloud_leave": "settings", "cloud_revoke": "settings", "cloud_conflicts": "settings",
+    "cloud_conflict_seen": "settings", "cloud_conflict_restore": "settings",
+    "update_status": ANY_USER, "update_check": "settings", "update_download": "settings", "update_install": "settings",
+    "import_preview": "settings", "import_run": "settings", "import_dp_all": "settings",
 }
 
 # Changes worth keeping in the action journal, with a human label.
@@ -208,11 +215,17 @@ AUDITED = {
     "set_patient_marketing": "Источник пациента", "save_shift": "Смена в графике", "fill_shifts": "Заполнение графика",
     "clear_shifts": "Очистка графика",
     "dictate": "Диктовка в медкарту", "speech_download": "Скачивание модели речи", "ai_settings_save": "Настройки ИИ",
+    "cloud_join": "Подключение к облаку клиники", "cloud_code": "Показан код подключения к облаку",
+    "cloud_leave": "Отключение от облака", "cloud_revoke": "Отключение компьютера клиники от облака",
+    "cloud_conflict_restore": "Возврат значения после синхронизации", "update_download": "Скачивание обновления",
+    "update_install": "Установка обновления программы", "import_run": "Перенос пациентов из файла",
+    "import_dp_all": "Загрузка всех пациентов из Dentist Plus",
 }
 
 SESSION_IDLE = timedelta(hours=12)
 PBKDF2_ROUNDS = 240_000
 MAX_FAILS, LOCK_SECONDS = 5, 60
+PIN_MAX_FAILS = 5
 
 
 class AuthError(Exception):
@@ -261,6 +274,10 @@ class Auth:
     def __init__(self, db):
         self.db = db
         db.conn.executescript(SCHEMA)
+        have = {r[1] for r in db.conn.execute("PRAGMA table_info(users)")}
+        for col in ("pin_hash TEXT", "pin_fails INTEGER DEFAULT 0"):  # quick sign-in on a shared computer
+            if col.split()[0] not in have:
+                db.conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
         db.conn.commit()
         self._fails: dict[str, list] = {}
         self._flock = threading.Lock()
@@ -285,6 +302,7 @@ class Auth:
         return {"id": u["id"], "login": u["login"], "name": u["name"], "position": u.get("position") or "",
                 "role": u.get("role") or "", "role_title": ROLES.get(u.get("role") or "", {}).get("title", ""),
                 "status": u["status"], "doctor_id": u.get("doctor_id"), "custom_perms": bool(u.get("perms")),
+                "has_pin": bool(u.get("pin_hash")),
                 "perms": self.effective_perms(u), "created_at": u.get("created_at"), "last_login": u.get("last_login")}
 
     def log(self, user, action, detail="", ip=""):
@@ -321,6 +339,7 @@ class Auth:
         import config
         return {"brand": config.BRAND, "version": config.VERSION,
                 "has_users": self.has_users(), "can_bootstrap": not self.has_users() and is_local,
+                "has_pins": bool(self.db.one("SELECT 1 AS x FROM users WHERE status='active' AND pin_hash IS NOT NULL LIMIT 1")),
                 "user": self.public_user(user) if user else None,
                 "roles": [{"key": k, "title": v["title"], "perms": v["perms"]} for k, v in ROLES.items()],
                 "perm_list": [{"key": k, "title": t} for k, t in PERMS]}
@@ -378,7 +397,60 @@ class Auth:
         if u["status"] != "active":
             raise AuthError("Учётная запись заблокирована. Обратитесь к директору.", 403)
         self.log(u, "Вход", ip=ip)
+        if u.get("pin_fails"):
+            with self.db.tx() as c:
+                c.execute("UPDATE users SET pin_fails=0 WHERE id=?", (u["id"],))
         return {"token": self._new_session(u, ip, agent), "user": self.public_user(u)}
+
+    # ------------------------------------------------------------ PIN code --
+    def pin_users(self):
+        """Who can sign in with a PIN on this computer: names only, for the tiles of the sign-in screen."""
+        return [{"id": u["id"], "name": u["name"], "position": u.get("position") or ROLES.get(u.get("role") or "", {}).get("title", ""),
+                 "locked": (u.get("pin_fails") or 0) >= PIN_MAX_FAILS}
+                for u in self.db.q("SELECT * FROM users WHERE status='active' AND pin_hash IS NOT NULL ORDER BY name")]
+
+    def pin_login(self, uid, pin, ip, agent):
+        key = f"pin|{ip}"
+        self._throttle(key)
+        try:
+            u = self.db.one("SELECT * FROM users WHERE id=?", (int(uid),))
+        except (TypeError, ValueError):
+            u = None
+        if not u or u["status"] != "active" or not u.get("pin_hash"):
+            raise AuthError("Для этого сотрудника вход по ПИН-коду не включён — войдите по паролю")
+        if (u.get("pin_fails") or 0) >= PIN_MAX_FAILS:
+            raise AuthError(f"ПИН-код заблокирован после {PIN_MAX_FAILS} ошибок. Войдите по логину и паролю — ПИН снова заработает.", 403)
+        if not check_password(str(pin or ""), u["pin_hash"]):
+            self._fail(key)
+            with self.db.tx() as c:
+                c.execute("UPDATE users SET pin_fails=COALESCE(pin_fails,0)+1 WHERE id=?", (u["id"],))
+            left = PIN_MAX_FAILS - (u.get("pin_fails") or 0) - 1
+            self.log(None, "Неверный ПИН-код", u["name"], ip)
+            raise AuthError("Неверный ПИН-код" + (f". Осталось попыток: {left}" if left > 0 else
+                                                  ". ПИН заблокирован — войдите по логину и паролю"))
+        with self.db.tx() as c:
+            c.execute("UPDATE users SET pin_fails=0 WHERE id=?", (u["id"],))
+        self.log(u, "Вход по ПИН-коду", ip=ip)
+        return {"token": self._new_session(u, ip, agent), "user": self.public_user(u)}
+
+    def set_pin(self, user, password, pin):
+        if not check_password(str(password or ""), user["pass_hash"]):
+            raise AuthError("Пароль указан неверно", 400)
+        pin = str(pin or "").strip()
+        if not re.fullmatch(r"\d{4,6}", pin):
+            raise AuthError("ПИН-код — от 4 до 6 цифр", 400)
+        if len(set(pin)) == 1 or pin in "0123456789" or pin in "9876543210":
+            raise AuthError("Слишком простой ПИН-код (одинаковые цифры или подряд) — выберите другой", 400)
+        with self.db.tx() as c:
+            c.execute("UPDATE users SET pin_hash=?, pin_fails=0 WHERE id=?", (hash_password(pin), user["id"]))
+        self.log(user, "Установлен ПИН-код")
+        return True
+
+    def clear_pin(self, user):
+        with self.db.tx() as c:
+            c.execute("UPDATE users SET pin_hash=NULL, pin_fails=0 WHERE id=?", (user["id"],))
+        self.log(user, "ПИН-код отключён")
+        return True
 
     def logout(self, token):
         user = self.user_for(token, touch=False)

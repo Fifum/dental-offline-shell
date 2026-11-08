@@ -17,7 +17,14 @@ if __name__ == "__main__":
     worker = SyncWorker(db)
     worker.start()
     port = int(os.environ.get("PORT", 8765))
-    ClinicServer(Api(db, worker), db, port=port, host=os.environ.get("HOST", "127.0.0.1")).start()
+    api = Api(db, worker)
+    ClinicServer(api, db, port=port, host=os.environ.get("HOST", "127.0.0.1")).start()
+    os.environ.setdefault("DD_CLOUD_DEMO", "1")  # dev data is demo data: let it go to a test cloud
+    if os.environ.get("DD_UPDATE_PUBKEY"):  # a throwaway key of tools/dev_update_feed.py, never the real one
+        import config  # noqa: E402
+        config.UPDATE_PUBKEY = os.environ["DD_UPDATE_PUBKEY"]
+    from main import start_platform  # noqa: E402
+    start_platform(api, db)
     print(f"http://127.0.0.1:{port}/")
     while True:
         time.sleep(3600)

@@ -7,6 +7,18 @@ $py = ".\.venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { throw "Нет .venv — создайте: python -m venv .venv; .venv\Scripts\pip install -r requirements.txt" }
 
 $name = "DentalDesk"; $icon = "app\assets\app.ico"; $extra = @()
+
+# Code signing: with a code-signing certificate installed for this user, set DD_SIGN_THUMBPRINT to its thumbprint
+# (certmgr.msc → Личное → Сертификаты). Without it the exe files stay unsigned, as before.
+function Sign-File($path) {
+  if (-not $env:DD_SIGN_THUMBPRINT) { return }
+  $tool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match "\\x64\\" } | Sort-Object FullName | Select-Object -Last 1
+  if (-not $tool) { throw "signtool.exe не найден: установите Windows SDK (компонент Signing Tools)" }
+  & $tool.FullName sign /sha1 $env:DD_SIGN_THUMBPRINT /fd sha256 /tr http://timestamp.digicert.com /td sha256 /d "Dental Desk" $path
+  if ($LASTEXITCODE -ne 0) { throw "Не удалось подписать $path" }
+  Write-Host "подписан: $path"
+}
 if (Test-Path app\brand.json) {
   $brand = Get-Content app\brand.json -Raw -Encoding UTF8 | ConvertFrom-Json
   $name = $brand.exe
@@ -31,6 +43,8 @@ if (Test-Path app\brand.json) {
   app\main.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
+Sign-File "dist\$name\$name.exe"
+
 # 2. The folder in a zip, and a small single-file installer around it: that one exe is what the clinic gets.
 & $py tools\pack_app.py "dist\$name" "build\app.zip"
 if ($LASTEXITCODE -ne 0) { throw "packing failed" }
@@ -52,4 +66,5 @@ Get-ChildItem release -File | Where-Object { $_.Extension -in ".exe", ".zip" -an
   ForEach-Object { Move-Item $_.FullName (Join-Path "release\old" $_.Name) -Force; Write-Host "old: release\old\$($_.Name)" }
 $out = "release\$name-$ver.exe"
 Copy-Item "build\setup\dist\$name.exe" $out -Force
+Sign-File $out
 Write-Host "Готово: $out — один файл-установщик: ставит программу папкой и запускает её"

@@ -10,7 +10,12 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "2.6.1"
+VERSION = "2.7.0"
+
+# Updates: latest.json signed with Ed25519 (tools/update_sign.py). The secret key stays with the developer outside
+# every repository; this public key only checks signatures. The address can also come from brand.json or settings.
+UPDATE_PUBKEY = "623f2977c806d462e1cb10b557927ba529e0fb7cafa6167aa638cb9533b9eeee"
+UPDATE_URL = ""
 
 # Clinic branding lives in app/brand.json (not in the public repo). Without it the app is
 # a neutral "Dental Desk"; the clinic's build ships its own name, mark and data folder.

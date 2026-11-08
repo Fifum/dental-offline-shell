@@ -31,6 +31,8 @@ class Api:
         from fiscal import Fiscal
         from stock import Stock
         self._local = Local(db)
+        self._cloud = None          # cloud.Cloud, set by start_platform (or made on first use)
+        self._cloud_worker = None
         self._stock = Stock(db)
         self._fiscal = Fiscal(db)
         from accounting import Accounting
@@ -835,6 +837,19 @@ class Api:
             if u is None or "settings" in Auth.effective_perms(u):
                 import backup
                 st["backup_warn"] = backup.warning()
+                import cloud
+                if cloud.configured():
+                    c = self._cloud_obj().status()
+                    sub = c.get("subscription") or {}
+                    st["cloud"] = {"error": c["error"], "offline": c["offline"], "pending": c["pending"],
+                                   "conflicts": c["conflicts"], "last_ok": c["last_ok"], "state": sub.get("state"),
+                                   "days_left": sub.get("days_left"), "plan_title": sub.get("plan_title")}
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import updates
+            us = updates.UPDATER.state
+            st["update"] = {"available": us["available"], "latest": us["latest"]}
         except Exception:  # noqa: BLE001
             pass
         return st
@@ -1070,6 +1085,109 @@ class Api:
                 # Windows blocks incoming connections on a «Public» network: tablets and other PCs cannot connect
                 "public": bool(ips) and cats.get(ips[0]) == "Public"}
 
+    # ------------------------------------------------- cloud, updates, import --
+    @staticmethod
+    def _director(what):
+        from auth import _current
+        u = getattr(_current, "user", None)
+        if u is not None and u.get("role") != "director":
+            raise ValueError(f"{what} может только директор")
+
+    def _cloud_obj(self):
+        if self._cloud is None:
+            from cloud import Cloud
+            self._cloud = Cloud(self._db)
+        return self._cloud
+
+    @staticmethod
+    def _cloud_call(fn, *a):
+        from cloud import CloudError
+        try:
+            return fn(*a)
+        except CloudError as e:
+            raise ValueError(str(e)) from None
+
+    def cloud_status(self):
+        return self._cloud_obj().status()
+
+    def cloud_join(self, url, code, name=""):
+        self._director("Подключать клинику к облаку")
+        r = self._cloud_call(self._cloud_obj().join, url, code, name)
+        if self._cloud_worker:
+            self._cloud_worker.trigger()
+        return r
+
+    def cloud_sync(self):
+        return self._cloud_call(self._cloud_obj().sync)
+
+    def cloud_code(self):
+        self._director("Смотреть код подключения")
+        return {"code": self._cloud_call(self._cloud_obj().code_for_others)}
+
+    def cloud_leave(self):
+        self._director("Отключать компьютер от облака")
+        return self._cloud_call(self._cloud_obj().leave)
+
+    def cloud_revoke(self, device_id):
+        self._director("Отключать компьютеры клиники")
+        return self._cloud_call(self._cloud_obj().revoke_device, str(device_id or ""))
+
+    def cloud_conflicts(self, show_seen=False):
+        import replica
+        return replica.conflicts(self._db, bool(show_seen))
+
+    def cloud_conflict_seen(self, cid=None):
+        import replica
+        return replica.conflict_seen(self._db, cid)
+
+    def cloud_conflict_restore(self, cid):
+        import replica
+        return replica.conflict_restore(self._db, cid)
+
+    def update_status(self):
+        import updates
+        st = dict(updates.UPDATER.state)
+        st["configured"] = bool(updates.source())
+        st["installed"] = bool(getattr(sys, "frozen", False))
+        return st
+
+    def update_check(self):
+        import updates
+        updates.UPDATER.check()
+        return self.update_status()
+
+    def update_download(self):
+        self._director("Обновлять программу")
+        import updates
+        updates.UPDATER.start_download()
+        return self.update_status()
+
+    def update_install(self):
+        self._director("Обновлять программу")
+        import updates
+        updates.UPDATER.install()
+        return True
+
+    def import_preview(self, name, data_b64, mapping=None):
+        import files
+        from importer import Importer
+        return Importer(self._db, self._local).preview(name, files.b64_bytes(data_b64), mapping)
+
+    def import_run(self, name, data_b64, mapping):
+        import files
+        from importer import Importer
+        return Importer(self._db, self._local).run(name, files.b64_bytes(data_b64), mapping or {})
+
+    def import_dp_all(self):
+        s = config.load_settings()
+        if s.get("demo"):
+            raise ValueError("Сначала выключите демо-режим и впишите логин и пароль API Dentist Plus")
+        if not (s.get("login") and s.get("pass_enc")):
+            raise ValueError("Сначала впишите логин и пароль API Dentist Plus (Настройки → «Подключение к Dentist Plus»)")
+        config.save_settings({"sync_all_patients": True})
+        self._worker.trigger()
+        return {"ok": True}
+
     # ---------------------------------------------------------- schedule --
     def day(self, day: str, branch_id: str | None = None):
         import conflicts
@@ -1143,6 +1261,8 @@ class Api:
     def get_settings(self):
         s = config.load_settings()
         s["has_password"] = bool(s.pop("pass_enc", ""))
+        for k in ("cloud_token", "cloud_key", "cloud_invite"):  # stay on this computer, never shown
+            s.pop(k, None)
         s["data_dir"] = str(config.data_dir())
         s["autostart"] = self._autostart_get()
         s["history"] = self._db.sync_history()
@@ -1164,6 +1284,10 @@ class Api:
             upd["pass_enc"] = config.protect(new["password"])
         old = config.load_settings()
         if old.get("demo") != upd.get("demo", old.get("demo")):
+            import cloud
+            if cloud.configured():
+                raise ValueError("Компьютер подключён к облаку клиники: демо-режим удалил бы данные на всех компьютерах. "
+                                 "Сначала отключите облако (Настройки → «Облако и подписка»).")
             if not old.get("demo") and self._db.pending_count():
                 raise ValueError("Есть данные, не перенесённые в Dentist Plus. Сначала перенесите их (раздел «Перенос»).")
             self._db.wipe()  # never mix demo and real data
@@ -1272,6 +1396,19 @@ class Api:
                     pass
 
 
+def start_platform(api, db, holder=None):
+    """Cloud sync and the update check, after every table exists (Api and Auth create theirs)."""
+    from cloud import CloudWorker
+    import updates
+    w = CloudWorker(db)
+    api._cloud, api._cloud_worker = w.cloud, w
+    w.start()
+    updates.UpdateWorker().start()
+    if holder is not None:
+        holder.cloud = w
+    return w
+
+
 def single_instance():
     """Return False if the app is already running (named mutex)."""
     if os.name != "nt":
@@ -1335,6 +1472,7 @@ class Host:
         self.worker.start()
         api = Api(db, self.worker)
         self.server = ClinicServer(api, db, port=self.port()).start()
+        start_platform(api, db, self)
         from backup import BackupWorker
         self.backups = BackupWorker(db.path)
         self.backups.start()
@@ -1342,6 +1480,8 @@ class Host:
     def stop(self):
         if self.worker:
             self.worker.stop_flag = True
+        if getattr(self, "cloud", None):
+            self.cloud.stop_flag = True
         if self.server:
             self.server.stop()
         if self.backups:

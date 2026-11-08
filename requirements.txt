@@ -5,6 +5,7 @@ pywin32==311         # Shtrih-M cash register driver (COM)
 faster-whisper==1.2.1  # offline speech recognition for dictation
 pillow==13.0.0      # X-ray and photo previews (also icon generation)
 pydicom==3.0.1      # DICOM X-rays in the patient card
+cryptography==50.0.2  # cloud sync encryption (AES-GCM) and signed updates (Ed25519)
 
 # build and dev tools
 pyinstaller==6.22.3

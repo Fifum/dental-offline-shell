@@ -68,6 +68,14 @@ class Pusher:
         self.counts = {"sent": 0, "errors": 0, "unknown": 0, "warnings": 0, "conflicts": 0}
 
     # ------------------------------------------------------------ helpers
+    def _own(self, rows, table):
+        """With the cloud, every computer sends to Dentist Plus only what was created on it — never twice."""
+        import config
+        import replica
+        dev = config.load_settings().get("cloud_device") or ""
+        foreign = replica.foreign_ids(self.db, table, dev) if dev else set()
+        return [r for r in rows if r["id"] not in foreign]
+
     def _dt(self, s):
         if not s:
             return None
@@ -135,6 +143,7 @@ class Pusher:
         spec = self.wm["patient_create"]
         rows = self.db.q("""SELECT * FROM patients WHERE local=1 AND COALESCE(transferred,0)=0
                             AND remote_id IS NULL AND COALESCE(push_status,'') != 'unknown'""")
+        rows = self._own(rows, "patients")
         for p in rows:
             raw = json.loads(p["detail"] or p["data"] or "{}")
             body = self._body(spec, raw)
@@ -162,6 +171,7 @@ class Pusher:
                             FROM local_visits lv LEFT JOIN patients p ON p.id = lv.patient_id
                             WHERE lv.transferred=0 AND COALESCE(lv.push_status,'') != 'unknown'  -- conflicts are re-checked every time
                             ORDER BY lv.created_at""")
+        rows = self._own(rows, "local_visits")
         for v in rows:
             pid = v["patient_remote"] if v["patient_local"] else v["patient_id"]
             if not pid:
