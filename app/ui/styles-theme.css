@@ -1,0 +1,73 @@
+/* ===== Themes and scrollbars (loaded last) =====
+   Light values are the tokens in styles-brand.css. Dark only redefines tokens, and only on screen:
+   printing and «save as PDF» always use the light values, so documents stay black on white.
+   theme.js sets <html data-theme="light|dark"> before the first paint. */
+
+@media screen{
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#141312; --panel:#1C1B19; --panel2:#211F1D; --hover:#252320; --sunken:#100F0E;
+    --line:#35322E; --line2:#2A2825; --faint:#4A4540;
+    --ink:#EDE9E5; --ink2:#C6BFB8; --muted:#9A938C;
+    --accent:#DB8479; --accent-ink:#DB8479; --accent-soft:#3A2422; --accent-line:#5E3632; --on-accent:#1E0F0D;
+    --graphite:#EDE9E5; --on-graphite:#1A1918; --graphite-hover:#FFFFFF;
+    --beige:#3B3631; --beige2:#272421; --gray-soft:#282623;
+    --ok:#83C99C; --ok-soft:#1D2C22; --ok-line:#30503B;
+    --blue:#97B5E3; --blue-soft:#1D2533; --blue-line:#344863;
+    --warn:#E2B566; --warn-soft:#30271A; --warn-line:#544225; --warn-ink:#EBC98C;
+    --danger:#F2938A; --danger-soft:#371F1D; --danger-line:#62302C; --danger-ink:#F6ADA5;
+    --danger-strong:#B3261E; --danger-hover:#CC3A30;
+    --shadow:0 1px 2px rgba(0,0,0,.35);
+    --shadow-pop:0 1px 2px rgba(0,0,0,.3),0 12px 32px -8px rgba(0,0,0,.6);
+    --shadow-modal:0 2px 6px rgba(0,0,0,.3),0 30px 80px -20px rgba(0,0,0,.75);
+    --scrim:rgba(0,0,0,.58); --veil:rgba(20,19,18,.88); --glow:#221E1B; --watermark:rgba(219,132,121,.045);
+    --focus-ring:rgba(237,233,229,.10); --hatch:#232120; --today-col:#201E1C; --future-row:#211F1C;
+    --ev-done:#222120; --ev-cancel:#2B1E1C; --sw-off:#4E4944; --sw-on:#DB8479; --knob:#F5F2EF; --flash:#4A3F1E;
+    --scroll-thumb:rgba(237,233,229,.20); --scroll-thumb-hover:rgba(237,233,229,.36);
+  }
+
+  /* paper stays paper: document editor, previews and receipts look like the printout */
+  :root[data-theme="dark"] :is(.doc-page,.receipt){
+    color-scheme:light; color:#1E1E1E;
+    --ink:#1E1E1E; --ink2:#4A4744; --muted:#949494; --line:#E5E3DF; --line2:#EFEDEA; --panel:#fff;
+    --accent:#6D0100; --accent-soft:#F5ECEA; --accent-line:#E7CFCB; --blue:#3E5C8A; --blue-soft:#EAEFF6;
+    --blue-line:#C9D5E8; --danger:#B3261E; --beige2:#F3EFEC;
+  }
+  :root[data-theme="dark"] .doc-page{box-shadow:0 2px 18px rgba(0,0,0,.5)}
+
+  /* things whose light look came from shadows or white edges */
+  :root[data-theme="dark"] :is(.gs-drop,.dd-menu,.user-menu,.tmenu){box-shadow:var(--shadow-pop)}
+  :root[data-theme="dark"] .ev{box-shadow:none}
+  :root[data-theme="dark"] .ev:hover{box-shadow:0 6px 16px -6px rgba(0,0,0,.7)}
+  :root[data-theme="dark"] .toast{box-shadow:0 8px 30px rgba(0,0,0,.6)}
+  :root[data-theme="dark"] .gh-band{filter:saturate(.9) brightness(.92)}
+  :root[data-theme="dark"] .diag{background:#0C0B0A;border:1px solid var(--line)}
+}
+
+/* ---- scrollbars: thin, rounded, no arrows, coloured from the tokens ----
+   WebView2 is Chromium: ::-webkit-scrollbar draws the rounded thumb without arrow buttons. The
+   standard properties are only a fallback, because in Chromium they override ::-webkit-scrollbar
+   and bring the arrows back. */
+::-webkit-scrollbar{width:10px;height:10px;background:transparent}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:10px;border:3px solid transparent;background-clip:padding-box;min-height:36px}
+::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover);background-clip:padding-box;border-width:2px}
+::-webkit-scrollbar-thumb:active{background:var(--scroll-thumb-hover);background-clip:padding-box;border-width:2px}
+::-webkit-scrollbar-button{display:none;width:0;height:0}
+::-webkit-scrollbar-corner{background:transparent}
+@supports not selector(::-webkit-scrollbar){
+  *{scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
+}
+
+/* ---- theme switch (Settings and the user menu) ---- */
+.theme-seg{height:34px}
+.theme-seg button{display:inline-flex;align-items:center;gap:7px}
+.theme-seg svg{width:16px;height:16px}
+.um-theme{display:flex;flex-direction:column;gap:6px;padding:8px 10px 10px;border-bottom:1px solid var(--line2);margin-bottom:4px}
+.um-theme>span{font-size:11.5px;color:var(--muted)}
+.um-theme .seg{height:30px;width:100%}
+.um-theme .seg button{flex:1;padding:0 6px;font-size:12px;justify-content:center}
+.user-menu .um-theme .seg button{padding:0 6px;border-radius:0;text-align:center}
+/* the motion layer keeps the menu rendered (display:block) for its fade; keep it a column */
+.user-menu,.user-menu[hidden]{display:flex;flex-direction:column;min-width:250px}
+.theme-switching *,.theme-switching *::before,.theme-switching *::after{transition:none!important}

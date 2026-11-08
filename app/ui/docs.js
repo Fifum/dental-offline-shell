@@ -99,8 +99,15 @@ async function openDocFill(o) {
   let edited = false;
   const page = $("#dfPage", box);
   page.oninput = () => edited = true;
-  const draw = () => {
-    if (edited && !confirm("Текст был изменён вручную. Пересобрать документ из шаблона? Ручные правки пропадут.")) return;
+  let asking = false;
+  const draw = async () => {
+    if (edited) {
+      if (asking) return;  // one question at a time while the user keeps typing
+      asking = true;
+      const go = await ask("Пересобрать документ из шаблона?", {icon: "warn", ok: "Пересобрать", text: "Текст был изменён вручную — эти правки пропадут."});
+      asking = false;
+      if (!go) return;
+    }
     edited = false;
     page.innerHTML = renderDoc(tpl.body, ctx, $$(".df-in", box).map(x => x.value.trim()));
   };
@@ -132,7 +139,7 @@ async function openDocument(did) {
       <button class="btn ghost" id="dvSave">Сохранить правки</button><button class="btn" id="dvPrint">Печать</button></div>`, {wide: true});
   $("#dvPrint", box).onclick = () => printDoc($("#dvPage", box).innerHTML);
   $("#dvSave", box).onclick = async () => { await api.save_document({id: d.id, patient_id: d.patient_id, title: d.title, html: $("#dvPage", box).innerHTML}); toast("Сохранено"); afterChange(); };
-  $("#dvDel", box).onclick = async () => { if (confirm("Удалить документ?")) { await api.delete_document(d.id); closeModal(); afterChange(); } };
+  $("#dvDel", box).onclick = async () => { if (await ask("Удалить документ?", {danger: true, ok: "Удалить"})) { await api.delete_document(d.id); closeModal(); afterChange(); } };
 }
 
 function printDoc(html) {

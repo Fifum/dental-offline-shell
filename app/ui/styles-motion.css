@@ -1,0 +1,224 @@
+/* ===== Motion and finish =====
+   Rules: only transform/opacity move; strong ease-out for things that appear, ease-in-out for things
+   that travel; under 300 ms; exits faster than entries; nothing animates on keyboard actions or on the
+   calendar's periodic refresh; reduced-motion users get fades only. */
+:root{
+  --ease-out:cubic-bezier(.23,1,.32,1);
+  --ease-in-out:cubic-bezier(.77,0,.175,1);
+  --ease-drawer:cubic-bezier(.32,.72,0,1);
+  --shadow-pop:0 1px 2px rgba(30,30,30,.06),0 12px 32px -8px rgba(30,30,30,.18);
+  --shadow-modal:0 2px 6px rgba(30,30,30,.06),0 30px 80px -20px rgba(30,30,30,.35);
+}
+
+/* ---- press feedback: every pressable thing answers the finger ---- */
+.btn,.pill-btn,.icon-btn,.tb-btn,.dd-btn,.seg button,.ia,.chip,.linkbtn,.mode-card,.setup-card,.found button,
+.user-chip>button,.rail .nav,.tab,.dd-menu>button,.user-menu button,.svc,.doc-pick,.ft{
+  transition:transform 160ms var(--ease-out),background-color 150ms ease,border-color 150ms ease,color 150ms ease,box-shadow 150ms ease}
+.btn:active,.pill-btn:active,.icon-btn:active,.tb-btn:active,.dd-btn:active,.seg button:active,.ia:active,.chip:active,
+.mode-card:active,.setup-card:active,.found button:active,.user-chip>button:active,.svc:active,.doc-pick:active,.ft:active{transform:scale(.97)}
+.rail .nav:active{transform:scale(.94)}
+.btn:disabled:active{transform:none}
+
+/* ---- focus that is visible for keyboard users only ---- */
+:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.input:focus-visible{outline:none}
+
+/* ---- modal: centred, rises from 96 %, leaves faster ---- */
+.modal-wrap{backdrop-filter:blur(2px);animation:fadeIn 200ms ease both}
+.modal-wrap.leaving{animation:fadeOut 140ms ease both;pointer-events:none}
+.modal{box-shadow:var(--shadow-modal);border-radius:10px;animation:modalIn 240ms var(--ease-out) both}
+.modal-wrap.leaving .modal{animation:modalOut 140ms ease-in both}
+@keyframes modalIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes modalOut{to{opacity:0;transform:scale(.98)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes fadeOut{to{opacity:0}}
+
+/* ---- visit drawer: iOS-like curve in, quick out ---- */
+.scrim{animation:fadeIn 220ms ease both;backdrop-filter:blur(1px)}
+.drawer{transition:transform 180ms ease-in;will-change:transform}
+.drawer.open{transition:transform 360ms var(--ease-drawer)}
+
+/* ---- dropdowns grow from their trigger ---- */
+.dd-menu,.user-menu{display:block;visibility:hidden;opacity:0;transform:translateY(-4px) scale(.97);transform-origin:top left;
+  transition:opacity 110ms ease,transform 110ms ease,visibility 0s linear 110ms;box-shadow:var(--shadow-pop);pointer-events:none}
+.dd.right .dd-menu,.user-menu{transform-origin:top right}
+.dd.open .dd-menu,.user-menu:not([hidden]){visibility:visible;opacity:1;transform:none;pointer-events:auto;
+  transition:opacity 170ms var(--ease-out),transform 170ms var(--ease-out),visibility 0s}
+.user-menu[hidden]{display:flex}
+
+/* ---- toast: slides up, slides away faster ---- */
+.toast{animation:toastIn 280ms var(--ease-out) both}
+.toast.out{animation:toastOut 160ms ease-in both}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,14px) scale(.98)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes toastOut{to{opacity:0;transform:translate(-50%,8px)}}
+
+/* ---- screens: a short settle when a section opens ---- */
+.view:not([hidden]){animation:viewIn 200ms var(--ease-out) both}
+@keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+#patientCard .pbody{animation:fadeUp 180ms var(--ease-out) both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ---- numbers cards cascade in ---- */
+.stat-row .stat{animation:fadeUp 320ms var(--ease-out) both}
+.stat-row .stat:nth-child(2){animation-delay:40ms}.stat-row .stat:nth-child(3){animation-delay:80ms}
+.stat-row .stat:nth-child(4){animation-delay:120ms}.stat-row .stat:nth-child(5){animation-delay:160ms}
+
+/* ---- rail: one indicator that travels between sections ---- */
+.rail{position:relative}
+.rail .nav.active{box-shadow:none}
+.rail-ind{position:absolute;left:0;top:0;width:3px;border-radius:0 3px 3px 0;background:var(--accent);pointer-events:none;
+  transform:translateY(var(--y,0));height:var(--h,0);transition:transform 300ms var(--ease-in-out),height 300ms var(--ease-in-out),opacity 150ms ease}
+.rail-ind.instant{transition:none}
+
+/* ---- segmented controls: a pill that slides to the chosen option ---- */
+.seg.has-ind{position:relative;isolation:isolate}
+.seg.has-ind button{position:relative;z-index:1;background:transparent!important}
+.seg.has-ind button.on{color:var(--on-graphite)}
+.seg-ind{position:absolute;top:0;bottom:0;left:0;background:var(--graphite);z-index:0;pointer-events:none;
+  transition:transform 260ms var(--ease-in-out),width 260ms var(--ease-in-out)}
+.seg-ind.instant{transition:none}
+
+/* ---- hover only where there is a mouse ---- */
+@media (hover:hover) and (pointer:fine){
+  .tbl tbody tr{transition:background-color 120ms ease}
+  .tbl tbody tr[data-m]:hover td,.tbl tbody tr[data-e]:hover td,.tbl tbody tr[data-d]:hover td,.tbl tbody tr[data-r]:hover td,
+  .tbl tbody tr[data-edit]:hover td,.tbl tbody tr[data-s]:hover td,#patTable tbody tr:hover td{background:var(--hover)}
+  .ev:hover{transform:translateY(-1px);box-shadow:0 6px 16px -6px rgba(30,30,30,.25)}
+  .stat{transition:border-color 150ms ease,box-shadow 150ms ease}
+  .stat:hover{box-shadow:0 6px 18px -12px rgba(30,30,30,.3)}
+}
+
+/* ---- sign-in: quiet brand moment (seen once a day) ---- */
+.auth-screen::before{content:attr(data-mark);position:absolute;right:-2vw;bottom:-8vh;font-family:var(--font-d);font-size:38vw;line-height:1;
+  color:var(--watermark);letter-spacing:-.02em;pointer-events:none;user-select:none;animation:markIn 1.2s var(--ease-out) both}
+@keyframes markIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+.auth-box{position:relative;animation:authIn 420ms var(--ease-out) both}
+.auth-brand .brandmark i{transform-origin:left center;animation:lineIn 700ms var(--ease-out) 150ms both}
+@keyframes lineIn{from{transform:scaleX(.15);opacity:0}to{transform:none;opacity:1}}
+.auth-form>*{animation:fadeUp 360ms var(--ease-out) both}
+.auth-form>*:nth-child(2){animation-delay:40ms}.auth-form>*:nth-child(3){animation-delay:80ms}
+.auth-form>*:nth-child(4){animation-delay:120ms}.auth-form>*:nth-child(5){animation-delay:160ms}
+.auth-form>*:nth-child(6){animation-delay:200ms}.auth-form>*:nth-child(n+7){animation-delay:240ms}
+.auth-err:not(:empty){animation:shake 320ms var(--ease-out)}
+@keyframes shake{20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
+
+/* ---- after sign-in the shell assembles once ---- */
+body.app-enter .rail nav .nav,body.app-enter .rail>.nav{animation:fadeUp 380ms var(--ease-out) both}
+body.app-enter .rail nav .nav:nth-child(2){animation-delay:30ms}body.app-enter .rail nav .nav:nth-child(3){animation-delay:60ms}
+body.app-enter .rail nav .nav:nth-child(4){animation-delay:90ms}body.app-enter .rail nav .nav:nth-child(5){animation-delay:120ms}
+body.app-enter .rail nav .nav:nth-child(6){animation-delay:150ms}body.app-enter .rail nav .nav:nth-child(7){animation-delay:180ms}
+body.app-enter .topbar{animation:fadeIn 400ms ease 100ms both}
+
+/* ---- small finishing touches ---- */
+.badge{animation:badgeIn 260ms var(--ease-out) both}
+@keyframes badgeIn{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:none}}
+.bar i{transition:width 400ms linear}
+.sw::after{transition:transform 180ms var(--ease-out)}
+.offline-veil{animation:fadeIn 220ms ease both}
+.panel{transition:box-shadow 200ms ease}
+.panel:focus-within{box-shadow:0 8px 24px -16px rgba(30,30,30,.3)}
+
+/* ---- reduced motion: keep the fades, drop the movement ---- */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:150ms!important;animation-delay:0ms!important;transition-duration:120ms!important}
+  .modal,.toast,.view,.stat-row .stat,.auth-form>*,.auth-box,body.app-enter .rail .nav,#patientCard .pbody{animation-name:fadeIn!important}
+  .toast{transform:translateX(-50%)!important}
+  .btn:active,.pill-btn:active,.icon-btn:active,.rail .nav:active{transform:none}
+  .drawer,.drawer.open{transition:none}
+  .rail-ind,.seg-ind{transition:none}
+}
+.seg.has-ind button+button{border-left-color:transparent}
+.auth-screen::before{position:fixed}
+
+/* ---- confirm / input dialog (replaces the browser's own) ---- */
+.ask-wrap{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;
+  background:var(--scrim);backdrop-filter:blur(3px);animation:fadeIn 180ms ease both}
+.ask-wrap.leaving{animation:fadeOut 140ms ease both;pointer-events:none}
+.ask{width:min(440px,100%);background:var(--panel);border-radius:12px;box-shadow:var(--shadow-modal);padding:24px 24px 18px;
+  display:grid;grid-template-columns:44px 1fr;gap:4px 16px;animation:askIn 260ms var(--ease-out) both}
+.ask-wrap.leaving .ask{animation:modalOut 140ms ease-in both}
+@keyframes askIn{from{opacity:0;transform:translateY(8px) scale(.95)}to{opacity:1;transform:none}}
+.ask-ic{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--beige2);color:var(--ink);
+  animation:askIc 420ms var(--ease-out) 60ms both}
+.ask-ic svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.ask-ic.danger{background:var(--danger-soft);color:var(--danger)}
+.ask-ic.print{background:var(--blue-soft);color:var(--blue)}
+.ask-ic.warn{background:var(--warn-soft);color:var(--warn)}
+.ask-ic.edit{background:var(--accent-soft);color:var(--accent)}
+@keyframes askIc{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+.ask-c h3{margin:2px 0 6px;font-family:var(--font-d);font-variant:small-caps;font-weight:500;font-size:19px;letter-spacing:.02em;line-height:1.25}
+.ask-c p{margin:0;color:var(--ink2);font-size:13.5px;line-height:1.55}
+.ask-f{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.ask-f label{display:flex;flex-direction:column;gap:5px;font-size:12.5px;font-weight:600;color:var(--ink2)}
+.ask-f .input{height:38px;font-size:14px}
+.ask-err{color:var(--danger);font-size:12.5px;min-height:0;margin-top:6px}
+.ask-err:empty{display:none}
+.ask-b{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.ask-b .btn{min-width:96px;justify-content:center;height:38px}
+.btn.danger-btn{background:var(--danger-strong);border-color:var(--danger-strong);color:#fff}
+.btn.danger-btn:hover{background:var(--danger-hover);border-color:var(--danger-hover)}
+@media (prefers-reduced-motion:reduce){.ask,.ask-ic{animation-name:fadeIn!important}}
+
+/* ---- double bookings ---- */
+.ev.is-conflict{box-shadow:inset 0 0 0 2px var(--danger)!important}
+.ev.is-conflict .ev-t::after{content:"двойная";margin-left:6px;font-size:10px;font-weight:700;color:#fff;background:var(--danger-strong);border-radius:3px;padding:0 4px}
+.conflict-note{margin:0 18px 10px;padding:10px 12px;border-radius:6px;background:var(--danger-soft);color:var(--danger);font-size:13px;border:1px solid var(--danger-line)}
+.pl.conflict{color:var(--danger);font-weight:500}
+
+/* ---- dictation ---- */
+.dict-bar{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;background:var(--panel2);transition:border-color 200ms ease,background-color 200ms ease}
+.dict-bar.rec{border-color:var(--danger);background:var(--danger-soft)}
+.dict-btn{gap:8px}
+.dict-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.dict-bar.rec .dict-btn{background:var(--danger-strong);border-color:var(--danger-strong);color:#fff}
+.dict-state{font-size:13px;display:flex;align-items:center;gap:8px}
+.dict-state.rec-t{color:var(--danger);font-weight:600}
+.dict-dot{width:10px;height:10px;border-radius:50%;background:var(--danger);animation:recPulse 1s ease-in-out infinite}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+.dict-spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin 700ms linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.dict-review{width:min(720px,100%)}
+.dict-text{width:100%;margin-top:10px;font-size:13.5px;line-height:1.5}
+.dict-prev{margin-top:12px;display:flex;flex-direction:column;gap:6px;max-height:42vh;overflow:auto}
+.dict-prev>div{display:grid;grid-template-columns:130px 1fr;gap:10px;font-size:13px;padding:6px 0;border-top:1px solid var(--line2)}
+.dict-prev b{color:var(--ink2);font-weight:600}
+textarea.dict-filled{animation:dictFill 1.6s ease}
+@keyframes dictFill{0%{background:var(--flash)}100%{background:var(--panel)}}
+.voice-models{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 10px}
+.vm{border:1px solid var(--line);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.vm.on{border-color:var(--ink);background:var(--beige2)}
+.vm>div:first-child{display:flex;flex-direction:column;gap:2px}
+.vm-bar{height:6px;border-radius:3px;background:var(--line2);overflow:hidden}
+.vm-bar i{display:block;height:100%;background:var(--accent);transition:width 400ms linear}
+@media (prefers-reduced-motion:reduce){.dict-dot,.dict-spin{animation-duration:2s!important}}
+
+/* ---- template editor «like Word» ---- */
+.tpl-ed2{display:flex;flex-direction:column;gap:10px;min-height:0}
+.tpl-meta{display:grid;grid-template-columns:1.4fr 1fr auto;gap:10px;align-items:end}
+.tpl-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);position:sticky;top:0;z-index:3}
+.tpl-toolbar.off{opacity:.45;pointer-events:none}
+.tb{height:32px;min-width:32px;padding:0 9px;border:1px solid transparent;border-radius:5px;background:none;cursor:pointer;font:inherit;font-size:13px;color:var(--ink)}
+.tb:hover{background:var(--beige2);border-color:var(--line)}
+.tb-sel{height:32px;width:150px;font-size:13px}
+.tb-sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+.tpl-toolbar .dd-menu{min-width:220px}
+.tpl-work{display:grid;grid-template-columns:1fr 250px;gap:14px;min-height:0;flex:1}
+.tpl-paper{background:var(--bg);border-radius:8px;padding:18px;overflow:auto;max-height:62vh}
+.tpl-page{outline:none;min-height:420px;cursor:text}
+.tpl-page:focus{box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 25%,transparent)}
+.tpl-page table.dtab td,.tpl-page table.dtab th{min-width:40px}
+.tpl-html{width:100%;min-height:58vh;font-size:12.5px;line-height:1.55}
+.ph{display:inline-block;padding:0 6px;margin:0 1px;border-radius:4px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);
+  font-family:var(--font);font-size:.86em;font-weight:600;line-height:1.5;white-space:nowrap;user-select:all;cursor:default}
+.ph[data-ph^="input:"]{background:var(--blue-soft);color:var(--blue);border-color:var(--blue-line)}
+.ph-block{display:block;text-align:center;padding:10px;margin:8px 0;border-style:dashed;white-space:normal}
+.page-break{border-top:2px dashed var(--line);color:var(--muted);text-align:center;font-size:11px;margin:14px 0;padding-top:2px;user-select:none}
+.tpl-fields{display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:68vh;padding-right:4px;font-size:12.5px}
+.tpl-fields>.muted{font-size:12px;line-height:1.4}
+.tf-g{display:flex;flex-direction:column;gap:4px}
+.tf-g small{color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;margin-top:4px}
+.tf-b{text-align:left;padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:var(--panel);cursor:pointer;font:inherit;font-size:12.5px;color:var(--ink)}
+.tf-b:hover{border-color:var(--accent);color:var(--accent)}
+.tf-input{color:var(--blue)}
+@media print{.page-break{border:0;color:transparent;height:0;margin:0;page-break-after:always;break-after:page}}
+.tb svg{vertical-align:middle}

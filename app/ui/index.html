@@ -2,23 +2,39 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
+<meta name="color-scheme" content="light dark">
+<script src="theme.js?v=2.1.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=1.3.0">
-<link rel="stylesheet" href="styles-v2.css?v=1.3.0">
-<link rel="stylesheet" href="styles-brand.css?v=1.3.0">
+<link rel="stylesheet" href="styles.css?v=2.1.0">
+<link rel="stylesheet" href="styles-v2.css?v=2.1.0">
+<link rel="stylesheet" href="styles-brand.css?v=2.1.0">
+<link rel="stylesheet" href="styles-auth.css?v=2.1.0">
+<link rel="stylesheet" href="styles-motion.css?v=2.1.0">
+<link rel="stylesheet" href="styles-stock.css?v=2.1.0">
+<link rel="stylesheet" href="styles-office.css?v=2.1.0">
+<link rel="stylesheet" href="styles-theme.css?v=2.1.0">
+<link rel="stylesheet" href="styles-teeth.css?v=2.1.0">
+<link rel="stylesheet" href="styles-voice.css?v=2.1.0">
+<link rel="stylesheet" href="styles-responsive.css?v=2.1.0">
 </head>
 <body>
 <div class="app">
   <aside class="rail">
     <div class="logo" title="Dental Desk"><span class="brandmark"><b>DD</b><i></i><small>offline</small></span></div>
     <nav>
-      <button data-view="schedule" class="nav active" title="Календарь"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span>Календарь</span></button>
-      <button data-view="patients" class="nav" title="Пациенты (Ctrl+K)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1-4 4-6 7.5-6s6.5 2 7.5 6"/></svg><span>Пациенты</span></button>
-      <button data-view="cash" class="nav" title="Касса"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18M7 15h3"/></svg><span>Касса</span></button>
-      <button data-view="journal" class="nav" title="Перенос в Dentist Plus"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg><span>Перенос</span><i class="badge" id="pendingBadge" hidden></i></button>
-      <button data-view="refs" class="nav" title="Шаблоны, услуги, реквизиты"><svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5V8H19M9 12.5h7M9 16h5"/></svg><span>Шаблоны</span></button>
+      <button data-view="schedule" data-perm="schedule_view" class="nav active" title="Календарь"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span>Календарь</span></button>
+      <button data-view="patients" data-perm="patients_view" class="nav" title="Пациенты (Ctrl+K)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1-4 4-6 7.5-6s6.5 2 7.5 6"/></svg><span>Пациенты</span></button>
+      <button data-view="shifts" data-perm-any="schedule_view,shifts_edit,staff" class="nav" title="Графики работы персонала"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M8 3v4M16 3v4M3.5 10h17"/><path d="M12 12.5v3l2 1.2"/></svg><span>Графики</span></button>
+      <button data-view="cash" data-perm="cash_report" class="nav" title="Касса"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18M7 15h3"/></svg><span>Касса</span></button>
+      <button data-view="reports" data-perm="reports" class="nav" title="Отчёты: выручка, врачи, услуги, визиты, долги"><svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M7 16.5v-5M12 16.5V7M17 16.5v-8"/></svg><span>Отчёты</span></button>
+      <button data-view="accounting" data-perm="accounting" class="nav" title="Бухгалтерия: расходы, зарплата, прибыль"><svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15.5h.01M12 15.5h.01M15.5 15.5h.01"/></svg><span>Бухгалтерия</span></button>
+      <button data-view="marketing" data-perm="marketing" class="nav" title="Маркетинг: обзвон, дни рождения, источники"><svg viewBox="0 0 24 24"><path d="M4 10v4h3l8 4.5v-13L7 10z"/><path d="M18.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M7 14l1.2 5h2.3l-1-4.6"/></svg><span>Маркетинг</span></button>
+      <button data-view="journal" data-perm="transfer" class="nav" title="Перенос в Dentist Plus"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg><span>Перенос</span><i class="badge" id="pendingBadge" hidden></i></button>
+      <button data-view="stock" data-perm-any="stock_view,stock_edit,equipment" class="nav" title="Склад и оборудование"><svg viewBox="0 0 24 24"><path d="M3.5 8.5 12 4l8.5 4.5v11h-17z"/><path d="M7.5 19.5v-6h9v6M7.5 16.5h9"/></svg><span>Склад</span><i class="badge" id="stockBadge" hidden></i></button>
+      <button data-view="refs" data-perm="refs" class="nav" title="Шаблоны, услуги, реквизиты"><svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5V8H19M9 12.5h7M9 16h5"/></svg><span>Шаблоны</span></button>
+      <button data-view="staff" data-perm="staff" class="nav" title="Сотрудники и права"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.8-3.4 3.3-5.3 6.5-5.3s5.7 1.9 6.5 5.3"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 14.2c2.6.2 4.3 1.9 5 4.8"/></svg><span>Сотрудники</span><i class="badge" id="staffBadge" hidden></i></button>
     </nav>
-    <button data-view="settings" class="nav" title="Настройки"><svg viewBox="0 0 24 24"><path d="M19.06 9.18 L21.72 9.67 L21.72 14.33 L19.06 14.82 L18.98 15.00 L20.53 17.23 L17.23 20.53 L15.00 18.98 L14.82 19.06 L14.33 21.72 L9.67 21.72 L9.18 19.06 L9.00 18.98 L6.77 20.53 L3.47 17.23 L5.02 15.00 L4.94 14.82 L2.28 14.33 L2.28 9.67 L4.94 9.18 L5.02 9.00 L3.47 6.77 L6.77 3.47 L9.00 5.02 L9.18 4.94 L9.67 2.28 L14.33 2.28 L14.82 4.94 L15.00 5.02 L17.23 3.47 L20.53 6.77 L18.98 9.00 Z"/><circle cx="12" cy="12" r="3.2"/></svg><span>Настройки</span></button>
+    <button data-view="settings" data-perm="settings" class="nav" title="Настройки"><svg viewBox="0 0 24 24"><path d="M19.06 9.18 L21.72 9.67 L21.72 14.33 L19.06 14.82 L18.98 15.00 L20.53 17.23 L17.23 20.53 L15.00 18.98 L14.82 19.06 L14.33 21.72 L9.67 21.72 L9.18 19.06 L9.00 18.98 L6.77 20.53 L3.47 17.23 L5.02 15.00 L4.94 14.82 L2.28 14.33 L2.28 9.67 L4.94 9.18 L5.02 9.00 L3.47 6.77 L6.77 3.47 L9.00 5.02 L9.18 4.94 L9.67 2.28 L14.33 2.28 L14.82 4.94 L15.00 5.02 L17.23 3.47 L20.53 6.77 L18.98 9.00 Z"/><circle cx="12" cy="12" r="3.2"/></svg><span>Настройки</span></button>
   </aside>
 
   <main>
@@ -28,16 +44,17 @@
         <input id="gSearch" placeholder="Поиск пациента (Ctrl+K)" autocomplete="off">
         <div class="gs-drop" id="gDrop" hidden></div>
       </div>
-      <button class="tb-btn" id="tbAddPatient"><svg viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M3 20c1-4 3.5-6 7-6 1.6 0 3 .4 4.1 1.2M18 14v6M15 17h6"/></svg>Добавить пациента</button>
-      <button class="tb-btn" id="tbJournal"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg>Перенести в DP<i class="badge sm" id="pendingBadge2" hidden></i></button>
+      <button class="tb-btn" id="tbAddPatient" data-perm="patients_edit" title="Добавить пациента"><svg viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M3 20c1-4 3.5-6 7-6 1.6 0 3 .4 4.1 1.2M18 14v6M15 17h6"/></svg><span class="tb-l">Добавить пациента</span></button>
+      <button class="tb-btn" id="tbJournal" data-perm="transfer" title="Перенести изменения в Dentist Plus"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg><span class="tb-l">Перенести в DP</span><i class="badge sm" id="pendingBadge2" hidden></i></button>
       <div class="sync-pill" id="syncCard" title="">
         <span class="dot" id="syncDot"></span>
         <span class="sp-text"><b id="syncTitle">Загрузка…</b><small id="syncSub"></small></span>
         <div class="bar"><i id="syncBar"></i></div>
         <button class="icon-btn" id="syncBtn" title="Обновить сейчас"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.4M4 4v3.5h3.5M4 13a8 8 0 0 0 14.6 4.4M20 20v-3.5h-3.5"/></svg></button>
       </div>
-    </header>
-    <div class="banner" id="banner" hidden></div>
+      <div class="user-chip" id="userChip"><button id="ucBtn"><span class="av" id="ucAv">?</span><span class="uc-t"><b id="ucName"></b><small id="ucRole"></small></span></button>
+        <div class="user-menu" id="ucMenu" hidden><div class="um-theme"><span>Тема</span><div class="seg theme-seg" data-theme-seg><button type="button" data-tp="light">Светлая</button><button type="button" data-tp="dark">Тёмная</button><button type="button" data-tp="system">Системная</button></div></div><button id="ucPass">Сменить пароль</button><button id="ucServer" hidden>Сменить сервер</button><button id="ucOut">Выйти</button></div></div>
+    </header>    <div class="banner" id="banner" hidden></div>
 
     <!-- ===================== SCHEDULE ===================== -->
     <section class="view" id="view-schedule">
@@ -60,7 +77,7 @@
         </div>
         <button class="pill-btn" id="todayBtn">Сегодня</button>
         <button class="icon-btn" id="printBtn" title="Распечатать расписание"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button>
-        <button class="btn" id="newVisitBtn"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M12 9.5v7M8.5 13h7"/></svg>Новый визит</button>
+        <button class="btn" id="newVisitBtn" data-perm="schedule_edit"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M12 9.5v7M8.5 13h7"/></svg>Новый визит</button>
       </header>
       <div class="cal-sub"><h1 id="dayTitle">Расписание</h1><span class="muted" id="daySub"></span></div>
       <div class="week" id="weekStrip" hidden></div>
@@ -107,6 +124,41 @@
       <div class="card-scroll" id="cashBody"></div>
     </section>
 
+    <!-- ===================== REPORTS ===================== -->
+    <section class="view" id="view-reports" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Отчёты</h1><span class="muted">Выручка, врачи, услуги, визиты и долги пациентов</span></div>
+        <div class="seg" id="repTabs"><button data-k="revenue" class="on">Выручка</button><button data-k="doctors">Врачи</button><button data-k="services">Услуги</button><button data-k="visits">Визиты</button><button data-k="debts">Долги</button></div>
+      </header>
+      <div class="card-scroll" id="repBody"></div>
+    </section>
+
+    <!-- ===================== ACCOUNTING ===================== -->
+    <section class="view" id="view-accounting" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Бухгалтерия</h1><span class="muted">Поступления, расходы, зарплата сотрудников и прибыль</span></div>
+        <div class="seg" id="accTabs"><button data-k="summary" class="on">Сводка</button><button data-k="expenses">Расходы</button><button data-k="payroll">Зарплата</button></div>
+      </header>
+      <div class="card-scroll" id="accBody"></div>
+    </section>
+
+    <!-- ===================== MARKETING ===================== -->
+    <section class="view" id="view-marketing" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Маркетинг</h1><span class="muted">Обзвон пациентов, дни рождения и источники</span></div>
+        <div class="seg" id="mkTabs"><button data-k="calls" class="on">Обзвон</button><button data-k="birthdays">Дни рождения</button><button data-k="sources">Источники</button></div>
+      </header>
+      <div class="card-scroll" id="mkBody"></div>
+    </section>
+
+    <!-- ===================== WORK SHIFTS ===================== -->
+    <section class="view" id="view-shifts" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Графики работы</h1><span class="muted">Смены врачей и сотрудников по дням</span></div>
+      </header>
+      <div class="card-scroll" id="shBody"></div>
+    </section>
+
     <!-- ===================== JOURNAL ===================== -->
     <section class="view" id="view-journal" hidden>
       <header class="top">
@@ -131,10 +183,46 @@
       <div class="card-scroll" id="refsBody"></div>
     </section>
 
+    <!-- ===================== STOCK ===================== -->
+    <section class="view" id="view-stock" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Склад</h1><span class="muted">Материалы, приход, списание, инвентаризация, оборудование</span></div>
+        <div class="seg" id="stockTabs"><button data-k="balance" class="on">Остатки</button><button data-k="docs">Документы</button><button data-k="moves">Движение</button><button data-k="equipment">Оборудование</button><button data-k="norms">Нормы списания</button><button data-k="suppliers">Поставщики</button></div>
+      </header>
+      <div class="card-scroll" id="stockBody"></div>
+    </section>
+
+    <!-- ===================== STAFF ===================== -->    <section class="view" id="view-staff" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Сотрудники</h1><span class="muted">Заявки, роли, права и журнал действий</span></div>
+        <div class="seg" id="staffTabs"><button data-s="people" class="on">Сотрудники</button><button data-s="audit">Журнал действий</button></div>
+      </header>
+      <div class="card-scroll" id="staffBody"></div>
+    </section>
+
     <!-- ===================== SETTINGS ===================== -->
     <section class="view" id="view-settings" hidden>
       <header class="top"><div class="title-block"><h1>Настройки</h1><span class="muted" id="verLbl"></span></div></header>
       <div class="settings">
+        <div class="panel">
+          <h3>Оформление</h3>
+          <p class="hint">Тема сохраняется для вашей учётной записи. «Как в системе» следует за светлым или тёмным режимом Windows. Печать и PDF всегда светлые.</p>
+          <div class="seg theme-seg" data-theme-seg><button type="button" data-tp="light">Светлая</button><button type="button" data-tp="dark">Тёмная</button><button type="button" data-tp="system">Как в системе</button></div>
+        </div>
+
+        <div class="panel" id="backupPanel">
+          <h3>Резервные копии</h3>
+          <p class="hint">Программа сама сохраняет копию всей базы: при запуске, каждые несколько часов и при закрытии. Каждая копия проверяется. Добавьте вторую папку на флешке или другом диске — тогда данные переживут поломку ноутбука.</p>
+          <div id="backupBody">…</div>
+        </div>
+
+        <div class="panel">
+          <h3>Сеть клиники</h3>
+          <p class="hint">Этот компьютер — сервер: здесь хранится база. На других компьютерах установите программу, выберите «Подключиться к серверу» — она найдёт сервер сама. Если не нашла, введите один из адресов ниже.</p>
+          <div class="net-box" id="netBox">…</div>
+          <div class="row"><button class="btn ghost" id="netFw">Разрешить подключения в брандмауэре Windows</button><span class="msg" id="netMsg"></span></div>
+        </div>
+
         <div class="panel">
           <h3>Подключение к Dentist Plus</h3>
           <p class="hint">Логин и пароль партнёрского API выдаёт поддержка Dentist Plus. Пароль хранится зашифрованным средствами Windows и не покидает этот компьютер.</p>
@@ -149,6 +237,18 @@
             <button class="btn ghost" id="sTest">Проверить подключение</button>
             <span class="msg" id="sMsg"></span>
           </div>
+        </div>
+
+        <div class="panel">
+          <h3>Голос и ИИ</h3>
+          <p class="hint">Диктовка в медкарту: речь распознаётся прямо на этом компьютере, без интернета, звук не сохраняется.</p>
+          <div id="voiceSettings"></div>
+        </div>
+
+        <div class="panel">
+          <h3>Касса (ККТ)</h3>
+          <p class="hint">Фискальные чеки по 54-ФЗ: приход при оплате, возврат, смены, X- и Z-отчёты. Пока кассы нет — включите тестовый режим.</p>
+          <div id="fiscalSettings"></div>
         </div>
 
         <div class="panel">
@@ -183,6 +283,17 @@
           <div class="row"><span class="muted" id="dataDir"></span><button class="btn ghost small" id="openDir">Открыть папку с данными</button></div>
         </div>
 
+        <div class="panel">
+          <h3>Отчёт для разработчика</h3>
+          <p class="muted">Если программа работает не так, как нужно, нажмите кнопку и отправьте файл разработчику. В отчёте нет данных пациентов, паролей и ключей: только настройки, ошибки и названия полей из Dentist Plus.</p>
+          <div class="row">
+            <button class="btn" id="devRep">Создать отчёт</button>
+            <button class="btn ghost small" id="devRepShow" hidden>Показать файл</button>
+            <button class="btn ghost small" id="devRepCopy" hidden>Скопировать текст</button>
+          </div>
+          <div class="msg" id="devRepMsg"></div>
+        </div>
+
         <details class="panel adv">
           <summary>Для специалиста: тонкая настройка API</summary>
           <div class="form">
@@ -207,13 +318,31 @@
 </div>
 <div class="modal-wrap" id="modal" hidden><div class="modal" id="modalBox"></div></div>
 <div class="toast" id="toast" hidden></div>
+<div class="auth-screen" id="authScreen" hidden><div class="auth-box" id="authBox"></div></div>
+<div class="offline-veil" id="offlineVeil" hidden><div class="auth-box"><h2>Нет связи с сервером</h2>
+  <p class="lead">Компьютер-сервер клиники не отвечает. Проверьте, что он включён и программа на нём запущена. Повторяем попытку каждые 5 секунд.</p>
+  <div class="scan"><i></i>Подключаемся…</div>
+  <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
+  <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=1.3.0"></script>
-<script src="booking.js?v=1.3.0"></script>
-<script src="record.js?v=1.3.0"></script>
-<script src="docs.js?v=1.3.0"></script>
-<script src="billing.js?v=1.3.0"></script>
-<script src="journal.js?v=1.3.0"></script>
-<script src="refs.js?v=1.3.0"></script>
+<script src="app.js?v=2.1.0"></script>
+<script src="booking.js?v=2.1.0"></script>
+<script src="record.js?v=2.1.0"></script>
+<script src="docs.js?v=2.1.0"></script>
+<script src="billing.js?v=2.1.0"></script>
+<script src="journal.js?v=2.1.0"></script>
+<script src="refs.js?v=2.1.0"></script>
+<script src="tpl-editor.js?v=2.1.0"></script>
+<script src="staff.js?v=2.1.0"></script>
+<script src="stock.js?v=2.1.0"></script>
+<script src="fiscal.js?v=2.1.0"></script>
+<script src="backup.js?v=2.1.0"></script>
+<script src="reports.js?v=2.1.0"></script>
+<script src="accounting.js?v=2.1.0"></script>
+<script src="marketing.js?v=2.1.0"></script>
+<script src="shifts.js?v=2.1.0"></script>
+<script src="dictate.js?v=2.1.0"></script>
+<script src="motion.js?v=2.1.0"></script>
+<script src="responsive.js?v=2.1.0"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 """Demo data so the app can be shown before API credentials are available."""
 from __future__ import annotations
 
+import json
 import random
 from datetime import date, datetime, timedelta
 
@@ -121,3 +122,166 @@ def ensure_demo(db, force=False):
     db.meta_set("demo_built", today.isoformat())
     db.meta_set("last_ok", utcnow())
     db.log_sync(utcnow(), True, "Демо-данные сгенерированы", {"visits": len(rows), "patients": len(patients)})
+
+
+# ------------------------------------------------------------------ demo stock --
+DEMO_MATERIALS = [  # id, code, name, unit, category, min, price, start
+    ("m1", "АН-01", "Артикаин 4% (Ультракаин), карпула 1,7 мл", "карп", "Анестезия", 50, 62, 140),
+    ("m2", "АН-02", "Иглы карпульные 30G", "шт", "Анестезия", 50, 14, 180),
+    ("m3", "ПЛ-01", "Композит светоотверждаемый, шприц 4 г", "г", "Пломбировочные", 20, 310, 36),
+    ("m4", "ПЛ-02", "Адгезивная система, флакон 5 мл", "мл", "Пломбировочные", 5, 520, 12),
+    ("m5", "ПЛ-03", "Протравочный гель 37%", "мл", "Пломбировочные", 5, 45, 8),
+    ("m6", "ЭН-01", "Эндодонтические файлы, набор", "набор", "Эндодонтия", 5, 950, 9),
+    ("m7", "ЭН-02", "Гуттаперчевые штифты, упаковка", "уп", "Эндодонтия", 3, 480, 2),
+    ("m8", "РС-01", "Перчатки нитриловые, пара", "пара", "Расходники", 100, 9, 420),
+    ("m9", "РС-02", "Маски медицинские", "шт", "Расходники", 100, 4, 260),
+    ("m10", "РС-03", "Слюноотсосы", "шт", "Расходники", 100, 3, 85),
+    ("m11", "ОР-01", "Слепочная масса А-силикон", "г", "Ортопедия", 300, 4.5, 900),
+    ("m12", "ХР-01", "Шовный материал, нить 4-0", "шт", "Хирургия", 10, 160, 24),
+    ("m13", "ГГ-01", "Паста полировочная", "г", "Гигиена", 50, 6, 40),
+]
+DEMO_NORMS = {  # demo service index -> [(material, qty)]
+    1: [("m1", 1), ("m2", 1), ("m3", 0.4), ("m4", 0.1), ("m5", 0.2), ("m8", 2), ("m9", 1), ("m10", 2)],
+    2: [("m1", 2), ("m2", 2), ("m6", 0.3), ("m7", 0.2), ("m3", 0.4), ("m8", 3), ("m9", 1), ("m10", 2)],
+    5: [("m2", 1), ("m8", 1)],
+    6: [("m13", 3), ("m8", 1), ("m9", 1), ("m10", 2)],
+    7: [("m1", 1), ("m2", 1), ("m8", 2), ("m9", 1), ("m10", 1)],
+    8: [("m1", 2), ("m2", 2), ("m12", 1), ("m8", 2), ("m9", 1), ("m10", 2)],
+    12: [("m11", 30), ("m8", 1)],
+}
+DEMO_EQUIPMENT = [  # id, inv, name, category, model, location, price, purchase, next_service(days from today)
+    ("e1", "00001", "Стоматологическая установка", "Установки", "Установка с нижней подачей", "Кабинет 1 · Кресло 1", 1450000, "2023-03-14", 40),
+    ("e2", "00002", "Стоматологическая установка", "Установки", "Установка с верхней подачей", "Кабинет 2 · Кресло 2", 1380000, "2023-09-02", 75),
+    ("e3", "00003", "Автоклав класса B, 23 л", "Стерилизация", "Автоклав 23 л", "Стерилизационная", 410000, "2022-11-20", -5),
+    ("e4", "00004", "Компрессор безмасляный", "Инженерное", "Компрессор на 3 установки", "Техническое помещение", 265000, "2022-11-20", 12),
+    ("e5", "00005", "Радиовизиограф", "Диагностика", "Датчик размера 1", "Кабинет 1 · Кресло 1", 390000, "2024-02-10", 180),
+    ("e6", "00006", "Ультразвуковой скалер", "Гигиена", "Скалер с подсветкой", "Кабинет 2 · Кресло 2", 98000, "2024-06-01", 90),
+    ("e7", "00007", "Апекслокатор", "Эндодонтия", "Апекслокатор с дисплеем", "Кабинет 1 · Кресло 1", 64000, "2021-05-18", 120),
+    ("e8", "00008", "Наконечник турбинный", "Наконечники", "Турбинный наконечник", "Кабинет 2 · Кресло 2", 42000, "2020-01-15", 30),
+]
+
+
+def ensure_stock(stock):
+    """Invented stock and equipment for the demo clinic (only once, only if nothing is there yet)."""
+    db = stock.db
+    if db.one("SELECT 1 AS x FROM materials WHERE id LIKE 'demo_%' LIMIT 1") or db.one("SELECT 1 AS x FROM materials LIMIT 1"):
+        return
+    rnd = random.Random(7)
+    today = date.today()
+    with db.tx() as c:
+        c.execute("INSERT OR IGNORE INTO suppliers VALUES('demo_s1','ООО «Дентал Снаб»','+7 900 000-11-22','7700000000','',1)")
+        c.execute("INSERT OR IGNORE INTO suppliers VALUES('demo_s2','ООО «Стоматорг»','+7 900 000-33-44','7800000000','',1)")
+        for mid, code, name, unit, cat, mn, price, start in DEMO_MATERIALS:
+            c.execute("INSERT INTO materials(id, code, name, unit, category, min_qty, price, barcode, comment, active, created_at) "
+                      "VALUES(?,?,?,?,?,?,?,?,?,1,?)", ("demo_" + mid, code, name, unit, cat, mn, price, "", "", utcnow()))
+        for n, (sup, days) in enumerate((("demo_s1", 25), ("demo_s2", 9))):
+            day = (today - timedelta(days=days)).isoformat()
+            lines = [m for i, m in enumerate(DEMO_MATERIALS) if i % 2 == n]
+            total = sum(m[6] * m[7] for m in lines)
+            c.execute("INSERT INTO stock_docs VALUES(?,?,?,?,?,?,?,?,?,?)",
+                      (f"demo_r{n}", "receipt", f"{1040 + n * 37}", day, sup, "", "", total, "Демо", f"{day} 10:00:00"))
+            for m in lines:
+                c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",
+                          ("demo_" + m[0], m[7], m[6], "receipt", f"demo_r{n}", "Демо", f"{day} 10:00:00"))
+        for m in DEMO_MATERIALS:  # some use over the last weeks
+            used = round(m[7] * rnd.uniform(0.25, 0.8 if m[0] not in ("m4", "m7", "m12") else 1.0), 1 if m[3] in ("г", "мл") else 0)
+            day = (today - timedelta(days=rnd.randint(1, 8))).isoformat()
+            c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, reason, user_name, at) VALUES(?,?,?,?,?,?,?)",
+                      ("demo_" + m[0], -used, m[6], "service", "Приёмы за период", "Демо", f"{day} 18:00:00"))
+        for si, items in DEMO_NORMS.items():
+            for mid, q in items:
+                c.execute("INSERT OR IGNORE INTO service_materials VALUES(?,?,?)", (f"demo_{si}", "demo_" + mid, q))
+        for eid, inv, name, cat, model, loc, price, bought, nxt in DEMO_EQUIPMENT:
+            c.execute("""INSERT INTO equipment(id, inv_number, name, category, model, serial, location, responsible, purchase_date,
+                         price, warranty_until, next_service, status, comment, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      ("demo_" + eid, inv, name, cat, model, f"SN{rnd.randint(100000, 999999)}", loc, "", bought, price,
+                       (date.fromisoformat(bought) + timedelta(days=730)).isoformat(), (today + timedelta(days=nxt)).isoformat(),
+                       "repair" if eid == "e8" else "in_use", "", utcnow()))
+            c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, cost, user_name, created_at) VALUES(?,?,?,?,?,?,?)",
+                      ("demo_" + eid, "service", (today - timedelta(days=rnd.randint(60, 200))).isoformat(),
+                       "Плановое техобслуживание, замена фильтров", rnd.choice([0, 3500, 6000]), "Демо", utcnow()))
+
+
+# ------------------------------------------- demo money, expenses, sources and shifts --
+DEMO_SOURCES = ["Рекомендация знакомых", "Рекомендация знакомых", "Яндекс Карты", "Яндекс Карты", "2ГИС", "Сайт клиники",
+                "Соцсети", "Проходили мимо", "Поиск в интернете", ""]
+DEMO_EXPENSES = [  # day of month, category, amount, comment
+    (2, "Аренда", 180000, "Аренда помещения"), (5, "Коммунальные услуги", 14200, "Электричество, вода"),
+    (6, "Связь и интернет", 3900, "Интернет и телефония"), (9, "Зуботехническая лаборатория", 46500, "Коронки и каппы"),
+    (12, "Материалы и закупки", 38700, "Расходные материалы"), (15, "Реклама", 25000, "Реклама на картах"),
+    (20, "Банк и эквайринг", 6100, "Комиссия эквайринга"), (25, "Налоги и взносы", 41000, "Взносы за сотрудников")]
+DEMO_PAY = {"11": (30, 0), "12": (35, 0), "13": (30, 0), "14": (30, 0), "15": (25, 30000)}  # doctor -> (%, salary)
+
+
+def ensure_office(db):
+    """Invoices with payments for past visits, expenses, pay schemes, patient sources and shifts (demo only, once)."""
+    from accounting import Accounting
+    from marketing import Marketing
+    from shifts import Shifts
+    for m in (Accounting, Marketing, Shifts):
+        m(db)  # tables
+    if db.one("SELECT 1 AS x FROM expenses WHERE id LIKE 'demo_%' LIMIT 1"):
+        return
+    srv = db.q("SELECT id, code, title, price FROM services WHERE id LIKE 'demo_%' ORDER BY id")
+    if not srv:
+        return
+    rnd = random.Random(11)
+    today = date.today()
+    past = db.q("""SELECT id, patient_id, doctor_id, start FROM visits WHERE start >= ? AND start < ? AND status='Завершён'
+                   ORDER BY start""", ((today - timedelta(days=30)).isoformat(), today.isoformat()))
+    with db.tx() as c:
+        for n, v in enumerate(past):
+            if rnd.random() > 0.55:
+                continue
+            items = []
+            for s in rnd.sample(srv, rnd.choice([1, 1, 2])):
+                qty = rnd.choice([1, 1, 1, 2])
+                items.append({"service_id": s["id"], "code": s["code"], "title": s["title"], "price": s["price"], "qty": qty,
+                              "discount": 0, "sum": round(s["price"] * qty, 2)})
+            total = round(sum(i["sum"] for i in items), 2)
+            at = v["start"][:16].replace("T", " ")
+            r = rnd.random()
+            paid = total if r < 0.86 else round(total * 0.5, 2) if r < 0.95 else 0
+            st = "Оплачен" if paid >= total else "Частично оплачен" if paid else "Не оплачен"
+            iid = f"demo_i{n}"
+            c.execute("""INSERT OR IGNORE INTO invoices(id, patient_id, visit_id, doctor_id, items, total, discount, status, comment,
+                         created_at, transferred, transferred_at, kind) VALUES(?,?,?,?,?,?,0,?,?,?,1,?,'invoice')""",
+                      (iid, v["patient_id"], v["id"], v["doctor_id"], json.dumps(items, ensure_ascii=False), total, st, "", at, at))
+            if paid:
+                c.execute("""INSERT OR IGNORE INTO payments(id, invoice_id, patient_id, amount, method, comment, created_at, transferred,
+                             transferred_at) VALUES(?,?,?,?,?,?,?,1,?)""",
+                          (f"demo_p{n}", iid, v["patient_id"], paid, rnd.choice(["Карта", "Карта", "Наличные", "Перевод"]), "", at, at))
+        for n, v in enumerate(past[:6]):  # advances: paid ahead for the next stage
+            c.execute("""INSERT OR IGNORE INTO payments(id, invoice_id, patient_id, amount, method, comment, created_at, transferred,
+                         transferred_at) VALUES(?,NULL,?,?,?,?,?,1,?)""",
+                      (f"demo_a{n}", v["patient_id"], rnd.choice([5000, 10000, 15000]), "Карта", "Аванс за лечение",
+                       v["start"][:16], v["start"][:16]))
+        for n, v in enumerate(past[:6]):  # treatment plans that were never started
+            items = [{"title": s["title"], "price": s["price"], "qty": 1, "sum": s["price"]} for s in srv[n % 5:n % 5 + 3]]
+            c.execute("""INSERT OR IGNORE INTO invoices(id, patient_id, doctor_id, items, total, discount, status, comment, created_at,
+                         transferred, kind, plan_status, title) VALUES(?,?,?,?,?,0,'План','',?,1,'plan','Предварительный',?)""",
+                      (f"demo_pl{n}", v["patient_id"], v["doctor_id"], json.dumps(items, ensure_ascii=False),
+                       sum(i["sum"] for i in items), v["start"][:16], "План лечения"))
+        for back in (1, 0):
+            y, m = (today.year, today.month - back) if today.month - back > 0 else (today.year - 1, 12)
+            for day, cat, amount, comment in DEMO_EXPENSES:
+                d = date(y, m, min(day, 28))
+                if d <= today:
+                    c.execute("INSERT INTO expenses VALUES(?,?,?,?,?,?,?,?,?,?)",
+                              (f"demo_e{back}_{day}", d.isoformat(), cat, amount, "Безналичный перевод", None, None, comment,
+                               "Демо", utcnow()))
+        for did, (pct, fixed) in DEMO_PAY.items():
+            c.execute("INSERT OR IGNORE INTO salary_schemes VALUES(?,?,?,?,?,?)", (f"d:{did}", pct, fixed, "paid", 0, utcnow()))
+        for p in db.q("SELECT id FROM patients"):
+            s = rnd.choice(DEMO_SOURCES)
+            if s:
+                c.execute("INSERT OR IGNORE INTO patient_marketing VALUES(?,?,0,?)", (p["id"], s, utcnow()))
+        first = today.replace(day=1)
+        for k, did in enumerate(DEMO_PAY):
+            d = first
+            while d.month == first.month:
+                if d.weekday() < 6 and (d.weekday() + k) % 6 != 5:  # each doctor has one weekday off
+                    start, end = ("09:00", "15:00") if k % 2 else ("12:00", "19:00") if d.weekday() % 2 else ("09:00", "19:00")
+                    c.execute('INSERT OR IGNORE INTO work_shifts(person, date, start, "end", note, user_name, updated_at) '
+                              "VALUES(?,?,?,?,?,?,?)", (f"d:{did}", d.isoformat(), start, end, "", "Демо", utcnow()))
+                d += timedelta(days=1)

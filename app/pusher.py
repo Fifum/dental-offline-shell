@@ -15,6 +15,7 @@ import json
 import logging
 from datetime import datetime
 
+import conflicts
 from api_client import ApiError, OfflineError
 from normalize import as_id, get, visit_fields
 
@@ -64,7 +65,7 @@ class Pusher:
         wm.update(settings.get("write_map") or {})
         self.wm = wm
         self.p_from, self.p_to = settings.get("visit_from_param", "date_from"), settings.get("visit_to_param", "date_to")
-        self.counts = {"sent": 0, "errors": 0, "unknown": 0, "warnings": 0}
+        self.counts = {"sent": 0, "errors": 0, "unknown": 0, "warnings": 0, "conflicts": 0}
 
     # ------------------------------------------------------------ helpers
     def _dt(self, s):
@@ -97,6 +98,8 @@ class Pusher:
                 self.counts["warnings"] += 1
         elif status == "unknown":
             self.counts["unknown"] += 1
+        elif status == "conflict":
+            self.counts["conflicts"] += 1
         else:
             self.counts["errors"] += 1
 
@@ -106,6 +109,26 @@ class Pusher:
             if isinstance(raw, dict):
                 rows.append(visit_fields(raw))
         return rows
+
+    def _clash(self, v, src, day_visits, ignore=()):
+        """Before sending: is this doctor already busy with another patient at that time in Dentist Plus?
+        Returns the text for the transfer list, or "" when the slot is free (or the user said «send anyway»)."""
+        if v.get("push_force") or v.get("action") in ("cancel", "status") or conflicts.is_cancelled(v):
+            return ""
+        found = conflicts.find(src, day_visits, ignore)
+        if not found:
+            return ""
+        ids = [str(f.get("patient_id")) for f in found]
+        marks = ",".join("?" * len(ids))
+        names = {}
+        for r in self.db.q(f"SELECT id, remote_id, name FROM patients WHERE id IN ({marks}) OR remote_id IN ({marks})", ids * 2):
+            names[str(r["id"])] = r["name"]
+            if r.get("remote_id"):
+                names[str(r["remote_id"])] = r["name"]
+        for f in found:
+            f["patient_name"] = names.get(str(f.get("patient_id")))
+        return ("Не отправлено — двойная запись: " + conflicts.describe(found, "в Dentist Plus") +
+                ". Перенесите запись или нажмите «Отправить всё равно».")
 
     # ----------------------------------------------------------- patients
     def push_patients(self):
@@ -137,7 +160,7 @@ class Pusher:
     def push_visits(self):
         rows = self.db.q("""SELECT lv.*, p.remote_id AS patient_remote, p.local AS patient_local
                             FROM local_visits lv LEFT JOIN patients p ON p.id = lv.patient_id
-                            WHERE lv.transferred=0 AND COALESCE(lv.push_status,'') != 'unknown'
+                            WHERE lv.transferred=0 AND COALESCE(lv.push_status,'') != 'unknown'  -- conflicts are re-checked every time
                             ORDER BY lv.created_at""")
         for v in rows:
             pid = v["patient_remote"] if v["patient_local"] else v["patient_id"]
@@ -149,6 +172,11 @@ class Pusher:
             target = v["remote_id"] or v["origin_id"]
             try:
                 if target:  # move / edit / status / cancel of an existing Dentist Plus visit
+                    if v["action"] in ("move", "edit"):
+                        why = self._clash(v, src, self._day_visits(v["start"][:10]), ignore=(target,))
+                        if why:
+                            self._mark("local_visits", v["id"], "conflict", why)
+                            continue
                     spec = self.wm["visit_update"]
                     code, data = self.c.write(spec["method"], spec["path"].replace("{id}", str(target)), self._body(spec, src))
                     if 200 <= code < 300:
@@ -160,10 +188,15 @@ class Pusher:
                     continue
                 # new visit: dedupe first
                 day = v["start"][:10]
-                same = [x for x in self._day_visits(day)
+                day_visits = self._day_visits(day)
+                same = [x for x in day_visits
                         if x["patient_id"] == str(pid) and (x["start"] or "")[:16] == v["start"][:16]]
                 if same:
                     self._mark("local_visits", v["id"], "sent", "Уже была в Dentist Plus — дубль не создан", same[0]["id"], done=True)
+                    continue
+                why = self._clash(v, src, day_visits)
+                if why:
+                    self._mark("local_visits", v["id"], "conflict", why)
                     continue
                 spec = self.wm["visit_create"]
                 code, data = self.c.write(spec["method"], spec["path"], self._body(spec, src))

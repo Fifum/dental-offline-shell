@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="color-scheme" content="light dark">
+<script src="theme.js?v=2.1.0"></script>
+<title>Первый запуск</title>
+<link rel="stylesheet" href="styles.css?v=2.1.0">
+<link rel="stylesheet" href="styles-v2.css?v=2.1.0">
+<link rel="stylesheet" href="styles-brand.css?v=2.1.0">
+<link rel="stylesheet" href="styles-auth.css?v=2.1.0">
+<link rel="stylesheet" href="styles-motion.css?v=2.1.0">
+<link rel="stylesheet" href="styles-theme.css?v=2.1.0">
+</head>
+<body>
+<div class="auth-screen">
+  <div class="auth-box wide">
+    <div class="auth-brand"><span class="brandmark"><b id="bShort">DD</b><i></i><small id="bSub">offline</small></span>
+      <div><div class="ab-t" id="bName">Dental Desk</div><div class="ab-s">Настройка этого компьютера</div></div></div>
+    <h2>Как работает этот компьютер?</h2>
+    <p class="lead">База клиники хранится на одном компьютере — сервере. Остальные компьютеры (ресепшн, кабинеты, директор) подключаются к нему по сети клиники. Интернет для этого не нужен.</p>
+    <div class="auth-err" id="err"></div>
+    <div class="setup-cards">
+      <div class="setup-card">
+        <h3>Это сервер клиники</h3>
+        <p>Здесь будет храниться база, отсюда идёт обмен с Dentist Plus. Компьютер должен быть включён, пока работает клиника. Лучше подключить его к ИБП.</p>
+        <p class="muted" style="font-size:12px">Windows может спросить разрешение для сети — разрешите для частных сетей.</p>
+        <button class="btn" id="useServer">Сделать сервером</button>
+      </div>
+      <div class="setup-card">
+        <h3>Подключиться к серверу</h3>
+        <p>Программа сама ищет сервер в сети клиники.</p>
+        <div class="scan" id="scan"><i></i>Ищем сервер…</div>
+        <div class="found" id="found"></div>
+        <label class="auth-form" style="gap:5px"><span style="font-size:12.5px;color:var(--ink2);font-weight:600">Или адрес вручную</span>
+          <input class="input" id="addr" placeholder="например 192.168.1.20"></label>
+        <button class="btn ghost" id="useAddr">Подключиться</button>
+      </div>
+    </div>
+    <div class="auth-foot"><span id="ver"></span><button id="rescan">Искать снова</button></div>
+  </div>
+</div>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const err = t => { $("#err").textContent = t || ""; };
+let api;
+async function scan() {
+  $("#scan").hidden = false; $("#found").innerHTML = "";
+  const list = await api.discover();
+  $("#scan").hidden = true;
+  $("#found").innerHTML = list.length ? list.map(s => `<button data-url="${esc(s.url)}"><span><b>${esc(s.name)}</b> <small>${esc(s.host)}</small></span><small>${esc(s.ip)}</small></button>`).join("")
+    : `<span class="muted" style="font-size:12.5px">Сервер не найден. Проверьте, что программа запущена на компьютере-сервере, или введите адрес вручную.</span>`;
+  document.querySelectorAll("#found button").forEach(b => b.onclick = () => connect(b.dataset.url));
+}
+async function connect(url) {
+  err(""); const r = await api.use_client(url);
+  if (!r.ok) err(r.message);
+}
+async function init() {
+  api = window.pywebview.api;
+  const i = await api.info();
+  document.querySelector(".auth-screen").dataset.mark = i.brand.short;
+  $("#bShort").textContent = i.brand.short; $("#bSub").textContent = i.brand.sub; $("#bName").textContent = i.brand.name;
+  document.title = i.brand.name + " — первый запуск";
+  $("#ver").textContent = "Версия " + i.version;
+  if (i.server_url) $("#addr").value = i.server_url;
+  err(i.error);
+  $("#useServer").onclick = async () => { err(""); $("#useServer").disabled = true; const r = await api.use_server(); if (!r.ok) { err(r.message); $("#useServer").disabled = false; } };
+  $("#useAddr").onclick = () => { const v = $("#addr").value.trim(); if (!v) return err("Введите адрес сервера"); connect(v); };
+  $("#addr").onkeydown = e => { if (e.key === "Enter") $("#useAddr").click(); };
+  $("#rescan").onclick = scan;
+  scan();
+}
+if (window.pywebview && window.pywebview.api && window.pywebview.api.info) init();
+else window.addEventListener("pywebviewready", init, {once: true});
+</script>
+</body>
+</html>

@@ -1,17 +1,33 @@
 "use strict";
 /* ---------------------------------------------------------------- bridge */
-const api = new Proxy({}, {
-  get: (_, name) => (...args) => {
-    if (window.pywebview && window.pywebview.api && window.pywebview.api[name]) return window.pywebview.api[name](...args);
-    return fetch("/api/" + name, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(args)})
-      .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || "Ошибка"); return j; });
-  }
-});
+/* Every computer talks to the clinic server over HTTP; the session token goes in X-Session. */
+const SESSION_KEY = "dd.session";
+let TOKEN = sessionStorage.getItem(SESSION_KEY) || "";
+let ME = null;
+let serverLost = false;
+async function post(kind, name, args) {
+  let r;
+  try {
+    r = await fetch(`/${kind}/${name}`, {method: "POST", headers: {"Content-Type": "application/json", "X-Session": TOKEN}, body: JSON.stringify(args)});
+  } catch (e) { lostServer(); throw new Error("Нет связи с сервером клиники"); }
+  if (serverLost) foundServer();
+  let j = null; try { j = await r.json(); } catch (e) {}
+  if (r.status === 401 && kind === "api") { needLogin(j && j.error); }
+  if (!r.ok) throw new Error((j && j.error) || "Ошибка " + r.status);
+  return j;
+}
+const api = new Proxy({}, {get: (_, name) => (...args) => post("api", name, args)});
+const authApi = new Proxy({}, {get: (_, name) => (...args) => post("auth", name, args)});
+const can = p => !!(ME && ME.perms.includes(p));
+const canAny = (...ps) => ps.some(can);
 const errText = e => String((e && (e.message || e)) || "Ошибка").replace(/^Error:\s*/, "");
+window.addEventListener("unhandledrejection", e => { const t = errText(e.reason); if (!/Нет связи|Войдите/.test(t)) toast(t, true); });
 
 /* ------------------------------------------------------- modal & toast */
+let modalLeaveT;
 function modal(html, {wide = false, onClose} = {}) {
   const box = $("#modalBox");
+  clearTimeout(modalLeaveT); $("#modal").classList.remove("leaving");
   box.className = "modal" + (wide ? " wide" : "");
   box.innerHTML = html;
   $("#modal").hidden = false;
@@ -20,10 +36,77 @@ function modal(html, {wide = false, onClose} = {}) {
   box.querySelectorAll("[data-close]").forEach(b => b.onclick = closeModal);
   return box;
 }
-function closeModal() { const box = $("#modalBox"); $("#modal").hidden = true; box.innerHTML = ""; if (box._onClose) box._onClose(); }
+/* the dialog fades out for 140 ms; its content stays readable until then, a new dialog cancels the exit */
+function closeModal() {
+  const box = $("#modalBox"), wrap = $("#modal");
+  if (wrap.hidden) return;
+  const cb = box._onClose; box._onClose = null;
+  wrap.classList.add("leaving");
+  clearTimeout(modalLeaveT);
+  modalLeaveT = setTimeout(() => { if (!wrap.classList.contains("leaving")) return; wrap.hidden = true; wrap.classList.remove("leaving"); box.innerHTML = ""; }, 140);
+  if (cb) cb();
+}
 document.getElementById("modal").addEventListener("mousedown", e => { if (e.target.id === "modal") closeModal(); });
+/* ------------------------------------------- confirm / input dialogs (instead of the browser's own) */
+const ASK_ICONS = {
+  question: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.8M12 17.2v.01"/></svg>',
+  danger: '<svg viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/></svg>',
+  print: '<svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg>',
+  warn: '<svg viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.5v.01"/></svg>',
+  edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+};
+function askLayer({title, text = "", icon = "question", ok = "Да", cancel = "Отмена", danger = false, fields = null}) {
+  return new Promise(resolve => {
+    const prevFocus = document.activeElement;
+    const el = document.createElement("div");
+    el.className = "ask-wrap";
+    el.innerHTML = `<div class="ask ${danger ? "danger" : ""}" role="alertdialog" aria-modal="true" aria-labelledby="askT">
+      <div class="ask-ic ${danger ? "danger" : icon}">${ASK_ICONS[danger ? "danger" : icon] || ASK_ICONS.question}</div>
+      <div class="ask-c"><h3 id="askT">${esc(title)}</h3>${text ? `<p>${esc(text).replace(/\n/g, "<br>")}</p>` : ""}
+        ${fields ? `<div class="ask-f">${fields.map((f, i) => `<label>${esc(f.label)}<input class="input" data-i="${i}" type="${f.type || "text"}" value="${esc(f.value ?? "")}" ${f.type === "number" ? 'step="any" min="0"' : ""}></label>`).join("")}</div>` : ""}
+        <div class="ask-err"></div></div>
+      <div class="ask-b"><button class="btn ghost" data-a="no">${esc(cancel)}</button><button class="btn ${danger ? "danger-btn" : ""}" data-a="yes">${esc(ok)}</button></div></div>`;
+    document.body.appendChild(el);
+    const done = val => {
+      document.removeEventListener("keydown", onKey, true);
+      el.classList.add("leaving");
+      setTimeout(() => el.remove(), 140);
+      if (prevFocus && prevFocus.focus) prevFocus.focus();
+      resolve(val);
+    };
+    const yes = () => {
+      if (!fields) return done(true);
+      const vals = $$("input", el).map(i => i.value.trim());
+      const miss = fields.findIndex((f, i) => f.required !== false && !vals[i]);
+      if (miss >= 0) { $(".ask-err", el).textContent = `Заполните поле «${fields[miss].label}»`; $$("input", el)[miss].focus(); return; }
+      done(vals);
+    };
+    const onKey = e => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(fields ? null : false); }
+      else if (e.key === "Enter" && !(e.target.tagName === "BUTTON" && e.target.dataset.a === "no")) { e.preventDefault(); e.stopPropagation(); yes(); }
+      else if (e.key === "Tab") {  // keep focus inside the dialog
+        const f = $$("input, button", el); const i = f.indexOf(document.activeElement);
+        if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    $$("input", el).forEach(i => i.oninput = () => { $(".ask-err", el).textContent = ""; });
+    $('[data-a="yes"]', el).onclick = yes;
+    $('[data-a="no"]', el).onclick = () => done(fields ? null : false);
+    el.addEventListener("mousedown", e => { if (e.target === el) done(fields ? null : false); });
+    setTimeout(() => { const first = $("input", el); (first || $(danger ? '[data-a="no"]' : '[data-a="yes"]', el)).focus(); if (first) first.select(); }, 30);
+  });
+}
+/** await ask("Удалить?", {text, ok, danger}) → true / false */
+const ask = (title, opts = {}) => askLayer({title, ...opts});
+/** await askInput("Новая услуга", [{label, value, type}], {ok}) → [values] or null */
+const askInput = (title, fields, opts = {}) => askLayer({title, icon: "edit", ok: "Сохранить", ...opts, fields});
+
 let toastT;
-function toast(t, bad) { const el = $("#toast"); el.textContent = t; el.className = "toast" + (bad ? " bad" : ""); el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 3200); }
+function toast(t, bad) {
+  const el = $("#toast"); el.textContent = t; el.className = "toast" + (bad ? " bad" : ""); el.hidden = false; clearTimeout(toastT);
+  toastT = setTimeout(() => { el.classList.add("out"); toastT = setTimeout(() => { el.hidden = true; el.classList.remove("out"); }, 160); }, bad ? 4800 : 3200);
+}
 const money = n => (Math.round((+n || 0) * 100) / 100).toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2}) + " ₽";
 const nowLocal = () => { const d = new Date(); return `${iso(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 let REF = null;
@@ -66,8 +149,15 @@ function stClass(s) {
 const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", settings: {day_start: 8, day_end: 21}, status: {}, lastLoaded: null, prevView: "patients"};
 
 /* ---------------------------------------------------------------- views */
+const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: "cash_report",
+  journal: "transfer", refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment"],
+  reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"]};
+const canView = v => { const p = VIEW_PERM[v]; return !p || (Array.isArray(p) ? canAny(...p) : can(p)); };
+function firstView() { return ["schedule", "patients", "cash", "reports", "accounting", "marketing", "shifts", "stock", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
 function show(view) {
+  if (!canView(view)) view = firstView();
   S.view = view;
+  if (view === "none") { $$(".view").forEach(v => v.hidden = true); toast("Для вашей учётной записи пока не назначены разделы. Обратитесь к директору.", true); return; }
   $$(".view").forEach(v => v.hidden = v.id !== "view-" + view);
   $$(".nav").forEach(b => b.classList.toggle("active", b.dataset.view === view || (view === "patient" && b.dataset.view === "patients")));
   if (view === "schedule") loadDay();
@@ -76,16 +166,26 @@ function show(view) {
   if (view === "cash") loadCash();
   if (view === "journal") loadJournal();
   if (view === "refs") loadRefs();
+  if (view === "staff") loadStaff();
+  if (view === "stock") loadStock();
+  if (view === "reports") loadReports();
+  if (view === "accounting") loadAccounting();
+  if (view === "marketing") loadMarketing();
+  if (view === "shifts") loadShifts();
 }
 $$(".nav").forEach(b => b.onclick = () => show(b.dataset.view));
 
 /* -------------------------------------------------------------- status */
+function applyBrand(b) {
+  if (!b) return;
+  S.brandSet = true; document.title = b.name;
+  $(".rail .brandmark b").textContent = b.short; $(".rail .brandmark small").textContent = b.sub; $(".rail .logo").title = b.name;
+}
 async function refreshStatus() {
   let st;
   try { st = await api.status(); } catch (e) { return; }
   S.status = st;
-  if (st.brand && !S.brandSet) { S.brandSet = true; document.title = st.brand.name;
-    $(".brandmark b").textContent = st.brand.short; $(".brandmark small").textContent = st.brand.sub; $(".rail .logo").title = st.brand.name; }
+  if (st.brand && !S.brandSet) applyBrand(st.brand);
   const dot = $("#syncDot"), title = $("#syncTitle"), sub = $("#syncSub"), banner = $("#banner");
   dot.className = "dot";
   $("#syncBar").style.width = st.running ? (st.progress || 3) + "%" : "0";
@@ -104,6 +204,8 @@ async function refreshStatus() {
     banner.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>${esc(st.last_error)} · сохранённые данные на ${esc(fmtDT(st.last_ok))}`;
   } else { dot.classList.add("on"); title.textContent = "Онлайн"; sub.textContent = `Обновлено ${ago(st.last_ok)}`; }
   $("#syncBtn").disabled = !!st.running;
+  const sb = $("#stockBadge"); if (sb) { sb.hidden = !st.stock_low; sb.textContent = st.stock_low || ""; }
+  if (st.backup_warn && st.backup_warn !== S.backupWarned) { S.backupWarned = st.backup_warn; toast(st.backup_warn + " Настройки → «Резервные копии».", true); }
   for (const id of ["#pendingBadge", "#pendingBadge2"]) { const pb = $(id); pb.hidden = !st.pending; pb.textContent = st.pending || ""; }
   // data changed -> refresh current screen
   if (S.lastLoaded !== st.last_ok && !st.running) {
@@ -133,7 +235,7 @@ async function loadDay() {
   $("#ddModeLbl").textContent = S.mode === "list" ? "Список" : "Сетка";
   const days = Array.from({length: S.days}, (_, i) => addDays(S.day, i));
   const results = await Promise.all(days.map(x => api.day(x, S.branch || null)));
-  const res = {visits: [], doctors: results[0].doctors, branches: results[0].branches, perDay: results.map((r, i) => ({day: days[i], visits: r.visits}))};
+  const res = {visits: [], doctors: results[0].doctors, branches: results[0].branches, perDay: results.map((r, i) => ({day: days[i], visits: r.visits, shifts: r.shifts || null}))};
   results.forEach(r => res.visits.push(...r.visits));
   S.dayData = res;
   fillBranches(res.branches);
@@ -193,7 +295,7 @@ function buildColumns(dayVisits, doctors, day) {
 }
 function renderGrid(res) {
   const doctors = res.doctors;
-  const perDay = res.perDay.map(pd => ({day: pd.day, cols: buildColumns(pd.visits, doctors, pd.day)}));
+  const perDay = res.perDay.map(pd => ({day: pd.day, shifts: pd.shifts, cols: buildColumns(pd.visits, doctors, pd.day)}));
   const all = perDay.flatMap(p => p.cols);
   let h0 = +S.settings.day_start || 8, h1 = +S.settings.day_end || 21;
   for (const v of res.visits) { h0 = Math.min(h0, Math.floor(mins(v.start) / 60)); h1 = Math.max(h1, Math.ceil((mins(v.end) || mins(v.start) + 30) / 60)); }
@@ -215,7 +317,9 @@ function renderGrid(res) {
       const pos = doctors.find(d => d.id === c.id) || {};
       const color = c.chair ? "#7A8794" : docColor(c.id);
       const first = c.items.map(x => x.start).sort()[0], lastE = c.items.map(x => x.end || x.start).sort().slice(-1)[0];
-      const sub = c.chair ? [...new Set(c.items.map(x => x.doctor_name).filter(Boolean))].slice(0, 2).join(", ") : (first ? `${hm(first)} – ${hm(lastE)}` : "нет записей");
+      const shift = !c.chair && p.shifts ? p.shifts[c.id] : undefined;  // work schedule, when the clinic keeps one
+      const sub = c.chair ? [...new Set(c.items.map(x => x.doctor_name).filter(Boolean))].slice(0, 2).join(", ")
+        : p.shifts ? (shift ? `смена ${shift.start} – ${shift.end}` : "выходной по графику") : (first ? `${hm(first)} – ${hm(lastE)}` : "нет записей");
       html += `<div class="g-head" style="--dc:${color}"><div class="gh-band"><span class="gh-av">${esc(initials(c.name))}</span><span class="gh-n">${esc(c.name)}<small>${esc(sub)}</small></span></div>
         <div class="gh-meta">${c.items.length} ${plural(c.items.length, "запись", "записи", "записей")}${pos.position ? " · " + esc(pos.position) : ""}</div></div>`;
     }
@@ -230,9 +334,11 @@ function renderGrid(res) {
     for (const c of cols) {
       let lines = "";
       for (let m = top; m < h1 * 60; m += 30) lines += `<div class="hl ${m % 60 ? "half" : ""}" style="top:${(m - top) * PX}px"></div>`;
-      // hatched time outside working hours
-      if (ws * 60 > top) lines += `<div class="off-hours" style="top:0;height:${(ws * 60 - top) * PX}px"></div>`;
-      if (we < h1) lines += `<div class="off-hours" style="top:${(we * 60 - top) * PX}px;height:${(h1 - we) * 60 * PX}px"></div>`;
+      // hatched time outside working hours: the doctor's shift when there is a work schedule for the day, else the clinic's day
+      const sh = !c.chair && p.shifts && c.id !== "_" ? (p.shifts[c.id] || {start: "00:00", end: "00:00"}) : null;
+      const cs = sh ? Math.max(top, mins("0000-00-00 " + sh.start)) : ws * 60, ce = sh ? Math.min(h1 * 60, Math.max(cs, mins("0000-00-00 " + sh.end))) : we * 60;
+      if (cs > top) lines += `<div class="off-hours" style="top:0;height:${(cs - top) * PX}px"></div>`;
+      if (ce < h1 * 60) lines += `<div class="off-hours" style="top:${(ce - top) * PX}px;height:${(h1 * 60 - ce) * PX}px"></div>`;
       const items = c.items.slice().sort((a, b) => a.start.localeCompare(b.start));
       let lanes = []; const groups = []; let g = null, gEnd = -1;
       for (const v of items) {
@@ -247,7 +353,7 @@ function renderGrid(res) {
       for (const v of items) {
         const hgt = Math.max(24, (v._e - v._s) * PX - 3), w = 100 / v._n, short = hgt < 46;
         const dc = docColor(v.doctor_id);
-        evs += `<div class="ev ${stClass(v.status)} ${v.local ? "is-local" : ""}" data-id="${esc(v.id)}" title="${esc((v.patient_name || "") + " · " + (v.status || "") + (v.local ? " · изменено в программе" : ""))}" style="--dc:${dc};top:${(v._s - top) * PX + 1}px;height:${hgt}px;left:calc(${w * v._lane}% + 4px);right:auto;width:calc(${w}% - 8px)">
+        evs += `<div class="ev ${stClass(v.status)} ${v.local ? "is-local" : ""} ${v.conflict ? "is-conflict" : ""}" data-id="${esc(v.id)}" title="${esc((v.patient_name || "") + " · " + (v.status || "") + (v.local ? " · изменено в программе" : "") + (v.conflict ? " · ДВОЙНАЯ ЗАПИСЬ у врача" : ""))}" style="--dc:${dc};top:${(v._s - top) * PX + 1}px;height:${hgt}px;left:calc(${w * v._lane}% + 4px);right:auto;width:calc(${w}% - 8px)">
           <div class="ev-t"><span class="st-dot"></span>${hm(v.start)} – ${hm(v.end)}${v.local ? '<i class="lc" title="Нужно перенести в Dentist Plus"></i>' : ""}${v.comment ? '<i class="cm" title="' + esc(v.comment) + '">💬</i>' : ""}</div>
           <b>${esc(v.patient_name || "Пациент #" + (v.patient_id || "?"))}</b>
           ${short ? "" : `<div class="s">${esc(v.title || "")}${S.by === "chair" && v.doctor_name ? " · " + esc(v.doctor_name) : ""}</div>`}</div>`;
@@ -261,7 +367,7 @@ function renderGrid(res) {
   $$(".ev", grid).forEach(el => el.onclick = e => { e.stopPropagation(); openVisit(el.dataset.id); });
   const slot = +S.settings.slot_min || 15;
   const minuteAt = (col, e) => { const y = e.clientY - col.getBoundingClientRect().top; return Math.floor((+col.dataset.top + y / PX) / slot) * slot; };
-  $$(".g-col", grid).forEach(col => {
+  if (can("schedule_edit")) $$(".g-col", grid).forEach(col => {
     const hov = $(".slot-hover", col);
     col.onmousemove = e => { if (e.target.closest(".ev")) { hov.hidden = true; return; } const m = minuteAt(col, e);
       hov.hidden = false; hov.style.top = (m - col.dataset.top) * PX + "px"; hov.style.height = 30 * PX + "px"; hov.textContent = `+ ${pad(Math.floor(m / 60))}:${pad(m % 60)}`; };
@@ -318,7 +424,7 @@ async function gSearch() {
   if (!q) { $("#gDrop").hidden = true; return; }
   gsRows = (await api.search(q)).slice(0, 8);
   $("#gDrop").innerHTML = gsRows.map(p => `<div class="pp-row" data-id="${esc(p.id)}"><span class="av">${esc(initials(p.name))}</span><span><b>${esc(p.name)}</b><small>${esc(p.phone || "")}${p.birth ? " · " + fmtDate(p.birth) : ""}${p.next_visit ? " · визит " + fmtDT(p.next_visit) : ""}</small></span></div>`).join("")
-    || `<div class="muted" style="padding:10px 12px">Не найдено. <button class="linkbtn" id="gsNew">Добавить пациента</button></div>`;
+    || `<div class="muted" style="padding:10px 12px">Не найдено.${can("patients_edit") ? ` <button class="linkbtn" id="gsNew">Добавить пациента</button>` : ""}</div>`;
   $("#gDrop").hidden = false;
   $$("#gDrop .pp-row").forEach(r => r.onclick = () => { openPatient(r.dataset.id, S.view === "patient" ? S.prevView : S.view); $("#gDrop").hidden = true; });
   const n = $("#gsNew"); if (n) n.onclick = () => { $("#gDrop").hidden = true; openNewPatient(q); };
@@ -330,16 +436,21 @@ function openNewPatient(q = "") {
       <label class="fl">Имя*<input class="input" id="npF" value="${esc(isPhone ? "" : parts[1] || "")}"></label><label class="fl">Отчество<input class="input" id="npM" value="${esc(isPhone ? "" : parts[2] || "")}"></label></div>
     <div class="grid3"><label class="fl">Телефон<input class="input" id="npPh" value="${esc(isPhone ? q : "")}"></label>
       <label class="fl">Дата рождения<input class="input" type="date" id="npB"></label><label class="fl">Пол<select class="input" id="npG"><option value="">—</option><option>М</option><option>Ж</option></select></label></div>
-    <label class="fl">Адрес<input class="input" id="npA"></label><label class="fl">Комментарий<input class="input" id="npC"></label></div>
+    <label class="fl">Адрес<input class="input" id="npA"></label><div class="grid2"><label class="fl">Комментарий<input class="input" id="npC"></label>
+      <label class="fl">Откуда узнал о клинике<select class="input" id="npSrc"><option value="">— не указан —</option></select></label></div></div>
     <div class="m-f"><span class="muted">Пациент будет добавлен в список «Перенести в DP»</span><button class="btn ghost" data-close>Отмена</button>
-      <button class="btn ghost" id="npSaveBook">Сохранить и записать</button><button class="btn" id="npSave">Сохранить</button></div>`);
+      ${can("schedule_edit") ? `<button class="btn ghost" id="npSaveBook">Сохранить и записать</button>` : ""}<button class="btn" id="npSave">Сохранить</button></div>`);
   const save = async () => {
     if (!$("#npL", box).value.trim() || !$("#npF", box).value.trim()) { toast("Укажите фамилию и имя", true); return null; }
-    return api.create_patient({lname: $("#npL", box).value, fname: $("#npF", box).value, mname: $("#npM", box).value, phone: $("#npPh", box).value,
+    const p = await api.create_patient({lname: $("#npL", box).value, fname: $("#npF", box).value, mname: $("#npM", box).value, phone: $("#npPh", box).value,
       birth_date: $("#npB", box).value, gender: $("#npG", box).value, address: $("#npA", box).value, comment: $("#npC", box).value});
+    const src = $("#npSrc", box).value;
+    if (src && p && p.id) { try { await api.set_patient_marketing(p.id, {source: src}); } catch (e) {} }
+    return p;
   };
+  mkSourceList().then(list => { const sel = $("#npSrc", box); if (sel) sel.innerHTML += list.map(x => `<option>${esc(x)}</option>`).join(""); });
   $("#npSave", box).onclick = async () => { const p = await save(); if (!p) return; closeModal(); toast("Пациент добавлен"); refreshStatus(); openPatient(p.id, S.view === "patient" ? S.prevView : S.view); };
-  $("#npSaveBook", box).onclick = async () => { const p = await save(); if (!p) return; closeModal(); refreshStatus();
+  if ($("#npSaveBook", box)) $("#npSaveBook", box).onclick = async () => { const p = await save(); if (!p) return; closeModal(); refreshStatus();
     openBooking({patient_id: p.id, patient_name: p.name, start: `${S.day} ${pad(Math.min(20, new Date().getHours() + 1))}:00`}); };
 }
 $("#tbAddPatient").onclick = () => openNewPatient();
@@ -357,6 +468,7 @@ async function openVisit(id) {
     <div class="dw-b"><dl class="kv" style="grid-template-columns:1fr">
       ${kvRow("Врач", v.doctor_name)}${kvRow("Филиал", v.branch_name)}${kvRow("Телефон пациента", v.patient_phone)}${kvRow("Услуга / комментарий", v.title)}${kvRow("Комментарий", v.comment)}
     </dl>${Object.keys(raw).length ? `<div class="raw">${rawTree(raw, 0, ["id", "patient_id", "doctor_id", "branch_id", "start", "end", "status", "title"])}</div>` : ""}</div>
+    ${v.conflict_text ? `<div class="conflict-note"><b>Двойная запись.</b> ${esc(v.conflict_text[0].toUpperCase() + v.conflict_text.slice(1))}. Перенесите одну из записей или уточните у пациентов.</div>` : ""}
     ${v.local ? `<div class="local-note">Изменено в этой программе: <b>${esc({create: "новая запись", edit: "изменение", move: "перенос", cancel: "отмена", status: "смена статуса"}[v.action] || "изменение")}</b>. Нужно перенести в Dentist Plus.
        ${v.origin_id ? `<button class="linkbtn" id="dwRevert">Вернуть как в Dentist Plus</button>` : ""}</div>` : ""}
     <div class="dw-f">
@@ -374,17 +486,22 @@ async function openVisit(id) {
         <button class="btn ghost small" id="dwCard">Карта пациента</button></div>` : ""}
     </div>`;
   const dw = $("#drawer");
+  const drop = (sel, cond) => { if (cond) $$(sel, dw).forEach(el => el.remove()); };
+  drop("[data-st='Не пришёл'], [data-st='Отменён'], #dwEdit, #dwRevert", !can("schedule_edit"));
+  drop("[data-st]", !canAny("schedule_edit", "medcard_edit"));
+  drop("#dwRec", !can("medcard_view")); drop("#dwInv", !canAny("billing", "payments")); drop("#dwDoc", !can("docs")); drop("#dwCard", !can("patients_view"));
   $$("[data-st]", dw).forEach(b => b.onclick = async () => {
-    if (b.dataset.st === "Отменён" && !confirm("Отменить запись?")) return;
+    if (b.dataset.st === "Отменён" && !(await ask("Отменить запись?", {danger: true, ok: "Отменить запись", cancel: "Не отменять", text: `${v.patient_name || "Пациент"}, ${fmtDT(v.start)}`}))) return;
     await api.set_visit_status(v.id, b.dataset.st); toast(`Статус: ${b.dataset.st}`); closeDrawer(); afterChange();
   });
-  $("#dwEdit", dw).onclick = () => { closeDrawer(); openBooking(v); };
-  const rv = $("#dwRevert", dw); if (rv) rv.onclick = async () => { if (confirm("Убрать изменения, сделанные в программе, и показать запись как в Dentist Plus?")) { await api.revert_visit(v.id); closeDrawer(); afterChange(); } };
+  const de = $("#dwEdit", dw); if (de) de.onclick = () => { closeDrawer(); openBooking(v); };
+  const rv = $("#dwRevert", dw); if (rv) rv.onclick = async () => { if (await ask("Вернуть запись как в Dentist Plus?", {icon: "warn", ok: "Вернуть", text: "Изменения, сделанные в программе, будут убраны."})) { await api.revert_visit(v.id); closeDrawer(); afterChange(); } };
   if (v.patient_id) {
-    $("#dwRec", dw).onclick = () => { closeDrawer(); openRecord({patient_id: v.patient_id, visit_id: v.id, doctor_id: v.doctor_id, date: v.start.slice(0, 10), id: (v.records[0] || {}).id}); };
-    $("#dwInv", dw).onclick = () => { closeDrawer(); openInvoice({patient_id: v.patient_id, visit_id: v.id, doctor_id: v.doctor_id, id: (v.invoices[0] || {}).id}); };
-    $("#dwDoc", dw).onclick = () => { closeDrawer(); openDocPicker({patient_id: v.patient_id, visit_id: v.id, doctor_id: v.doctor_id}); };
-    $("#dwCard", dw).onclick = () => { closeDrawer(); openPatient(v.patient_id, "schedule"); };
+    const on = (s, f) => { const el = $(s, dw); if (el) el.onclick = f; };
+    on("#dwRec", () => { closeDrawer(); openRecord({patient_id: v.patient_id, visit_id: v.id, doctor_id: v.doctor_id, date: v.start.slice(0, 10), id: (v.records[0] || {}).id}); });
+    on("#dwInv", () => { closeDrawer(); openInvoice({patient_id: v.patient_id, visit_id: v.id, doctor_id: v.doctor_id, id: (v.invoices[0] || {}).id}); });
+    on("#dwDoc", () => { closeDrawer(); openDocPicker({patient_id: v.patient_id, visit_id: v.id, doctor_id: v.doctor_id}); });
+    on("#dwCard", () => { closeDrawer(); openPatient(v.patient_id, "schedule"); });
   }
   $("#scrim").hidden = false;
   setTimeout(() => $("#drawer").classList.add("open"), 10);
@@ -488,32 +605,103 @@ async function openPatient(id, from, tab) {
   renderPatient(tab || S.patientTab || "visits");
 }
 
-/* --- tooth glyphs for the formula tab (simple own drawings) --- */
-function toothSvg(n, status, upper) {
+/* --- tooth formula: own profile drawings, 5-surface scheme, states drawn over the tooth.
+   Shapes are drawn for the lower jaw (crown up, roots down) and mirrored for the upper one.
+   No colours here: every part has a class, styles-teeth.css paints it from theme tokens. --- */
+const TOOTH_SHAPES = {
+  front: {crown: "M11 5Q18 2.5 25 5L26.2 17Q26 27 23 33H13Q10 27 9.8 17Z", fill: "M12.6 9Q18 7.4 23.4 9L23.8 18.5Q18 20.5 12.2 18.5Z",
+    roots: ["M13 32H23Q22.6 58 19.2 80Q18 82.5 16.8 80Q13.4 58 13 32Z"], canals: "M18 30V77", apex: [[18, 81]], spot: [18, 15]},
+  canine: {crown: "M10.5 14Q12 7 18 2.5Q24 7 25.5 14L25 25Q24 30 22.5 34H13.5Q12 30 11 25Z", fill: "M13.6 13Q18 8.5 22.4 13L22.6 21Q18 23 13.4 21Z",
+    roots: ["M13.5 33H22.5Q22.4 62 19 84Q18 85.6 17 84Q13.6 62 13.5 33Z"], canals: "M18 31V81", apex: [[18, 84.5]], spot: [18, 17]},
+  pre: {crown: "M8.5 12Q10 5 15 4.5Q18 3 21 4.5Q26 5 27.5 12L27 22Q26 29 23.5 33H12.5Q10 29 9 22Z", fill: "M11.6 10.5Q18 8 24.4 10.5L24.2 19.5Q18 21.5 11.8 19.5Z",
+    roots: ["M12.5 32H23.5Q23 56 19.3 78Q18 80 16.7 78Q13 56 12.5 32Z"], canals: "M18 30V75", apex: [[18, 79]], spot: [18, 14]},
+  pre2: {crown: "M8.5 12Q10 5 15 4.5Q18 3 21 4.5Q26 5 27.5 12L27 22Q26 29 23.5 33H12.5Q10 29 9 22Z", fill: "M11.6 10.5Q18 8 24.4 10.5L24.2 19.5Q18 21.5 11.8 19.5Z",
+    roots: ["M12.5 32H23.5Q23.6 52 22.2 73Q21.2 75 20.2 73Q19.2 56 18 47Q16.8 56 15.8 73Q14.8 75 13.8 73Q12.4 52 12.5 32Z"],
+    canals: "M15 31Q14.6 52 14.8 71M21 31Q21.4 52 21.2 71", apex: [[14.8, 74], [21.2, 74]], spot: [18, 14]},
+  molar: {crown: "M4.5 12Q5 5 10 4.5Q13.5 2.5 16.5 5Q18 3.5 19.5 5Q22.5 2.5 26 4.5Q31 5 31.5 12L31 21Q30 28 27.5 32H8.5Q6 28 5 21Z",
+    fill: "M8.2 10.5Q18 8 27.8 10.5L27.4 19.5Q18 22 8.6 19.5Z",
+    roots: ["M8.5 31H27.5Q28 38 26.8 45Q26.4 58 24.8 70Q23.8 72.5 22.8 70Q21.6 58 20.6 46Q19.6 41 18 41Q16.4 41 15.4 46Q14.4 58 13.2 70Q12.2 72.5 11.2 70Q9.6 58 9.2 45Q8 38 8.5 31Z"],
+    canals: "M13 31Q11.6 52 12.2 68M23 31Q24.4 52 23.8 68", apex: [[12.2, 71.5], [23.8, 71.5]], spot: [14.5, 13]},
+};
+const TOOTH_PALATAL = "M15 37Q18 35 21 37Q21.4 58 19 77Q18 78.6 17 77Q14.6 58 15 37Z";
+const TOOTH_SURF = {
+  v: "M3.99 3.99A8.5 8.5 0 0 1 16.01 3.99L12.55 7.45A3.6 3.6 0 0 0 7.45 7.45Z",
+  d: "M16.01 3.99A8.5 8.5 0 0 1 16.01 16.01L12.55 12.55A3.6 3.6 0 0 0 12.55 7.45Z",
+  o: "M16.01 16.01A8.5 8.5 0 0 1 3.99 16.01L7.45 12.55A3.6 3.6 0 0 0 12.55 12.55Z",
+  m: "M3.99 16.01A8.5 8.5 0 0 1 3.99 3.99L7.45 7.45A3.6 3.6 0 0 0 7.45 12.55Z",
+};
+/* status text -> what to draw; several statuses in one string ("кариес, пломба") all show */
+function toothState(status) {
   const s = String(status || "").toLowerCase();
-  const kind = n % 10 >= 6 ? "molar" : n % 10 >= 4 ? "pre" : "front";
-  const missing = /отсут|удал(ён|ен)/.test(s);
-  const crownFill = /корон|мост|винир|вкладк/.test(s) ? "#F2A93B" : /имплант/.test(s) ? "#9AD4CC" : "#FFFFFF";
-  const rootFill = /имплант/.test(s) ? "#7C8A96" : /пульп|периодон|эндо|канал/.test(s) ? "#B49AE6" : "#F4F1EA";
-  const w = 34, crown = kind === "molar" ? "M5 4h24q3 0 3 4v10q0 4-4 4H6q-4 0-4-4V8q0-4 3-4z" : kind === "pre" ? "M8 4h18q3 0 3 4v10q0 4-4 4H9q-4 0-4-4V8q0-4 3-4z" : "M10 4h14q3 0 3 4v10q0 4-4 4H11q-4 0-4-4V8q0-4 3-4z";
-  const roots = kind === "molar" ? "M7 22l2 26h5l2-22M18 22l2 26h5l2-26" : kind === "pre" ? "M11 22l3 28h6l3-28" : "M12 22l3 30h4l3-30";
-  const marks = [];
-  if (/кари/.test(s)) marks.push(`<circle cx="17" cy="12" r="3.6" fill="#D9534F"/>`);
-  if (/пломб/.test(s)) marks.push(`<rect x="12" y="8" width="10" height="8" rx="2" fill="#4B7BE5"/>`);
-  if (/корень/.test(s)) marks.push(`<path d="M8 8h18" stroke="#D9534F" stroke-width="2"/>`);
-  if (/удалить/.test(s)) marks.push(`<path d="M6 6l22 40M28 6L6 46" stroke="#D9534F" stroke-width="2.2"/>`);
-  if (/подвиж/.test(s)) marks.push(`<path d="M2 30h4M28 30h4" stroke="#E39B2D" stroke-width="2"/>`);
-  const g = `<g opacity="${missing ? 0.22 : 1}"><path d="${roots}" fill="${rootFill}" stroke="#9AA6B2" stroke-width="1.2"/>
-    <path d="${crown}" fill="${crownFill}" stroke="#9AA6B2" stroke-width="1.2"/>${marks.join("")}</g>${missing ? '<path d="M8 20h18" stroke="#9AA6B2" stroke-dasharray="3 2"/>' : ""}`;
-  return `<svg viewBox="0 0 ${w} 54" width="${w}" height="54"><g transform="${upper ? `translate(0 54) scale(1 -1)` : ""}">${g}</g></svg>`;
+  return {
+    miss: /отсут|удал(ён|ен)|missing/.test(s), extract: /удалить|extract/.test(s), impl: /имплант|implant/.test(s),
+    cap: /корон|мост|винир|crown|bridge/.test(s), fill: /пломб|вкладк|fill/.test(s), caries: /кари|caries|разруш/.test(s),
+    endo: /пульп|периодон|эндо|канал|депульп/.test(s), canal: /эндо|канал|депульп/.test(s), perio: /периодон/.test(s),
+    root: /корень|корни|root/.test(s), mobile: /подвиж/.test(s),
+  };
 }
-function formulaHtml(map, milk) {
+function toothKind(n, upper) {
+  const d = n % 10, milk = Math.floor(n / 10) >= 5;
+  if (milk) return d >= 4 ? "molar" : d === 3 ? "canine" : "front";
+  if (d >= 6) return "molar";
+  if (d >= 4) return upper && d === 4 ? "pre2" : "pre";
+  return d === 3 ? "canine" : "front";
+}
+function toothSvg(n, status, upper) {
+  const k = toothKind(n, upper), sh = TOOTH_SHAPES[k], t = toothState(status);
+  const wisdom = n % 10 === 8 && Math.floor(n / 10) < 5;
+  const rootT = wisdom ? ` transform="translate(0 31) scale(1 .8) translate(0 -31)"` : "";
+  let roots;
+  if (t.impl) {
+    const thr = []; for (let y = 38; y <= 68; y += 5) { const dx = (y - 32) / 38; thr.push(`M${(12.6 + dx).toFixed(1)} ${y}L${(23.4 - dx).toFixed(1)} ${y + 2}`); }
+    roots = `<path class="t-imp" d="M12.5 31H23.5L22.5 70Q18 78 13.5 70Z"/><path class="t-imp-th" d="${thr.join("")}"/><rect class="t-imp" x="15" y="28" width="6" height="5" rx="1"/>`;
+  } else {
+    roots = (upper && k === "molar" ? `<path class="t-root t-pal" d="${TOOTH_PALATAL}"/>` : "") + sh.roots.map(d => `<path class="t-root" d="${d}"/>`).join("")
+      + (t.canal ? `<path class="t-canal" d="${sh.canals}"/>` : "")
+      + (t.perio ? sh.apex.map(([x, y]) => `<circle class="t-apex" cx="${x}" cy="${y}" r="3.4"/>`).join("") : "");
+  }
+  const crown = t.root ? `<path class="t-crown t-lost" d="${sh.crown}"/>`
+    : `<path class="t-crown${t.cap ? " t-cap" : ""}" d="${sh.crown}"/>` + (t.fill && !t.cap ? `<path class="t-fil" d="${sh.fill}"/>` : "")
+      + (t.caries ? `<ellipse class="t-car" cx="${sh.spot[0]}" cy="${sh.spot[1]}" rx="3.3" ry="2.7"/>` : "");
+  const marks = (t.extract ? `<path class="t-x" d="M7 8L29 76M29 8L7 76"/>` : "") + (t.mobile ? `<path class="t-mob" d="M1.5 14Q0 20 1.5 26M34.5 14Q36 20 34.5 26"/>` : "");
+  const cls = ["tooth-g", t.endo && !t.impl ? "is-endo" : "", t.miss ? "is-miss" : ""].filter(Boolean).join(" ");
+  return `<svg class="${cls}" viewBox="0 0 36 86" width="32" height="76" aria-hidden="true"><g${upper ? ` transform="translate(0 86) scale(1 -1)"` : ""}>`
+    + `<g${rootT}>${roots}</g>${crown}${marks}</g></svg>`;
+}
+/* 5 surfaces: vestibular (lip side), oral, mesial, distal and the chewing/cutting centre */
+function surfSvg(status, upper) {
+  const t = toothState(status), on = t.cap ? "s-cap" : "";
+  const c = t.caries ? "s-car" : t.fill ? "s-fil" : on;
+  const sides = upper ? {v: "v", o: "o"} : {v: "o", o: "v"}; /* the lip side faces up on upper teeth, down on lower */
+  const p = k => `<path class="s-p ${on}" d="${TOOTH_SURF[k]}"/>`;
+  return `<svg class="surf${t.miss ? " is-miss" : ""}" viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">`
+    + `${p(sides.v)}${p("d")}${p(sides.o)}${p("m")}<circle class="s-p ${c}" cx="10" cy="10" r="3.6"/></svg>`;
+}
+function toothCol(n, status, upper, extra) {
+  const id = `<span class="ft-id"><b>${n}</b>${surfSvg(status, upper)}</span>`;
+  return `<button class="ft${status ? " has" : ""}${extra ? " " + extra : ""}" data-n="${n}" title="${esc(n + (status ? ": " + status : ": не указано"))}">`
+    + `${upper ? toothSvg(n, status, true) + id : id + toothSvg(n, status, false)}</button>`;
+}
+/* opt.plan: teeth in a treatment plan (Set of strings), opt.sel: the tooth being edited */
+function formulaHtml(map, milk, opt) {
+  opt = opt || {};
   const U = milk ? [[55, 54, 53, 52, 51], [61, 62, 63, 64, 65]] : [[18, 17, 16, 15, 14, 13, 12, 11], [21, 22, 23, 24, 25, 26, 27, 28]];
   const L = milk ? [[85, 84, 83, 82, 81], [71, 72, 73, 74, 75]] : [[48, 47, 46, 45, 44, 43, 42, 41], [31, 32, 33, 34, 35, 36, 37, 38]];
-  const cell = (n, upper) => { const st = map[String(n)] || ""; return `<button class="ft ${st ? "has" : ""}" data-n="${n}" title="${esc(n + (st ? ": " + st : ""))}">
-      ${upper ? toothSvg(n, st, true) + `<b>${n}</b>` : `<b>${n}</b>` + toothSvg(n, st, false)}<small>${esc(st ? st.slice(0, 9) : "")}</small></button>`; };
-  const row = (qs, upper) => `<div class="f-row">${qs.map((q, i) => `<div class="f-q ${i ? "r" : "l"}">${q.map(n => cell(n, upper)).join("")}</div>`).join("")}</div>`;
+  const plan = opt.plan || new Set();
+  const cell = (n, upper) => toothCol(n, map[String(n)] || "", upper, [String(opt.sel) === String(n) ? "sel" : "", plan.has(String(n)) ? "plan" : ""].filter(Boolean).join(" "));
+  const row = (qs, upper) => `<div class="f-row ${upper ? "up" : "lo"}">${qs.map((q, i) => `<div class="f-q ${i ? "r" : "l"}">${q.map(n => cell(n, upper)).join("")}</div>`).join("")}</div>`;
   return `<div class="formula">${row(U, true)}<div class="f-mid"></div>${row(L, false)}</div>`;
+}
+function formulaLegend(withPlan) {
+  const it = [["car", "Кариес"], ["fil", "Пломба"], ["cap", "Коронка / мост"], ["endo", "Пульпит / каналы"], ["imp", "Имплант"], ["miss", "Отсутствует"]];
+  if (withPlan) it.push(["plan", "В плане лечения"]);
+  return `<div class="legend f-legend">${it.map(([k, t]) => `<span><i class="lg-${k}"></i>${t}</span>`).join("")}</div>`;
+}
+/* tooth numbers mentioned in plan items ("36", "36, 37") */
+function planTeeth(plans) {
+  const out = new Set();
+  (plans || []).forEach(i => (i.items || []).forEach(x => (String(x.tooth || "").match(/\b[1-8][1-8]\b/g) || []).forEach(m => out.add(m))));
+  return out;
 }
 
 const ICON = {
@@ -556,7 +744,14 @@ function renderPatient(tab) {
   const tabs = [["visits", "Визиты", p.visits.length], ["formula", "Формула"], ["records", "Лечения", p.records.length], ["payments", "Оплаты", invs.length],
     ["plans", "План лечения", plans.length], ["docs", "Документы", p.documents.length], ["notes", "Примечания", p.notes.length],
     ...extras.map(e => ["x:" + e.kind, label(e.kind), Array.isArray(e.data) ? e.data.length : ""]),
-    ["personal", "Персональные данные"], ["feed", "Живая лента"]];
+    ["personal", "Персональные данные"], ["feed", "Живая лента"]].filter(([k]) => {
+    if (k === "formula" || k === "records") return can("medcard_view");
+    if (k === "payments" || k === "plans") return canAny("billing", "payments");
+    if (k === "docs") return can("docs");
+    return true;
+  });
+  if (!tabs.some(x => x[0] === tab)) tab = "visits";
+  S.patientTab = tab;
   let body = "";
   const addBtn = (id, t) => `<div class="tab-tools"><button class="btn ghost small" id="${id}">${t}</button><span class="muted">${""}</span></div>`;
   const tr = x => x.transferred ? '<span class="pill st-done">в DP</span>' : '<span class="pill st-cancel">перенести</span>';
@@ -574,9 +769,8 @@ function renderPatient(tab) {
   } else if (tab === "formula") {
     S.milk = S.milk || false;
     body = `<div class="f-tools"><div class="seg"><button data-milk="0" class="${S.milk ? "" : "on"}">Постоянные зубы</button><button data-milk="1" class="${S.milk ? "on" : ""}">Молочные зубы</button></div>
-      <span class="muted">Формула собирается из лечений и данных Dentist Plus. Щёлкните по зубу, чтобы провести лечение.</span></div>${formulaHtml(tmap, S.milk)}
-      <div class="legend"><span><i style="background:#D9534F"></i>Кариес</span><span><i style="background:#4B7BE5"></i>Пломба</span><span><i style="background:#F2A93B"></i>Коронка / мост</span>
-      <span><i style="background:#B49AE6"></i>Пульпит / каналы</span><span><i style="background:#9AD4CC"></i>Имплант</span><span><i style="background:#E9EDF1"></i>Отсутствует</span></div>`;
+      <span class="muted">Формула собирается из лечений и данных Dentist Plus. Щёлкните по зубу, чтобы провести лечение.</span></div>${formulaHtml(tmap, S.milk, {plan: planTeeth(plans)})}
+      ${formulaLegend(true)}`;
   } else if (tab === "records") {
     body = addBtn("tAddRec", "Провести лечение") + (p.records.length ? p.records.map(r => {
       const dd = r.data || {}, dg = (dd.diagnoses || []).map(x => `${x.tooth ? x.tooth + ": " : ""}${x.code} ${x.title}`).join("; ");
@@ -653,7 +847,7 @@ function renderPatient(tab) {
       <div class="ph-main"><span class="av lg">${esc(initials(p.name))}</span><div>
         <h2>${esc(p.name)}</h2>
         <div class="ph-lines">${gender ? `<div>${esc(gender)}</div>` : ""}${p.birth ? `<div>Лет: ${age(p.birth)} (${esc(fmtDate(p.birth))})</div>` : ""}${p.phone ? `<div class="lnk">${esc(p.phone)}</div>` : ""}</div></div></div>
-      <div class="ph-col"><dt>Номер карточки</dt><dd>${esc(card)}</dd><dt>Статус</dt><dd>${p.local ? "Новый (создан в программе)" : "Из Dentist Plus"}</dd><dt>Лечащий врач</dt><dd>${esc(mainDoc ? mainDoc[0] : "—")}</dd></div>
+      <div class="ph-col"><dt>Номер карточки</dt><dd>${esc(card)}</dd><dt>Статус</dt><dd>${p.local ? "Новый (создан в программе)" : "Из Dentist Plus"}</dd><dt>Лечащий врач</dt><dd>${esc(mainDoc ? mainDoc[0] : "—")}</dd><dt>Откуда пришёл</dt><dd>${canAny("marketing", "patients_edit") ? `<button class="linkbtn" id="aSource">${esc((p.marketing && p.marketing.source) || "указать")}</button>` : esc((p.marketing && p.marketing.source) || "—")}${p.marketing && p.marketing.no_calls ? ' <span class="pill st-cancel">не звонить</span>' : ""}</dd></div>
       <div class="ph-col"><dt>Всего оплачено (в программе)</dt><dd>${money(paidTotal)}</dd><dt>Скидка</dt><dd>${discount ? esc(discount) + "%" : "—"}</dd><dt>Карта обновлена</dt><dd>${fmtDT(p.detail_synced_at || p.synced_at)}</dd></div>
       <div class="ph-col"><dt>Последний визит</dt><dd>${past[0] ? fmtDT(past[0].start) : "—"}</dd><dt>Следующий визит</dt><dd>${next ? fmtDT(next.start) : "—"}</dd><dt>Долг</dt><dd class="${debt ? "bad-t" : ""}">${debt ? money(debt) : "—"}</dd></div>
     </div>
@@ -661,6 +855,16 @@ function renderPatient(tab) {
     <div class="tabs">${tabs.map(([k, t, c]) => `<button class="tab ${k === tab ? "on" : ""}" data-t="${esc(k)}">${esc(t)}${c ? `<span class="cnt">${c}</span>` : ""}</button>`).join("")}</div>
     <div class="pbody">${body}</div>`;
 
+  // hide what this employee may not do
+  const hideIf = (sel, cond) => $$(sel, $("#patientCard")).forEach(el => { if (cond) el.remove(); });
+  hideIf("#aAnketa, #aContract, #ddPrint, #tAddDoc, [data-add=doc], .ia[data-act=doc], [data-receipt]", !can("docs"));
+  hideIf("#aPay, .ia[data-act=inv]", !canAny("billing", "payments"));
+  hideIf("[data-add=inv], [data-add=plan], #tAddInv, #tAddPlan", !can("billing"));
+  hideIf("[data-add=rec], #tAddRec", !can("medcard_edit"));
+  hideIf(".ia[data-act=rec]", !can("medcard_view"));
+  hideIf("[data-add=visit], #tAddVisit", !can("schedule_edit"));
+  hideIf("[data-add=note], #noteText, #noteAdd, .note button", !can("patients_edit"));
+  if (!$$("#ddAdd [data-add]").length) hideIf("#ddAdd", true);
   const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   on("#backBtn", () => show(S.prevView === "schedule" ? "schedule" : "patients"));
   $$("#patientCard .tab").forEach(b => b.onclick = () => renderPatient(b.dataset.t));
@@ -672,6 +876,7 @@ function renderPatient(tab) {
   $$("#ddPrint [data-tpl]").forEach(b => b.onclick = () => b.dataset.tpl ? openDocFill({...ctx, template_id: b.dataset.tpl}) : openDocPicker(ctx));
   on("#aAnketa", () => openDocFill({...ctx, template_id: "doc_anketa"}));
   on("#aContract", () => openDocFill({...ctx, template_id: "doc_contract"}));
+  on("#aSource", () => editPatientSource(p, () => openPatient(p.id, S.prevView)));
   on("#aPay", () => { const unpaid = invs.find(i => i.status !== "Оплачен"); openInvoice(unpaid ? {patient_id: p.id, id: unpaid.id} : ctx); });
   on("#tAddVisit", book); on("#tAddRec", actions.rec); on("#tAddInv", actions.inv); on("#tAddPlan", actions.plan); on("#tAddDoc", actions.doc);
   $$("#patientCard tr[data-v]").forEach(el => el.onclick = e => { if (!e.target.closest(".ia")) openVisit(el.dataset.v); });
@@ -684,10 +889,10 @@ function renderPatient(tab) {
   $$("#patientCard tr[data-doc]").forEach(el => el.onclick = () => openDocument(el.dataset.doc));
   $$("#patientCard tr[data-inv]").forEach(el => el.onclick = () => openInvoice({patient_id: p.id, id: el.dataset.inv}));
   $$("#patientCard [data-milk]").forEach(b => b.onclick = () => { S.milk = b.dataset.milk === "1"; renderPatient("formula"); });
-  $$("#patientCard .ft").forEach(b => b.onclick = () => openRecord({...ctx, date: iso(new Date()), tooth: b.dataset.n}));
+  if (can("medcard_edit")) $$("#patientCard .ft").forEach(b => b.onclick = () => openRecord({...ctx, date: iso(new Date()), tooth: b.dataset.n}));
   const add = $("#noteAdd");
   if (add) add.onclick = async () => { P.notes = await api.add_note(P.id, $("#noteText").value); renderPatient("notes"); };
-  $$(".note button").forEach(b => b.onclick = async () => { if (confirm("Удалить примечание?")) { P.notes = await api.delete_note(P.id, +b.dataset.n); renderPatient("notes"); } });
+  $$(".note button").forEach(b => b.onclick = async () => { if (await ask("Удалить примечание?", {danger: true, ok: "Удалить"})) { P.notes = await api.delete_note(P.id, +b.dataset.n); renderPatient("notes"); } });
 }
 function get0(o, keys) { for (const k of keys) if (o && o[k] !== undefined && o[k] !== null && o[k] !== "") return o[k]; return ""; }
 
@@ -706,12 +911,19 @@ async function loadSettings() {
   $$(".mode-card").forEach(c => c.classList.toggle("on", c.querySelector("input").checked));
   $("#dataDir").textContent = "Данные: " + s.data_dir;
   $("#verLbl").textContent = "Версия " + (S.status.version || "");
+  loadFiscalSettings();
+  loadVoiceSettings();
+  if (typeof loadBackupSettings === "function") loadBackupSettings();
+  api.network_info().then(n => {
+    $("#netBox").innerHTML = n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
+      : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.";
+  }).catch(() => {});
   $("#histTable tbody").innerHTML = s.history.map(h => `<tr><td>${fmtDT(h.finished)}</td><td class="${h.ok ? "ok-t" : "bad-t"}">${esc(h.message)}</td><td>${h.counts.visits ?? "—"}</td><td>${h.counts.patients ?? "—"}</td></tr>`).join("")
     || `<tr><td colspan="4" class="muted">Ещё не было</td></tr>`;
 }
 $$('input[name="tmode"]').forEach(r => r.onchange = async () => {
   const mode = r.value;
-  if (mode === "auto" && !confirm("Включить автоматическую отправку в Dentist Plus?\n\nНовые пациенты и записи (создание, перенос, статус, отмена) будут уходить в Dentist Plus сами, как только появится интернет.\n\nСначала проверьте на одной тестовой записи, что всё приходит правильно.")) {
+  if (mode === "auto" && !(await ask("Включить автоматическую отправку в Dentist Plus?", {icon: "warn", ok: "Включить", text: "Новые пациенты и записи (создание, перенос, статус, отмена) будут уходить в Dentist Plus сами, как только появится интернет.\n\nСначала проверьте на одной тестовой записи, что всё приходит правильно."}))) {
     $("#tmManual").checked = true; return;
   }
   await api.save_settings({transfer_mode: mode});
@@ -729,7 +941,7 @@ $("#sSave").onclick = async () => {
   try { writeMap = JSON.parse($("#sWriteMap").value.trim() || "{}"); } catch (e) { return msg("Ошибка в JSON настроек записи в Dentist Plus", false); }
   const demo = $("#sDemo").checked;
   if (!demo && !$("#sLogin").value.trim()) return msg("Укажите логин или включите демо-режим", false);
-  if (demo !== !!S.settings.demo && !confirm(demo ? "Включить демо-режим? Сохранённые реальные данные будут удалены с этого компьютера (заметки останутся)." : "Выключить демо-режим? Тестовые данные будут удалены, начнётся загрузка из Dentist Plus.")) return;
+  if (demo !== !!S.settings.demo && !(await ask(demo ? "Включить демо-режим?" : "Выключить демо-режим?", {icon: "warn", ok: demo ? "Включить" : "Выключить", text: demo ? "Сохранённые реальные данные будут удалены с этого компьютера (заметки останутся)." : "Тестовые данные будут удалены, начнётся загрузка из Dentist Plus."}))) return;
   $("#sSave").disabled = true;
   try {
     await api.save_settings({demo, login: $("#sLogin").value.trim(), password: $("#sPass").value, base_url: $("#sBase").value.trim(),
@@ -750,6 +962,33 @@ $("#sTest").onclick = async () => {
 };
 $("#sDiag").onclick = async () => { const o = $("#diagOut"); o.hidden = false; o.textContent = "Запрашиваем API…"; o.textContent = await api.diagnostics(); };
 $("#openDir").onclick = () => api.open_data_dir();
+let devRepText = "";
+$("#devRep").onclick = async () => {
+  const b = $("#devRep"), m = $("#devRepMsg");
+  b.disabled = true; m.className = "msg ok"; m.textContent = "Собираем отчёт…";
+  try {
+    const r = await api.dev_report();
+    if (!r.ok) { m.className = "msg bad"; m.textContent = r.message; return; }
+    devRepText = r.text;
+    m.textContent = (r.on_desktop ? "Файл сохранён на рабочем столе: " : "Файл сохранён: ") + r.name
+      + ". Отправьте его разработчику в Telegram.";
+    $("#devRepShow").hidden = false; $("#devRepCopy").hidden = false;
+  } catch (e) { m.className = "msg bad"; m.textContent = "Не удалось создать отчёт: " + e; }
+  finally { b.disabled = false; }
+};
+$("#devRepShow").onclick = async () => { if (!(await api.show_dev_report())) toast("Файл не найден", true); };
+$("#devRepCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText(devRepText); toast("Текст отчёта скопирован"); }
+  catch { toast("Не удалось скопировать, отправьте файл", true); }
+};
+$("#netFw").onclick = async () => {
+  const pw = window.pywebview && window.pywebview.api;
+  if (!pw || !pw.allow_firewall || !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return toast("Откройте настройки в программе на компьютере-сервере", true);
+  $("#netMsg").textContent = "Windows попросит подтвердить…"; $("#netMsg").className = "msg ok";
+  const r = await pw.allow_firewall();
+  $("#netMsg").textContent = r.ok ? "Готово: другие компьютеры клиники могут подключаться" : "Не получилось — подтвердите запрос Windows";
+  $("#netMsg").className = "msg " + (r.ok ? "ok" : "bad");
+};
 
 /* ------------------------------------------------------------ keyboard */
 document.addEventListener("keydown", e => {
@@ -762,13 +1001,168 @@ document.addEventListener("keydown", e => {
 });
 
 /* ---------------------------------------------------------------- boot */
-async function boot() {
-  try { const s = await api.get_settings(); S.settings = s; } catch (e) {}
+let started = false;
+async function startApp(user) {
+  ME = user;
+  if (window.DDTheme) DDTheme.useFor(ME.login);
+  $("#authScreen").hidden = true;
+  $("#ucAv").textContent = initials(ME.name); $("#ucName").textContent = ME.name;
+  $("#ucRole").textContent = ME.role_title || ME.position || "";
+  $$("[data-perm]").forEach(el => el.hidden = !can(el.dataset.perm));
+  $$("[data-perm-any]").forEach(el => el.hidden = !canAny(...el.dataset.permAny.split(",")));
+  $("#ucServer").hidden = !(window.pywebview && window.pywebview.api && window.pywebview.api.open_setup);
+  try { Object.assign(S.settings, await api.ui_settings()); } catch (e) {}
+  REF = null;
   await refreshStatus();
-  loadDay();
-  setInterval(refreshStatus, 3000);
-  setInterval(() => { if (S.view === "schedule" && S.mode === "grid" && S.day === iso(new Date())) loadDay(); }, 60000);
+  show(can("schedule_view") ? "schedule" : firstView());
+  if (can("staff")) refreshStaffBadge();
+  startOfflineCopies();
+  if (!started) {
+    started = true;
+    setInterval(() => { if (ME) refreshStatus(); }, 3000);
+    setInterval(() => { if (ME && S.view === "schedule" && S.mode === "grid" && S.day === iso(new Date())) loadDay(); }, 60000);
+    setInterval(() => { if (ME && can("staff")) refreshStaffBadge(); }, 30000);
+  }
 }
-if (location.protocol.startsWith("http")) boot();
-else if (window.pywebview && window.pywebview.api && window.pywebview.api.status) boot();
-else window.addEventListener("pywebviewready", boot, {once: true});
+function needLogin(message) {
+  if (!ME && !$("#authScreen").hidden) return;
+  ME = null; TOKEN = ""; sessionStorage.removeItem(SESSION_KEY);
+  closeModal(); if (typeof closeDrawer === "function" && $("#drawer").classList.contains("open")) closeDrawer();
+  showLogin(message && !/Войдите/.test(message) ? message : "Сеанс завершён — войдите снова");
+}
+let veilTimer = null;
+function lostServer() {
+  if (serverLost) return;
+  serverLost = true; $("#offlineVeil").hidden = false;
+  $("#veilSetup").hidden = !(window.pywebview && window.pywebview.api && window.pywebview.api.open_setup);
+  const pwb = window.pywebview && window.pywebview.api;
+  $("#veilOffline").hidden = true;
+  if (pwb && pwb.offline_available) pwb.offline_available().then(l => { $("#veilOffline").hidden = !l.length; }).catch(() => {});
+  veilTimer = setInterval(async () => {
+    try { const r = await fetch("/ping", {cache: "no-store"}); if (r.ok) foundServer(); }
+    catch (e) { const pw = window.pywebview && window.pywebview.api; if (pw && pw.reconnect) pw.reconnect(); }
+  }, 5000);
+}
+function foundServer() { serverLost = false; $("#offlineVeil").hidden = true; clearInterval(veilTimer); }
+$("#veilSetup").onclick = () => window.pywebview.api.open_setup();
+$("#veilOffline").onclick = () => window.pywebview.api.open_offline();
+
+/* client computers keep an encrypted read-only copy of the schedule and cards for server outages */
+let offlineTimer = null;
+async function saveOfflineCopy() {
+  const pw = window.pywebview && window.pywebview.api;
+  if (!ME || !pw || !pw.offline_save || serverLost) return;
+  try {
+    if (!(await pw.is_client())) return;
+    const snap = await api.offline_snapshot();
+    await pw.offline_save(ME.login, JSON.stringify(snap));
+  } catch (e) { /* next attempt in 10 minutes */ }
+}
+function startOfflineCopies() { clearInterval(offlineTimer); setTimeout(saveOfflineCopy, 5000); offlineTimer = setInterval(saveOfflineCopy, 10 * 60 * 1000); }
+
+/* theme: Settings panel and the user menu; theme.js applies it before the first paint */
+function syncThemeSeg() {
+  const p = window.DDTheme ? DDTheme.get() : "system";
+  $$("[data-theme-seg] button").forEach(b => b.classList.toggle("on", b.dataset.tp === p));
+}
+$$("[data-theme-seg] button").forEach(b => b.onclick = e => { e.stopPropagation(); if (window.DDTheme) DDTheme.set(b.dataset.tp, ME && ME.login); });
+$$(".um-theme").forEach(el => el.onclick = e => e.stopPropagation());
+document.addEventListener("dd-theme", syncThemeSeg);
+syncThemeSeg();
+$("#ucBtn").onclick = e => { e.stopPropagation(); $("#ucMenu").hidden = !$("#ucMenu").hidden; };
+document.addEventListener("click", () => { $("#ucMenu").hidden = true; });
+$("#ucOut").onclick = async () => { try { await authApi.logout(); } catch (e) {} ME = null; TOKEN = ""; sessionStorage.removeItem(SESSION_KEY); showLogin(); };
+$("#ucServer").onclick = () => window.pywebview.api.open_setup();
+$("#ucPass").onclick = () => {
+  const box = modal(`<div class="m-h"><h3>Смена пароля</h3><button class="x" data-close>×</button></div>
+    <div class="m-b auth-form"><label>Текущий пароль<input class="input" type="password" id="cpOld" autofocus></label>
+    <label>Новый пароль (от 6 символов)<input class="input" type="password" id="cpNew"></label>
+    <label>Повторите новый пароль<input class="input" type="password" id="cpNew2"></label><div class="auth-err" id="cpErr"></div></div>
+    <div class="m-f"><button class="btn ghost" data-close>Отмена</button><button class="btn" id="cpOk">Сменить</button></div>`);
+  $("#cpOk", box).onclick = async () => {
+    if ($("#cpNew").value !== $("#cpNew2").value) return $("#cpErr").textContent = "Новые пароли не совпадают";
+    try { await authApi.change_password($("#cpOld").value, $("#cpNew").value); closeModal(); toast("Пароль изменён"); }
+    catch (e) { $("#cpErr").textContent = errText(e); }
+  };
+};
+
+/* sign-in, registration and the very first (director) account */
+let AUTH_STATE = null;
+async function showLogin(note) { try { AUTH_STATE = await authApi.state(); } catch (e) {} renderAuth("login", note); }
+function brandHead() {
+  const b = (S.status && S.status.brand) || {short: "DD", sub: "offline", name: "Dental Desk"};
+  return `<div class="auth-brand"><span class="brandmark"><b>${esc(b.short)}</b><i></i><small>${esc(b.sub)}</small></span>
+    <div><div class="ab-t">${esc(b.name)}</div><div class="ab-s">Программа для клиники</div></div></div>`;
+}
+function renderAuth(mode, note) {
+  const st = AUTH_STATE || {roles: []};
+  const box = $("#authBox");
+  $("#authScreen").hidden = false;
+  if (mode === "bootstrap") {
+    box.innerHTML = brandHead() + `<h2>Добро пожаловать</h2>
+      <p class="lead">Создайте учётную запись директора. Директор одобряет заявки сотрудников и назначает им роли и права.</p>
+      <form class="auth-form" id="af"><label>ФИО<input class="input" id="aName" autofocus required></label>
+      <div class="auth-row"><label>Логин<input class="input" id="aLogin" autocomplete="username" required></label>
+      <label>Должность<input class="input" id="aPos" value="Директор"></label></div>
+      <label>Пароль (от 6 символов)<input class="input" type="password" id="aPass" autocomplete="new-password" required></label>
+      <label>Повторите пароль<input class="input" type="password" id="aPass2" autocomplete="new-password" required></label>
+      <div class="auth-err" id="aErr"></div><button class="btn">Создать и войти</button></form>`;
+  } else if (mode === "register") {
+    box.innerHTML = brandHead() + `<h2>Заявка на доступ</h2>
+      <p class="lead">После отправки директор увидит заявку и назначит вам права. Затем войдите со своим логином и паролем.</p>
+      <form class="auth-form" id="af"><label>ФИО<input class="input" id="aName" autofocus required></label>
+      <div class="auth-row"><label>Логин<input class="input" id="aLogin" autocomplete="username" required></label>
+      <label>Должность<select class="input" id="aRole">${st.roles.filter(r => r.key !== "director").map(r => `<option value="${r.key}">${esc(r.title)}</option>`).join("")}</select></label></div>
+      <label>Пароль (от 6 символов)<input class="input" type="password" id="aPass" autocomplete="new-password" required></label>
+      <label>Повторите пароль<input class="input" type="password" id="aPass2" autocomplete="new-password" required></label>
+      <div class="auth-err" id="aErr"></div><button class="btn">Отправить заявку</button></form>
+      <div class="auth-switch">Уже есть доступ? <button id="toLogin">Войти</button></div>`;
+  } else if (!st.has_users) {
+    box.innerHTML = brandHead() + `<h2>Программа ещё не настроена</h2>
+      <p class="lead">Учётную запись директора нужно создать на компьютере-сервере. После этого здесь можно будет войти или подать заявку.</p>
+      <button class="btn ghost" id="retry" style="width:100%;justify-content:center">Проверить снова</button>`;
+  } else {
+    box.innerHTML = brandHead() + `<h2>Вход</h2><p class="lead">Войдите под своей учётной записью.</p>
+      <form class="auth-form" id="af"><label>Логин<input class="input" id="aLogin" autocomplete="username" autofocus required></label>
+      <label>Пароль<input class="input" type="password" id="aPass" autocomplete="current-password" required></label>
+      <div class="auth-ok" id="aOk">${esc(note && /отправлена|изменён/.test(note) ? note : "")}</div>
+      <div class="auth-err" id="aErr">${esc(note && !/отправлена|изменён/.test(note) ? note : "")}</div><button class="btn">Войти</button></form>
+      <div class="auth-switch">Новый сотрудник? <button id="toReg">Подать заявку</button></div>`;
+  }
+  const f = $("#af", box), err = t => { $("#aErr").textContent = t; };
+  const tl = $("#toLogin", box); if (tl) tl.onclick = () => renderAuth("login");
+  const tr = $("#toReg", box); if (tr) tr.onclick = () => renderAuth("register");
+  const rt = $("#retry", box); if (rt) rt.onclick = boot;
+  setTimeout(() => { const a = box.querySelector("[autofocus]"); if (a) a.focus(); }, 30);
+  if (!f) return;
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const btn = f.querySelector(".btn"); btn.disabled = true;
+    try {
+      if (mode !== "login" && $("#aPass").value !== $("#aPass2").value) throw new Error("Пароли не совпадают");
+      if (mode === "register") {
+        const r = await authApi.register({name: $("#aName").value, login: $("#aLogin").value, role: $("#aRole").value,
+          position: $("#aRole").selectedOptions[0].textContent, password: $("#aPass").value});
+        renderAuth("login", r.message); return;
+      }
+      const r = mode === "bootstrap"
+        ? await authApi.bootstrap({name: $("#aName").value, login: $("#aLogin").value, position: $("#aPos").value, password: $("#aPass").value})
+        : await authApi.login($("#aLogin").value, $("#aPass").value);
+      TOKEN = r.token; sessionStorage.setItem(SESSION_KEY, TOKEN);
+      const pwBridge = window.pywebview && window.pywebview.api;
+      if (pwBridge && pwBridge.offline_remember) pwBridge.offline_remember($("#aLogin").value, $("#aPass").value).catch(() => {});
+      startApp(r.user);
+    } catch (ex) { err(errText(ex)); btn.disabled = false; }
+  };
+}
+
+async function boot() {
+  let st;
+  try { st = await authApi.state(); } catch (e) { setTimeout(boot, 4000); return; }
+  AUTH_STATE = st;
+  S.status = {...S.status, brand: st.brand};
+  applyBrand(st.brand);
+  if (st.user) return startApp(st.user);
+  renderAuth(st.can_bootstrap ? "bootstrap" : "login");
+}
+boot();

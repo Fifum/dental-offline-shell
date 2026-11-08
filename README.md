@@ -40,6 +40,14 @@ working without it.
 | **Documents** | 11 templates (consents, contract, plan, act, extract, form 043/u, receipt) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
 | **Money** | Invoices from the price list with per-line discounts, partial payments, staged treatment plans billed step by step, daily cash report |
 | **Transfer to Dentist Plus** | A checklist of everything created offline — or automatic sending of new patients and appointments |
+| **Dictation** | The doctor dictates the visit; speech is recognized on the laptop (Whisper, no internet), split into record fields, ICD-10 codes and tooth states by offline rules, optionally tidied by any OpenAI-compatible model with the patient's name and phone removed |
+| **Double bookings** | Overlaps between laptops that worked offline are flagged in the calendar and the transfer list, and are not sent to Dentist Plus until resolved |
+| **Fiscal receipts** | 54-FZ receipts on ATOL (DTO 10 web server) or Shtrih-M (COM driver) registers, or a test mode: receipt on payment, partial payment and credit rules, returns, shifts, X/Z reports, failed receipts kept for retry |
+| **Stock** | Materials with minimum levels, supplier invoices, write-offs with a printed act, stock counts, consumption norms per service — billing a service writes its materials off automatically |
+| **Equipment** | Register with inventory numbers, location, warranty and service dates, service history, write-off with a commission and a printed act |
+| **Clinic network** | One computer is the server; reception, surgeries and the director's PC connect over the local network and find it automatically |
+| **Staff accounts** | Self-registration, director approval, password sign-in, roles (director, administrator, doctor, assistant) with per-person permission overrides, action journal |
+| **Backups** | A verified, compressed copy of the whole database at start, every 2 hours and on exit, made with SQLite's online backup while the app keeps working; rotation (everything for 2 days, one per day for 30); an optional second folder on a flash drive; one-click restore that first saves the current data and then restarts the app |
 
 | Patient card | Dental formula |
 |---|---|
@@ -76,6 +84,23 @@ sync brings the change back from Dentist Plus, the overlay disappears on its own
 card is merged into the real one. Sync can replace its data at any time without losing anything typed
 by staff.
 
+## Clinic network and staff accounts
+
+Version 2.0 turns the single-laptop app into a small clinic system without adding any infrastructure.
+The same `.exe` asks on first start whether this computer is the **server** or should **connect to
+one**. The server keeps the database and the Dentist Plus sync and serves the UI over HTTP; other
+computers find it with a UDP broadcast and open it in their own window. If the router hands out a new
+address, clients find the same server again by its id.
+
+Every request carries a session token and is checked on the server against the employee's
+permissions, so a hidden button is never the only protection. A new employee registers, the director
+approves the request and picks a role; any role can be fine-tuned per person. Passwords are PBKDF2
+hashes, only token hashes are stored, repeated wrong passwords are throttled, blocking an employee ends
+their sessions at once, and the last director cannot be demoted. Bookings, payments, treatments,
+permission edits and sign-ins land in an action journal with the employee's name.
+
+The same server is ready to move to a hosted machine later: the UI already talks to it only over HTTP.
+
 ## Architecture
 
 ```
@@ -87,14 +112,25 @@ Dentist Plus partner API
         ▼
   SQLite (WAL, one transaction per chunk — safe on power loss)
         ▲
-  main.py (pywebview, Python ↔ JS bridge)
+  server.py  HTTP API + UI files · auth.py (accounts, roles, sessions, journal) · UDP discovery
+        ▲  clinic LAN
+  main.py on every computer (pywebview window, server or client)
         ▲
   ui/  plain HTML/CSS/JS, no framework, works fully offline (fonts bundled)
 ```
 
 | File | Role |
 |---|---|
-| `app/main.py` | Window, JS API, self-install and update, autostart |
+| `app/main.py` | Window, server/client start, data API, self-install and update, autostart |
+| `app/server.py` | Clinic server: HTTP API, permission checks, UI files, network discovery |
+| `app/auth.py` | Staff accounts, password hashing, sessions, roles and permissions, action journal |
+| `app/speech.py` | Offline speech recognition: model download, transcription |
+| `app/dictation.py` | Dictated protocol → record fields, ICD-10, tooth states |
+| `app/ai.py` | Optional language-model layer (OpenAI-compatible), anonymization, validation |
+| `app/conflicts.py` | Double-booking detection |
+| `app/fiscal.py` | Fiscal receipts: receipt rules, test mode, ATOL web server and Shtrih-M drivers, shifts, returns |
+| `app/stock.py` | Materials as a ledger of moves, receipts, write-offs, stock counts, service norms, equipment register |
+| `app/backup.py` | Automatic backups: online copy, integrity check, rotation, second folder, restore with a safety copy |
 | `app/config.py` | Paths, settings, DPAPI password protection, clinic branding |
 | `app/sync.py` | Background worker: online check, pull, purge, push, offline mode |
 | `app/api_client.py` | Partner API client: auth, paging in any shape, retries, writes |
@@ -120,10 +156,11 @@ Dentist Plus partner API
 
 ## Stack
 
-Python 3.11 · pywebview (Edge WebView2) · SQLite · requests · vanilla HTML/CSS/JS ·
+Python 3.11 · pywebview (Edge WebView2) · SQLite · requests · faster-whisper · vanilla HTML/CSS/JS ·
 PyInstaller (single-file exe) · Playwright for screenshots
 
-No web framework, no server, no cloud — the only network calls go to Dentist Plus.
+No web framework and no cloud: the server is the standard-library HTTP server on a clinic computer,
+and the only internet calls go to Dentist Plus.
 
 ## Running it
 
@@ -142,8 +179,10 @@ icon and data folder into `app/brand.json` (kept out of the repository):
 
 ```json
 {"name": "My Clinic", "short": "MC", "sub": "clinic", "exe": "MyClinic", "folder": "MyClinic"}
-``` To connect a real account: Settings → untick
-demo mode → partner API login and password → *Check connection* → *Save and sync*.
+```
+
+To connect a real account: Settings → untick demo mode → partner API login and password →
+*Check connection* → *Save and sync*.
 
 ## Tests
 
@@ -151,6 +190,13 @@ demo mode → partner API login and password → *Check connection* → *Save an
 .venv\Scripts\python tests\test_api_all_functions.py     # 112 checks over every app function
 .venv\Scripts\python tests\test_push_to_dentist_plus.py  # automatic sending against a fake API
 .venv\Scripts\python tests\test_sync_api_formats.py      # sync against 4 differently shaped APIs
+.venv\Scripts\python tests\test_server_auth.py           # 45 checks: accounts, approval, permissions over HTTP
+.venv\Scripts\python tests\test_stock.py                 # 54 checks: stock, automatic write-off, equipment, rights
+.venv\Scripts\python tests\test_fiscal.py                # 48 checks: receipt rules, test mode, fake ATOL server, fake Shtrih-M driver
+.venv\Scripts\python tests\test_offline_copy.py          # 21 checks: encrypted read-only copy for laptops
+.venv\Scripts\python tests\test_double_booking.py        # 18 checks: overlap rules, calendar flags, blocked sending
+.venv\Scripts\python tests\test_dictation.py             # 25 checks: parsing rules, AI layer vs a fake server, real recognition if a model is present
+.venv\Scripts\python tests\test_backup.py               # 56 checks: copy and check, rotation, missing flash drive, restore round-trip
 ```
 
 Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,
@@ -159,7 +205,7 @@ settings, dedupe and validation errors on write, paging variants, timezones and 
 
 ## Status and privacy
 
-Version 1.3, delivered to the clinic. All screenshots use an invented demo clinic — no real patient
+Version 2.0: clinic network, staff accounts, stock and equipment, fiscal receipts. All screenshots use an invented demo clinic — no real patient
 appears anywhere in this repository. The app stores medical data locally only; the clinic is advised
 to use Windows login and BitLocker.
 

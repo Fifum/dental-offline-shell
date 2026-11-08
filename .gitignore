@@ -21,3 +21,8 @@ installer/
 *.db-shm
 settings.json
 app.log
+.devdata/
+.devdata-clean/
+
+# showreel video project and renders (local only)
+media/

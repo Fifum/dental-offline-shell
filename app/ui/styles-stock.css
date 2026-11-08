@@ -1,0 +1,57 @@
+/* ===== stock and equipment ===== */
+#stockBody{padding-top:4px}
+.stat.warn{border-color:var(--warn-line);background:var(--warn-soft)}
+.stat.warn b{color:var(--warn)}
+.search-row.mini{margin:0;height:36px;min-width:280px;padding:0 10px}
+.search-row.mini input{border:0;outline:0;background:none;font:inherit;flex:1;height:100%}
+.search-row.mini svg{width:16px;height:16px}
+.tab-tools .grow,.ev-row .grow{flex:1}
+.tbl .num,.input.num{text-align:right;font-variant-numeric:tabular-nums}
+.tbl tr.neg td{background:var(--danger-soft)}
+.tbl tr.muted-row td{color:var(--muted)}
+.mv{display:inline-block;padding:1px 8px;border-radius:3px;font-size:12px;background:var(--gray-soft);color:var(--ink2);white-space:nowrap}
+.mv-receipt{background:var(--ok-soft);color:var(--ok)}
+.mv-writeoff,.mv-repair{background:var(--danger-soft);color:var(--danger)}
+.mv-service{background:var(--blue-soft);color:var(--blue)}
+.mv-inventory,.mv-status,.mv-move{background:var(--warn-soft);color:var(--warn)}
+.mv-writeoff.mv{font-weight:600}
+.doc-lines td{vertical-align:middle}
+.doc-lines .input{height:34px}
+.eq-kv{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:2px 16px}
+.eq-kv dt{color:var(--muted);font-size:12px;margin-top:6px}
+.eq-kv dd{margin:0;font-weight:500}
+.ev-add{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ev-add #evT{flex:1;min-width:220px}
+.ev-list{display:flex;flex-direction:column;border:1px solid var(--line2);border-radius:6px}
+.ev-row{display:flex;align-items:center;gap:12px;padding:9px 12px;border-top:1px solid var(--line2);font-size:13px}
+.ev-row:first-child{border-top:0}
+.ev-row b{white-space:nowrap}
+#stockBody .pbody{animation:fadeUp .25s ease-out}
+@keyframes fadeUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* printed acts */
+.pr-head{font-size:10pt;margin-bottom:10px}
+.pr-approve{float:right;text-align:left;font-size:10pt;margin:0 0 10px 20px;line-height:1.6}
+.pr-sign{margin-top:28px;display:flex;flex-direction:column;gap:18px}
+.pr-sign div{display:flex;align-items:flex-end;gap:10px}
+.pr-sign span{width:210px}
+.pr-sign i{flex:0 0 160px;border-bottom:1px solid #000;height:1px}
+.pr-sign small{font-size:10pt}
+
+/* ===== fiscal receipts ===== */
+.fiscal-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 16px;margin-bottom:10px}
+.fiscal-bar.test{background:repeating-linear-gradient(135deg,var(--warn-soft) 0 10px,var(--panel) 10px 20px)}
+.fb-main{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.fb-acts{display:flex;gap:8px}
+.warn-line.bad{border-color:var(--danger-line);background:var(--danger-soft);color:var(--danger)}
+.pay-fiscal{display:flex;align-items:center;gap:10px;margin-top:6px}
+.pay-fiscal .input{flex:1;height:34px}
+.pill-btn-lite{border:0;cursor:pointer;font:inherit;font-size:12px}
+.receipt{width:340px;margin:0 auto;background:#fff;border:1px dashed var(--line);border-radius:6px;padding:16px 18px;font-family:Consolas,"Courier New",monospace;font-size:12.5px;display:flex;flex-direction:column;gap:6px;animation:fadeUp .25s ease-out}
+.receipt.print{border:0;width:auto}
+.rc-h{text-align:center;font-weight:700}
+.rc-row{display:flex;justify-content:space-between;gap:10px}
+.rc-item{border-top:1px dashed var(--line);padding-top:6px}
+.rc-total{border-top:1px solid #000;padding-top:6px;font-size:14px}
+.rc-f{border-top:1px dashed var(--line);padding-top:6px;font-size:11px;color:var(--ink2)}
+.rc-test{text-align:center;font-weight:700;color:var(--danger);border:1px solid var(--danger);padding:3px}

@@ -25,11 +25,11 @@ async function loadRefs() {
     const list = await api.templates("phrase");
     body.innerHTML = Object.entries(PHRASE_CATS).map(([k, title]) => `<div class="pbody ph-group"><div class="pb-head"><b>${title}</b><button class="linkbtn" data-add="${k}">+ добавить фразу</button></div>
       ${list.filter(x => x.category === k).map(x => `<div class="ph"><span>${esc(x.body)}</span><button class="linkbtn" data-ed="${esc(x.id)}">изменить</button><button class="linkbtn danger" data-del="${esc(x.id)}">удалить</button></div>`).join("") || '<div class="muted" style="padding:8px 16px">Нет фраз</div>'}</div>`).join("");
-    $$("#refsBody [data-add]").forEach(b => b.onclick = async () => { const t = prompt(`Новая фраза — ${PHRASE_CATS[b.dataset.add]}`); if (!t) return;
+    $$("#refsBody [data-add]").forEach(b => b.onclick = async () => { const v = await askInput(`Новая фраза — ${PHRASE_CATS[b.dataset.add]}`, [{label: "Текст фразы"}], {ok: "Добавить"}); if (!v) return; const t = v[0];
       await api.save_template({kind: "phrase", category: b.dataset.add, title: t.slice(0, 60), body: t}); REF = null; loadRefs(); });
-    $$("#refsBody [data-ed]").forEach(b => b.onclick = async () => { const x = list.find(y => y.id === b.dataset.ed); const t = prompt("Фраза", x.body); if (!t) return;
+    $$("#refsBody [data-ed]").forEach(b => b.onclick = async () => { const x = list.find(y => y.id === b.dataset.ed); const v = await askInput("Изменить фразу", [{label: "Текст фразы", value: x.body}]); if (!v) return; const t = v[0];
       await api.save_template({...x, title: t.slice(0, 60), body: t}); REF = null; loadRefs(); });
-    $$("#refsBody [data-del]").forEach(b => b.onclick = async () => { if (confirm("Удалить фразу?")) { await api.delete_template(b.dataset.del); REF = null; loadRefs(); } });
+    $$("#refsBody [data-del]").forEach(b => b.onclick = async () => { if (await ask("Удалить фразу?", {danger: true, ok: "Удалить"})) { await api.delete_template(b.dataset.del); REF = null; loadRefs(); } });
   } else if (REF_TAB === "price") {
     const list = await api.services("");
     body.innerHTML = `<div class="pb-head" style="padding:0 0 10px"><span class="muted">${list.length} услуг. Если Dentist Plus отдаёт прайс через API, он подтянется сам; иначе импортируйте выгрузку из Excel (CSV: код; название; цена; раздел).</span>
@@ -50,7 +50,7 @@ async function loadRefs() {
     };
     $("#pNew").onclick = () => edit({});
     $$("#refsBody [data-ed]").forEach(b => b.onclick = () => edit(list.find(x => x.id === b.dataset.ed)));
-    $$("#refsBody [data-del]").forEach(b => b.onclick = async () => { if (confirm("Убрать услугу из прайса?")) { await api.delete_service(b.dataset.del); loadRefs(); } });
+    $$("#refsBody [data-del]").forEach(b => b.onclick = async () => { if (await ask("Убрать услугу из прайса?", {danger: true, ok: "Убрать", text: "В выставленных счетах услуга останется."})) { await api.delete_service(b.dataset.del); loadRefs(); } });
     $("#pCsv").onchange = async e => {
       const f = e.target.files[0]; if (!f) return;
       const buf = await f.arrayBuffer();
@@ -59,42 +59,13 @@ async function loadRefs() {
       const n = await api.import_services(text); toast(`Импортировано услуг: ${n}`); loadRefs();
     };
   } else if (REF_TAB === "clinic") {
-    const s = await api.get_settings();
-    const c = s.clinic || {};
+    const c = (await ref(true)).clinic || {};
     body.innerHTML = `<div class="panel" style="max-width:760px"><h3>Реквизиты клиники</h3><p class="hint">Подставляются в договоры, согласия, акты и выписки.</p>
       <div class="form">${CLINIC_FIELDS.map(([k, t, ph]) => `<label class="${k === "name" || k === "address" || k === "director" ? "wide" : ""}">${t}<input class="input" data-k="${k}" value="${esc(c[k] || "")}" placeholder="${esc(ph)}"></label>`).join("")}</div>
       <div class="row"><button class="btn" id="cSave">Сохранить</button></div></div>`;
     $("#cSave").onclick = async () => { const clinic = {}; $$("#refsBody [data-k]").forEach(i => clinic[i.dataset.k] = i.value.trim());
-      await api.save_settings({clinic}); REF = null; toast("Реквизиты сохранены"); };
+      await api.save_clinic(clinic); REF = null; toast("Реквизиты сохранены"); };
   }
 }
 
-function editDocTemplate(t) {
-  const box = modal(`<div class="m-h"><h3>Шаблон документа</h3><button class="x" data-close>×</button></div>
-    <div class="m-b tpl-ed">
-      <div class="tpl-l">
-        <div class="grid2"><label class="fl">Название<input class="input" id="teT" value="${esc(t.title)}"></label>
-          <label class="fl">Раздел<input class="input" id="teC" value="${esc(t.category || "")}"></label></div>
-        <label class="fl">Текст (HTML). Поля вставляются щелчком по подсказке ниже</label>
-        <textarea class="input mono" id="teB" rows="18">${esc(t.body)}</textarea>
-        <div class="chips">${PLACEHOLDERS.map(p => `<button class="chip" data-p="${esc(p)}">{{${esc(p)}}}</button>`).join("")}</div>
-      </div>
-      <div class="df-prev"><div class="doc-page" id="tePrev"></div></div>
-    </div>
-    <div class="m-f">${t.id && !t.builtin ? '<button class="btn ghost small danger" id="teDel">Удалить</button>' : ""}${t.builtin ? '<button class="btn ghost small" id="teReset">Вернуть исходный текст</button>' : ""}
-      <span class="muted"></span><button class="btn ghost" data-close>Отмена</button>${t.id ? '<button class="btn ghost" id="teCopy">Сохранить как копию</button>' : ""}<button class="btn" id="teSave">Сохранить</button></div>`, {wide: true});
-  const demoCtx = {patient: {fio: "Иванова Анна Сергеевна", birth: "1990-03-15", phone: "+7 900 000-00-00", address: "г. Москва, ул. Примерная, 1", card: "2026-001"},
-    doctor: {fio: "Петров Пётр Петрович", position: "Стоматолог-терапевт"}, clinic: (REF && REF.clinic) || {}, visit: {date: iso(new Date())},
-    record: {complaints: "Боль от холодного", diagnoses: [{code: "K02.1", title: "Кариес дентина", tooth: "36"}], treatment: "Пломба"},
-    invoice: {items: [{code: "A16.07.002", title: "Лечение кариеса", qty: 1, price: 5500, sum: 5500}], total: 5500}};
-  const ta = $("#teB", box);
-  const prev = () => $("#tePrev", box).innerHTML = renderDoc(ta.value, demoCtx, []);
-  ta.oninput = prev; prev();
-  $$(".chip", box).forEach(c => c.onclick = () => { const s = ta.selectionStart; ta.value = ta.value.slice(0, s) + `{{${c.dataset.p}}}` + ta.value.slice(ta.selectionEnd); ta.focus(); prev(); });
-  const save = async asCopy => { await api.save_template({id: asCopy ? null : t.id, kind: "document", title: $("#teT", box).value.trim() + (asCopy ? " (копия)" : ""),
-    category: $("#teC", box).value.trim(), body: ta.value}); closeModal(); toast("Шаблон сохранён"); loadRefs(); };
-  $("#teSave", box).onclick = () => save(false);
-  const cp = $("#teCopy", box); if (cp) cp.onclick = () => save(true);
-  const rs = $("#teReset", box); if (rs) rs.onclick = async () => { if (confirm("Вернуть исходный текст шаблона?")) { await api.reset_template(t.id); closeModal(); loadRefs(); } };
-  const dl = $("#teDel", box); if (dl) dl.onclick = async () => { if (confirm("Удалить шаблон?")) { await api.delete_template(t.id); closeModal(); loadRefs(); } };
-}
+/* editDocTemplate lives in tpl-editor.js (visual editor) */

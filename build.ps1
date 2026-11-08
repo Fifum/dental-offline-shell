@@ -21,6 +21,10 @@ if (Test-Path app\brand.json) {
   --add-data "app\ui;ui" @extra `
   --paths app `
   --hidden-import webview.platforms.edgechromium `
+  --hidden-import win32com.client `
+  --collect-data faster_whisper `
+  --collect-binaries ctranslate2 `
+  --collect-data onnxruntime `
   app\main.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 

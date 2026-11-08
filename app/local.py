@@ -52,7 +52,7 @@ class Local:
                 if row and row["action"] == "create" and action != "cancel":
                     action = "create"
                 c.execute("""UPDATE local_visits SET patient_id=?, doctor_id=?, branch_id=?, start=?, "end"=?, status=?,
-                             title=?, comment=?, chair=?, action=?, updated_at=?, transferred=0, transferred_at=NULL, push_status=NULL, push_error=NULL WHERE id=?""",
+                             title=?, comment=?, chair=?, action=?, updated_at=?, transferred=0, transferred_at=NULL, push_status=NULL, push_error=NULL, push_force=0 WHERE id=?""",
                           (*fields, action, ts, vid))
                 return vid
             new = new_id()

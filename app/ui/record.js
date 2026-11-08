@@ -19,6 +19,7 @@ async function openRecord(o) {
   const box = modal(`
     <div class="m-h"><h3>Запись в медкарту · ${esc(pat.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b rec-grid">
+      ${dictationBar()}
       <div class="grid3">
         <label class="fl">Дата приёма<input class="input" type="date" id="rDate" value="${esc((rec && rec.date) || o.date || iso(new Date()))}"></label>
         <label class="fl">Врач<select class="input" id="rDoc"><option value="">—</option>${R.doctors.map(d => `<option value="${esc(d.id)}" ${d.id === doctor ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></label>
@@ -48,18 +49,18 @@ async function openRecord(o) {
   });
 
   const drawTeeth = () => {
-    const row = qs => `<div class="jaw">${qs.map((q, qi) => (qi ? '<span class="gap"></span>' : "") + q.map(n => {
-      const s = st.teeth[n] || ""; return `<button class="tooth ${toothCls(s)}" data-n="${n}" title="${esc(s || "не указано")}"><b>${n}</b><small>${esc(s ? s.slice(0, 6) : "")}</small></button>`; }).join("")).join("")}</div>`;
-    $("#rTeeth", box).innerHTML = row(UPPER) + row(LOWER);
-    $$("#rTeeth .tooth", box).forEach(b => b.onclick = e => toothMenu(b, e));
+    $("#rTeeth", box).innerHTML = formulaHtml(st.teeth, false, {sel: st.sel});
+    $$("#rTeeth .ft", box).forEach(b => b.onclick = e => toothMenu(b, e));
   };
   const toothMenu = (b, e) => {
     $$(".tmenu", box).forEach(x => x.remove());
     const n = b.dataset.n, m = document.createElement("div");
     m.className = "tmenu";
     m.innerHTML = `<b>Зуб ${n}</b>` + R.tooth_statuses.map(s => `<button data-s="${esc(s)}">${esc(s)}</button>`).join("") + `<button data-s="" class="muted">Очистить</button>`;
-    b.parentElement.appendChild(m);
-    m.style.left = (b.offsetLeft) + "px"; m.style.top = (b.offsetTop + b.offsetHeight + 4) + "px";
+    st.sel = n; $$("#rTeeth .ft.sel", box).forEach(x => x.classList.remove("sel")); b.classList.add("sel");
+    const tf = $("#rTeeth", box), fr = tf.getBoundingClientRect(), br = b.getBoundingClientRect();
+    tf.appendChild(m);
+    m.style.left = Math.max(0, Math.min(br.left - fr.left, fr.width - m.offsetWidth)) + "px"; m.style.top = (br.bottom - fr.top + 4) + "px";
     m.onclick = ev => { const x = ev.target.closest("button"); if (!x) return; if (x.dataset.s) st.teeth[n] = x.dataset.s; else delete st.teeth[n]; m.remove(); drawTeeth();
       if (x.dataset.s && !$("#rDiagT", box).value) $("#rDiagT", box).value = n; };
     e.stopPropagation();
@@ -81,7 +82,18 @@ async function openRecord(o) {
   };
   $("#rDiagQ", box).onkeydown = e => { if (e.key === "Enter") $("#rDiagAdd", box).click(); };
   drawTeeth(); drawDiag();
-  if (o.tooth) { $("#rDiagT", box).value = o.tooth; const tb = $(`#rTeeth .tooth[data-n="${o.tooth}"]`, box); if (tb) setTimeout(() => { tb.scrollIntoView({block: "center"}); tb.click(); }, 50); }
+  attachDictation(box, o.patient_id, r => {
+    for (const [k, v] of Object.entries(r.fields || {})) {
+      const ta = $("#rf_" + k, box); if (!ta || !v) continue;
+      const cur = ta.value.trim();
+      ta.value = cur ? cur + (/[.!?]$/.test(cur) ? " " : ". ") + v : v;
+      ta.classList.add("dict-filled"); setTimeout(() => ta.classList.remove("dict-filled"), 1600);
+    }
+    for (const d of r.diagnoses || []) if (!st.diagnoses.some(x => x.code === d.code && String(x.tooth || "") === String(d.tooth || ""))) st.diagnoses.push(d);
+    Object.assign(st.teeth, r.teeth || {});
+    drawTeeth(); drawDiag();
+  }, {doctor: () => $("#rDoc", box).value});
+  if (o.tooth) { $("#rDiagT", box).value = o.tooth; const tb = $(`#rTeeth .ft[data-n="${o.tooth}"]`, box); if (tb) setTimeout(() => { tb.scrollIntoView({block: "center"}); tb.click(); }, 50); }
 
   const save = async () => {
     if ($("#rDiagQ", box).value.trim()) $("#rDiagAdd", box).click();
@@ -96,5 +108,5 @@ async function openRecord(o) {
       openDocFill({patient_id: o.patient_id, template_id: "doc_extract", record_id: rid, doctor_id: doc, visit_id: o.visit_id}); }
     catch (e) { toast(errText(e), true); }
   };
-  const del = $("#rDel", box); if (del) del.onclick = async () => { if (confirm("Удалить запись из медкарты?")) { await api.delete_record(rec.id); closeModal(); afterChange(); } };
+  const del = $("#rDel", box); if (del) del.onclick = async () => { if (await ask("Удалить запись из медкарты?", {danger: true, ok: "Удалить", text: "Диагнозы и отметки на зубной формуле из этой записи тоже пропадут."})) { await api.delete_record(rec.id); closeModal(); afterChange(); } };
 }

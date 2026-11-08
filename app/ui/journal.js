@@ -43,6 +43,12 @@ async function loadJournal() {
   });
   const jm = $("#jMode"); if (jm) jm.onclick = e => { e.preventDefault(); show("settings"); };
   $$("#journalBody [data-retry]").forEach(b => b.onclick = async e => { e.preventDefault(); await api.retry_push(b.dataset.t, b.dataset.retry); toast("Отправим ещё раз при следующей синхронизации"); loadJournal(); });
+  $$("#journalBody [data-open-visit]").forEach(b => b.onclick = e => { e.preventDefault(); openVisit(b.dataset.openVisit); });
+  $$("#journalBody [data-force]").forEach(b => b.onclick = async e => {
+    e.preventDefault();
+    if (!(await ask("Отправить запись несмотря на двойную запись?", {icon: "warn", ok: "Отправить", text: "У врача на это время в Dentist Plus уже есть другой пациент. Отправляйте, только если это действительно нужно (например, короткая консультация)."}))) return;
+    await api.force_push(b.dataset.force); toast("Отправим при следующей синхронизации"); loadJournal();
+  });
   $$("#journalBody [data-open-doc]").forEach(b => b.onclick = e => { e.preventDefault(); openDocument(b.dataset.openDoc); });
   $$("#journalBody [data-open-rec]").forEach(b => b.onclick = e => { e.preventDefault(); openRecord({patient_id: b.dataset.p, id: b.dataset.openRec}); });
   $$("#journalBody .j-pat").forEach(b => b.onclick = () => b.dataset.p && openPatient(b.dataset.p, "patients"));
@@ -50,6 +56,10 @@ async function loadJournal() {
 function pushLine(x, auto) {
   if (!x.auto) return auto ? `<small class="pl manual">вносится вручную</small>` : "";
   const st = x.push_status, err = x.push_error ? esc(x.push_error) : "";
+  const openBtn = x.kind === "visit" ? ` <button class="linkbtn" data-open-visit="${esc(x.id)}">открыть запись</button>` : "";
+  if (st === "conflict") return `<small class="pl conflict">⚠ ${err}${openBtn} · <button class="linkbtn" data-force="${esc(x.id)}">отправить всё равно</button></small>`;
+  const clash = x.conflict_text ? `<small class="pl conflict">⚠ Двойная запись: ${esc(x.conflict_text)}. ${auto ? "Не уйдёт в Dentist Plus, пока не решите." : "Перед переносом в Dentist Plus решите, кого перенести."}${openBtn}</small>` : "";
+  if (clash && !st) return clash;
   if (st === "sent") return `<small class="pl ok">✓ отправлено автоматически${err ? " · " + err : ""}</small>`;
   if (st === "warn") return `<small class="pl warn">⚠ ${err}</small>`;
   if (st === "unknown") return `<small class="pl warn">⚠ ${err || "результат неизвестен"} — проверьте в Dentist Plus и отметьте галочкой, или <button class="linkbtn" data-retry="${esc(x.id)}" data-t="${esc(x.table)}">отправить ещё раз</button></small>`;

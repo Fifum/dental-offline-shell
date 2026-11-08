@@ -1,0 +1,103 @@
+/* ===== Reports, accounting, marketing, work schedules =====
+   Colours only through the tokens of styles-brand.css (light) and styles-theme.css (dark). */
+
+#repBody,#accBody,#mkBody,#shBody{padding-top:4px}
+.rep-tools{padding:0 0 12px;flex-wrap:wrap;row-gap:8px}
+.rep-tools .grow{flex:1}
+.period-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pb-dates{display:inline-flex;align-items:center;gap:6px}
+.pb-dates .input{height:32px;width:142px;padding:0 8px}
+.seg.sm{height:32px}
+.seg.sm button{padding:0 11px;font-size:13px}
+.inline-f{display:inline-flex;align-items:center;gap:8px;color:var(--ink2);font-size:13px}
+.inline-f .input{height:32px}
+.month-nav{display:inline-flex;align-items:center;gap:8px}
+.month-nav b{font:500 16px var(--font-d);min-width:150px;text-align:center}
+.stat b small{font:500 13px var(--font);margin-left:4px}
+.note-line{font-size:12.5px;margin:10px 2px 0;line-height:1.5}
+.empty.sm{padding:28px 16px}
+
+.rep-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:12px}
+@media (max-width:1100px){.rep-grid{grid-template-columns:1fr}}
+.rep-card{padding:4px 0 10px}
+.rep-card .pb-head{padding:10px 16px 6px}
+
+:is(#repBody,#accBody,#mkBody) .tbl :is(td,th).num{white-space:nowrap}
+.tbl tfoot td{font-weight:600;border-top:1px solid var(--line);border-bottom:0;background:var(--panel2)}
+.tbl .nowrap{white-space:nowrap}
+.tbl tr.lnk-row{cursor:pointer}
+.tbl tr.lnk-row:hover td{background:var(--hover)}
+.tbl td.lnk{cursor:pointer}
+.tbl .row-acts{text-align:right;white-space:nowrap}
+.tbl .row-acts>*+*{margin-left:8px}
+.tbl th.bar-h{width:16%}
+.tbl td.bar-cell{width:16%;padding-left:4px;padding-right:4px}
+
+/* thin bars: one hue, rounded data end, track recessive */
+.hb{display:block;height:8px;border-radius:4px;background:var(--line2);overflow:hidden;min-width:60px}
+.hb i{display:block;height:100%;border-radius:0 4px 4px 0;background:var(--accent)}
+
+/* columns by day with a CSS tooltip */
+.vchart{position:relative;display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:2px;align-items:end;height:190px;padding:22px 16px 26px;border-bottom:0}
+.vc-max{position:absolute;left:16px;top:2px;font-size:11.5px}
+.vchart::before{content:"";position:absolute;left:16px;right:16px;bottom:26px;border-top:1px solid var(--line)}
+.vc{position:relative;height:100%;display:flex;align-items:flex-end;justify-content:center;cursor:default}
+.vc i{display:block;width:100%;max-width:26px;background:var(--accent);border-radius:4px 4px 0 0;opacity:.88}
+.vc:hover i{opacity:1}
+.vc:hover::before{content:"";position:absolute;inset:0 -1px;background:var(--hover);z-index:-1;border-radius:3px}
+.vc small{position:absolute;bottom:-21px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--muted);white-space:nowrap}
+.vc[data-tip]:hover::after,.sh-c[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:var(--graphite);color:var(--on-graphite);font-size:12px;line-height:1.35;padding:6px 9px;border-radius:4px;white-space:nowrap;z-index:5;pointer-events:none}
+.vc:first-child[data-tip]:hover::after{left:0;transform:none}
+.vc:last-child[data-tip]:hover::after{left:auto;right:0;transform:none}
+
+/* accounting */
+.unset-list{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 12px}
+.unset-list .chip{max-width:none}
+
+/* marketing */
+.call-phone{font:500 22px var(--font-d);color:var(--ink);letter-spacing:.02em}
+.call-res{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
+.call-res .pill-btn.on{background:var(--graphite);color:var(--on-graphite);border-color:var(--graphite)}
+.tbl tr.muted-row td b{color:var(--ink2)}
+
+/* work schedules */
+.sh-wrap{overflow:auto;padding:0}
+.sh-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
+.sh-tbl th,.sh-tbl td{border-bottom:1px solid var(--line2);border-right:1px solid var(--line2)}
+.sh-tbl thead th{position:sticky;top:0;background:var(--panel);z-index:2;font-weight:500;color:var(--muted)}
+.sh-tbl .sh-p{position:sticky;left:0;background:var(--panel);z-index:1;text-align:left;padding:8px 12px;min-width:190px;max-width:230px;font-weight:400}
+.sh-tbl thead .sh-p{z-index:3;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.sh-tbl .sh-p b{display:block;font-weight:600;color:var(--ink);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sh-tbl .sh-p small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sh-d{min-width:34px;padding:6px 2px;text-align:center}
+.sh-d b{display:block;color:var(--ink);font-weight:600;font-size:13px}
+.sh-d small{font-size:10.5px}
+.sh-d.we,.sh-c.we{background:var(--panel2)}
+.sh-d.today{background:var(--accent-soft)}
+.sh-d.today b{color:var(--accent-ink)}
+.sh-c{position:relative;height:44px;padding:3px;text-align:center}
+.sh-c.today{background:var(--today-col)}
+.sh-c.ed{cursor:pointer}
+.sh-c.ed:hover{background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
+.sh-c.on span{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;border-radius:4px;background:var(--beige2);border:1px solid var(--beige);color:var(--ink);font-weight:600;line-height:1.1}
+.sh-c.on span i{display:block;width:8px;height:1px;background:var(--faint);margin:2px 0}
+.sh-c.on.ed:hover span{border-color:var(--accent-line);background:var(--accent-soft)}
+.sh-t{min-width:70px;padding:6px 10px;text-align:right;font-size:12px}
+.sh-tbl tbody tr:last-child>*{border-bottom:0}
+.fill-people{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:2px;max-height:220px;overflow:auto;border:1px solid var(--line2);border-radius:var(--r);padding:4px;margin:4px 0 2px}
+.wd-pick{margin-top:4px}
+.sh-presets{margin:-2px 0 10px}
+
+/* the rail gets longer with these sections: let it scroll on small screens instead of clipping */
+.rail nav{overflow-y:auto;scrollbar-width:none}
+.rail nav::-webkit-scrollbar{display:none}
+
+@media print{
+  .sh-tbl{font-size:8pt}.sh-tbl .sh-p{min-width:0;position:static}.sh-d,.sh-c{min-width:0}
+  .sh-c.on span{background:none;border:0}
+}
+
+/* backups (Settings → «Резервные копии») */
+.bk-state{line-height:1.7;margin:4px 0 10px}
+.bk-dir{display:flex;gap:8px;align-items:center}.bk-dir .input{flex:1;min-width:0}

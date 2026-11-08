@@ -1,0 +1,87 @@
+/* ===== Fitting the program into any window: half a screen, small laptops, Windows scaling 125–150 %.
+   Loaded last. Nothing here changes how a wide window looks; rules start below 1250 px. ===== */
+
+/* things that must never push the page wider than the window */
+.main,.view,.card-scroll{min-width:0}
+.tab-tools,.crumb-acts,.row,.m-f{flex-wrap:wrap}
+.tab-tools{row-gap:8px}
+.tab{white-space:nowrap}
+.tabs{flex-wrap:wrap;row-gap:2px}
+/* wide tables scroll inside their own frame instead of dragging the whole page sideways */
+.tbl-scroll{max-width:100%}
+.modal{max-width:calc(100vw - 16px)}
+
+@media (max-width:1250px){
+  .topbar{gap:4px;padding:8px 12px}
+  .gsearch{flex:1 1 150px;width:auto;min-width:120px;max-width:340px}
+  .sync-pill{max-width:220px}
+  .user-chip .uc-t b{max-width:110px}
+}
+
+@media (max-width:1100px){
+  .tb-btn .tb-l{display:none}                      /* icons only; the name stays in the tooltip */
+  .tb-btn{padding:8px;position:relative}
+  .tb-btn .badge.sm{position:absolute;top:2px;right:0}
+  .sync-pill .sp-text{display:none}
+  .sync-pill{padding:4px 4px 4px 10px;gap:6px}
+  .user-chip .uc-t{display:none}
+  .user-chip>button{padding:0 4px}
+  .top{padding:14px 16px 10px;gap:10px}
+  .card-scroll{padding:14px 16px 24px}
+  .tab{padding:8px 11px}
+  .tbl th,.tbl td{padding:9px 10px}
+  .tbl-scroll{overflow-x:auto}
+  .tbl-scroll>.tbl th{position:static}             /* sticky headers do not work inside a sideways scroller */
+  .phead2{gap:14px;padding:16px}
+  .search-row.mini{min-width:200px;flex:1 1 200px}
+  .stat-row{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+  .modal.wide{width:100%}
+}
+
+@media (max-width:960px){
+  /* the tooth chart: narrower columns so both jaws fit without scrolling */
+  .formula{padding-left:4px;padding-right:4px}
+  .formula .f-q{gap:2px;padding:0 3px}
+  .formula .ft{width:37px}
+  .formula .ft .tooth-g{width:31px;height:74px}
+  .formula .ft .surf{width:14px;height:14px}
+  .ft-id b{font-size:10.5px;min-width:12px}
+}
+
+@media (max-width:860px){
+  .phead2{grid-template-columns:1fr 1fr;row-gap:10px}
+  .phead2>:first-child{grid-column:1/-1}
+  .crumbs{row-gap:8px}
+  .crumb-acts{margin-left:0;width:100%}
+  .grid3{grid-template-columns:1fr 1fr}
+  .modal-wrap{padding:8px}
+  .m-h{padding-left:14px;padding-right:14px}
+  .m-b{padding:12px 14px}
+  .m-f{padding:10px 14px;row-gap:8px}
+  .form{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+  .voice-models{grid-template-columns:1fr}
+  .dict-bar{gap:8px}
+  .dict-state{flex-basis:100%}
+}
+
+@media (max-width:640px){
+  .grid2,.grid3,.phead2{grid-template-columns:1fr}
+  .topbar{padding:6px 8px}
+  .gsearch{min-width:90px}
+  .top{padding:10px 10px 8px}
+  .card-scroll{padding:10px 10px 20px}
+  .search-row.mini{min-width:0}
+}
+
+/* short windows: keep the navigation and dialogs usable */
+@media (max-height:760px){
+  .rail{padding:8px 6px;gap:6px}
+  .rail .logo{margin:0 0 4px}
+  .rail .nav{padding-top:5px;padding-bottom:5px}
+  .modal-wrap{padding:10px}
+}
+@media (max-height:620px){
+  .rail .nav span{display:none}                    /* icons only; names stay in the tooltips */
+  .topbar{min-height:48px;padding-top:5px;padding-bottom:5px}
+  .top{padding-top:8px;padding-bottom:6px}
+}

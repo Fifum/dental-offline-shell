@@ -1,6 +1,8 @@
 # runtime
 pywebview==6.2.1
 requests==2.34.2
+pywin32==311         # Shtrih-M cash register driver (COM)
+faster-whisper==1.2.1  # offline speech recognition for dictation
 
 # build and dev tools
 pyinstaller==6.22.3

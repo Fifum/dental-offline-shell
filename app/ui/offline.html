@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="color-scheme" content="light dark">
+<script src="theme.js?v=2.1.0"></script>
+<title>Сохранённая копия</title>
+<link rel="stylesheet" href="styles.css?v=2.1.0">
+<link rel="stylesheet" href="styles-v2.css?v=2.1.0">
+<link rel="stylesheet" href="styles-brand.css?v=2.1.0">
+<link rel="stylesheet" href="styles-auth.css?v=2.1.0">
+<link rel="stylesheet" href="styles-motion.css?v=2.1.0">
+<link rel="stylesheet" href="styles-theme.css?v=2.1.0">
+<style>
+  body{background:var(--bg)}
+  .off-top{display:flex;align-items:center;gap:14px;padding:12px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  .off-top .grow{flex:1}
+  .off-badge{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-line);border-radius:4px;padding:4px 10px;font-size:12.5px;font-weight:600}
+  .off-badge.old{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-line)}
+  .back-online{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line);border-radius:6px;padding:10px 22px;display:flex;align-items:center;gap:12px;animation:fadeUp .3s var(--ease-out)}
+  .off-wrap{padding:18px 22px;max-width:1200px;margin:0 auto}
+  .off-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .doc-block{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-bottom:12px;overflow:hidden}
+  .doc-block h3{margin:0;padding:10px 16px;background:var(--beige2);font-family:var(--font-d);font-variant:small-caps;font-weight:500;font-size:16px;display:flex;justify-content:space-between}
+  .doc-block h3 small{font-family:var(--font);font-variant:normal;color:var(--muted);font-size:12px}
+  .vrow{display:grid;grid-template-columns:110px 1fr 160px 1fr 130px;gap:12px;padding:9px 16px;border-top:1px solid var(--line2);cursor:pointer;align-items:center}
+  .vrow:hover{background:var(--hover)}
+  .vrow .t{font-weight:600;font-variant-numeric:tabular-nums}
+  .alert-l{color:var(--danger);font-weight:600}
+  .empty-s{padding:40px;text-align:center;color:var(--muted)}
+  .card-kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 16px}
+  .card-kv dt{color:var(--muted);font-size:12px;margin-top:6px} .card-kv dd{margin:0}
+  @media print{.off-top,.off-tools,.back-online{display:none!important}.vrow{grid-template-columns:90px 1fr 140px 1fr 110px}}
+</style>
+</head>
+<body>
+<div class="auth-screen" id="login">
+  <div class="auth-box">
+    <div class="auth-brand"><span class="brandmark"><b id="bShort">DD</b><i></i><small id="bSub">offline</small></span>
+      <div><div class="ab-t" id="bName">Dental Desk</div><div class="ab-s">Сервер клиники недоступен</div></div></div>
+    <h2>Сохранённая копия</h2>
+    <p class="lead">Расписание и карточки пациентов, сохранённые на этом компьютере, — только для просмотра. Войдите под своим логином и паролем от программы.</p>
+    <form class="auth-form" id="lf">
+      <label>Логин<input class="input" id="lLogin" autocomplete="username" required></label>
+      <label>Пароль<input class="input" type="password" id="lPass" autocomplete="current-password" required></label>
+      <div class="auth-err" id="lErr"></div>
+      <button class="btn">Открыть копию</button>
+    </form>
+    <div class="auth-switch" id="lList"></div>
+    <div class="auth-foot"><span id="srvState">Проверяем сервер…</span><button id="lRetry">Подключиться к серверу</button></div>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <div class="off-top">
+    <span class="brandmark"><b id="tShort">DD</b><i></i><small id="tSub"></small></span>
+    <div><b>Сохранённая копия</b> <span class="muted" id="tUser"></span></div>
+    <span class="off-badge" id="tAge"></span>
+    <span class="grow"></span>
+    <div class="seg" id="tabs"><button data-t="day" class="on">Расписание</button><button data-t="pat">Пациенты</button></div>
+    <button class="btn ghost" id="tExit">Выйти</button>
+  </div>
+  <div class="back-online" id="online" hidden><b>Сервер снова доступен.</b><span>Вносить изменения можно только там.</span><button class="btn small" id="goServer">Подключиться</button></div>
+  <div class="off-wrap" id="body"></div>
+</div>
+
+<div class="modal-wrap" id="modal" hidden><div class="modal wide" id="modalBox"></div></div>
+<div id="printArea" class="print-only"></div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const pad = n => String(n).padStart(2, "0");
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const WD = ["воскресенье","понедельник","вторник","среда","четверг","пятница","суббота"];
+const fmtDate = s => { if (!s) return ""; const [y, m, d] = s.slice(0, 10).split("-").map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
+const fmtDT = s => s ? `${s.slice(8, 10)}.${s.slice(5, 7)}.${s.slice(0, 4)} ${s.slice(11, 16)}` : "—";
+const hm = s => s ? s.slice(11, 16) : "";
+let api, SNAP = null, S = {tab: "day", day: iso(new Date()), doc: "", q: ""};
+
+function age(b) { if (!b || !/^\d{4}-\d{2}-\d{2}/.test(b)) return ""; const d = new Date(b.slice(0, 10)), n = new Date(); let a = n.getFullYear() - d.getFullYear();
+  if (n < new Date(n.getFullYear(), d.getMonth(), d.getDate())) a--; return a; }
+function alertsOf(p) {
+  const out = [];
+  for (const [k, v] of Object.entries(p.data || {})) {
+    if (typeof v !== "string" && typeof v !== "number") continue;
+    const s = String(v).trim(); if (!s || /^(нет|no|none|-|—|0|не выявлено|отрицает)$/i.test(s)) continue;
+    if (/allerg|аллерг/i.test(k)) out.push("Аллергия: " + s); else if (/chronic|хрон|disease|заболев/i.test(k)) out.push(s);
+  }
+  return out;
+}
+
+async function checkServer() {
+  const ok = await api.server_alive().catch(() => false);
+  $("#srvState").textContent = ok ? "Сервер доступен" : "Сервер недоступен · проверяем каждые 15 с";
+  $("#online").hidden = !ok || !SNAP;
+  return ok;
+}
+
+async function init() {
+  api = window.pywebview.api;
+  const info = await api.info();
+  for (const [a, b, c] of [["#bShort", "#bSub", "#bName"], ["#tShort", "#tSub", null]]) {
+    $(a).textContent = info.brand.short; $(b).textContent = info.brand.sub; if (c) $(c).textContent = info.brand.name;
+  }
+  $("#login").dataset.mark = info.brand.short;
+  document.title = info.brand.name + " — сохранённая копия";
+  const list = await api.offline_available();
+  $("#lList").innerHTML = list.length ? "Копии на этом компьютере: " + list.map(x => `<button data-l="${esc(x.login)}">${esc(x.login)}</button> <span class="muted">(${esc(x.saved_at)})</span>`).join(", ")
+    : "На этом компьютере сохранённых копий нет. Копия появляется сама после входа в программу, пока сервер доступен.";
+  $$("#lList [data-l]").forEach(b => b.onclick = () => { $("#lLogin").value = b.dataset.l; $("#lPass").focus(); });
+  if (list.length === 1) { $("#lLogin").value = list[0].login; setTimeout(() => $("#lPass").focus(), 50); } else setTimeout(() => $("#lLogin").focus(), 50);
+  $("#lf").onsubmit = async e => {
+    e.preventDefault();
+    const r = await api.offline_open($("#lLogin").value, $("#lPass").value);
+    if (!r.ok) { $("#lErr").textContent = r.message; return; }
+    SNAP = r.snapshot; $("#lPass").value = "";
+    openApp();
+  };
+  $("#lRetry").onclick = goServer;
+  $("#goServer").onclick = goServer;
+  checkServer(); setInterval(checkServer, 15000);
+}
+async function goServer() {
+  const r = await api.reconnect();
+  if (!r.ok) $("#srvState").textContent = "Сервер пока не отвечает. Проверьте, что он и роутер включены.";
+}
+
+function openApp() {
+  $("#login").hidden = true; $("#app").hidden = false;
+  $("#tUser").textContent = "· " + (SNAP.user || "");
+  const hours = (Date.now() - new Date(SNAP.generated.replace(" ", "T"))) / 36e5;
+  $("#tAge").textContent = `Данные на ${fmtDT(SNAP.generated)} · только просмотр`;
+  $("#tAge").classList.toggle("old", hours > 24);
+  if (S.day < SNAP.from || S.day > SNAP.to) S.day = SNAP.from;
+  $$("#tabs button").forEach(b => b.onclick = () => { S.tab = b.dataset.t; $$("#tabs button").forEach(x => x.classList.toggle("on", x === b)); render(); });
+  $("#tExit").onclick = () => { SNAP = null; $("#app").hidden = true; $("#login").hidden = false; $("#online").hidden = true; };
+  render(); checkServer();
+}
+
+function render() {
+  if (S.tab === "day") return renderDay();
+  return renderPatients();
+}
+
+function renderDay() {
+  const body = $("#body");
+  if (!SNAP.can.includes("schedule_view")) { body.innerHTML = `<div class="empty-s">Расписание недоступно для вашей учётной записи</div>`; return; }
+  const visits = SNAP.visits.filter(v => v.start.slice(0, 10) === S.day && (!S.doc || v.doctor_id === S.doc));
+  const byDoc = {};
+  visits.forEach(v => (byDoc[v.doctor_name || "Без врача"] ||= []).push(v));
+  const d = new Date(S.day);
+  body.innerHTML = `<div class="off-tools">
+      <button class="pill-btn" id="dPrev">‹</button><input type="date" class="input" id="dDay" value="${S.day}" min="${SNAP.from}" max="${SNAP.to}"><button class="pill-btn" id="dNext">›</button>
+      <h2 style="margin:0 8px;font-family:var(--font-d);font-variant:small-caps;font-weight:500">${WD[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}</h2>
+      <select class="input sm-sel" id="dDoc"><option value="">Все врачи</option>${SNAP.doctors.map(x => `<option value="${esc(x.id)}" ${x.id === S.doc ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+      <span class="grow" style="flex:1"></span><span class="muted">Записей: ${visits.length}</span><button class="btn ghost" id="dPrint">Печать дня</button></div>
+    ${Object.keys(byDoc).sort().map(doc => `<div class="doc-block"><h3>${esc(doc)}<small>${byDoc[doc].length} зап.</small></h3>${byDoc[doc].map(v => {
+      const p = SNAP.patients[v.patient_id] || {}; const al = p.data ? alertsOf(p) : [];
+      return `<div class="vrow" data-p="${esc(v.patient_id || "")}"><span class="t">${hm(v.start)}–${hm(v.end)}</span>
+        <span><b>${esc(v.patient_name || "Пациент")}</b>${al.length ? `<small class="alert-l" style="display:block">${esc(al[0])}</small>` : ""}</span>
+        <span>${esc(v.patient_phone || "")}</span><span class="muted">${esc(v.title || "")}${v.chair ? " · " + esc(v.chair) : ""}</span><span class="pill">${esc(v.status || "—")}</span></div>`; }).join("")}</div>`).join("")
+      || `<div class="empty-s">На этот день записей нет</div>`}
+    <p class="muted" style="font-size:12px">В копии: ${fmtDate(SNAP.from)} — ${fmtDate(SNAP.to)}. Записывать, переносить и отменять можно только на сервере.</p>`;
+  const go = n => { const x = new Date(S.day); x.setDate(x.getDate() + n); const s = iso(x); if (s >= SNAP.from && s <= SNAP.to) { S.day = s; renderDay(); } };
+  $("#dPrev").onclick = () => go(-1); $("#dNext").onclick = () => go(1);
+  $("#dDay").onchange = e => { if (e.target.value) { S.day = e.target.value; renderDay(); } };
+  $("#dDoc").onchange = e => { S.doc = e.target.value; renderDay(); };
+  $("#dPrint").onclick = () => {
+    $("#printArea").innerHTML = `<h2>Расписание: ${fmtDate(S.day)}</h2><div>Сохранённая копия на ${fmtDT(SNAP.generated)}</div>` + Object.keys(byDoc).sort().map(doc =>
+      `<h3>${esc(doc)}</h3><table><tr><th>Время</th><th>Пациент</th><th>Телефон</th><th>Услуга</th><th>Статус</th></tr>${byDoc[doc].map(v =>
+        `<tr><td>${hm(v.start)}–${hm(v.end)}</td><td>${esc(v.patient_name || "")}</td><td>${esc(v.patient_phone || "")}</td><td>${esc(v.title || "")}</td><td>${esc(v.status || "")}</td></tr>`).join("")}</table>`).join("");
+    window.print();
+  };
+  $$("#body .vrow[data-p]").forEach(r => r.onclick = () => r.dataset.p && openCard(r.dataset.p));
+}
+
+function renderPatients() {
+  const body = $("#body");
+  if (!SNAP.can.includes("patients_view")) { body.innerHTML = `<div class="empty-s">Карточки недоступны для вашей учётной записи</div>`; return; }
+  const q = S.q.toLowerCase().replace(/ё/g, "е"), digits = q.replace(/\D/g, "");
+  const list = Object.values(SNAP.patients).filter(p => !q || (p.name || "").toLowerCase().replace(/ё/g, "е").includes(q) || (digits.length >= 3 && (p.phone || "").replace(/\D/g, "").includes(digits)))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ru"));
+  body.innerHTML = `<div class="off-tools"><div class="search-row mini" style="flex:1;max-width:460px"><input id="pq" placeholder="ФИО или телефон" value="${esc(S.q)}" autofocus></div>
+      <span class="muted">В копии пациенты, записанные на ${fmtDate(SNAP.from)} — ${fmtDate(SNAP.to)}: ${Object.keys(SNAP.patients).length}</span></div>
+    <div class="doc-block">${list.map(p => `<div class="vrow" data-p="${esc(p.id)}" style="grid-template-columns:1fr 160px 140px 1fr"><span><b>${esc(p.name)}</b></span><span>${esc(p.phone || "")}</span>
+      <span class="muted">${p.birth ? fmtDate(p.birth) : ""}</span><span class="alert-l">${esc(alertsOf(p)[0] || "")}</span></div>`).join("") || `<div class="empty-s">Никого не нашли</div>`}</div>`;
+  const i = $("#pq"); i.oninput = () => { S.q = i.value; renderPatients(); const n = $("#pq"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
+  $$("#body .vrow[data-p]").forEach(r => r.onclick = () => openCard(r.dataset.p));
+}
+
+function openCard(pid) {
+  const p = SNAP.patients[pid];
+  if (!p) return;
+  const al = alertsOf(p);
+  const LBL = {gender: "Пол", sex: "Пол", mphone: "Мобильный", phone2: "Доп. телефон", email: "Email", address: "Адрес", card_number: "Номер карты",
+    card: "Номер карты", comment: "Комментарий", allergies: "Аллергии", allergy: "Аллергии", chronic_diseases: "Хронические заболевания",
+    diseases: "Заболевания", blood_type: "Группа крови", discount: "Скидка", passport: "Паспорт", snils: "СНИЛС", oms: "Полис ОМС", work: "Место работы"};
+  const SKIP = /^(id|lname|fname|mname|last_name|first_name|middle_name|name|fio|full_name|phone|birth_date|birthday|date_of_birth|created_at|updated_at|source|balance|debt|created_offline)$/;
+  const flat = Object.entries(p.data || {}).filter(([k, v]) => v !== null && v !== "" && typeof v !== "object" && !SKIP.test(k))
+    .map(([k, v]) => [LBL[k] || k.replace(/_/g, " "), v]).slice(0, 20);
+  const box = $("#modalBox");
+  box.innerHTML = `<div class="m-h"><h3>${esc(p.name)}</h3><button class="x" id="mx">×</button></div><div class="m-b">
+    ${al.map(a => `<div class="alert">${esc(a)}</div>`).join("")}
+    <dl class="card-kv"><dt>Телефон</dt><dd>${esc(p.phone || "—")}</dd><dt>Дата рождения</dt><dd>${p.birth ? fmtDate(p.birth) + (age(p.birth) !== "" ? ` (${age(p.birth)} лет)` : "") : "—"}</dd>
+      ${flat.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    <h4 class="sub-h">Визиты</h4>${(p.visits || []).map(v => `<div class="vrow" style="grid-template-columns:150px 1fr 1fr 120px;cursor:default"><span class="t">${fmtDT(v.start)}</span><span>${esc(v.doctor_name || "")}</span><span class="muted">${esc(v.title || "")}</span><span class="pill">${esc(v.status || "")}</span></div>`).join("") || '<div class="muted">Нет</div>'}
+    ${p.records ? `<h4 class="sub-h">Лечения</h4>${p.records.map(r => { const d = r.data || {}; return `<div class="rec"><div class="rec-h"><b>${fmtDate(r.date)}</b><span class="muted">${esc(r.doctor_name || "")}</span></div>
+      ${(d.diagnoses || []).length ? `<div><span class="muted">Диагноз:</span> ${esc(d.diagnoses.map(x => `${x.tooth ? x.tooth + ": " : ""}${x.code} ${x.title}`).join("; "))}</div>` : ""}${d.treatment ? `<div><span class="muted">Лечение:</span> ${esc(d.treatment)}</div>` : ""}</div>`; }).join("") || '<div class="muted">Нет</div>'}` : ""}
+    ${(p.notes || []).length ? `<h4 class="sub-h">Примечания</h4>${p.notes.map(n => `<div class="note"><small>${esc(n.created_at)}</small><div>${esc(n.text)}</div></div>`).join("")}` : ""}
+    </div><div class="m-f"><span class="muted">Сохранённая копия на ${fmtDT(SNAP.generated)}</span><button class="btn" id="mc">Закрыть</button></div>`;
+  $("#modal").hidden = false;
+  const close = () => { $("#modal").hidden = true; box.innerHTML = ""; };
+  $("#mx").onclick = close; $("#mc").onclick = close;
+  $("#modal").onmousedown = e => { if (e.target.id === "modal") close(); };
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#modal").hidden) { $("#modal").hidden = true; } });
+
+if (window.pywebview && window.pywebview.api && window.pywebview.api.offline_open) init();
+else window.addEventListener("pywebviewready", init, {once: true});
+</script>
+</body>
+</html>

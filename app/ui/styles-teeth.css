@@ -1,0 +1,91 @@
+/* ===== Dental formula: tooth columns, profile drawings, 5-surface scheme =====
+   Markup comes from toothSvg / surfSvg / formulaHtml in app.js; the SVGs carry classes only.
+   Tooth tokens: light values here, dark values below (same pattern as styles-theme.css). */
+:root{
+  --tooth-col:var(--accent-soft); --tooth-col-hover:var(--accent-line);
+  --tooth-sel:#F2A35E; --tooth-plan:#E27896; --tooth-on-hi:#2A1A14;
+  --tooth-crown:#E4E1DD; --tooth-root:#EDEAE6; --tooth-line:#A39C95;
+  --tooth-caries:#3B2E28; --tooth-fill:#8B857F; --tooth-cap:#B6B0AA; --tooth-cap-line:#6F6963;
+  --tooth-implant:#8A66C4; --tooth-implant-line:#5E4392;
+  --tooth-endo:#F0A9B8; --tooth-endo-line:#C25672; --tooth-apex:rgba(179,38,30,.22);
+  --tooth-x:var(--danger); --tooth-mob:var(--warn);
+  --tooth-surf:var(--panel); --tooth-surf-line:#968F88;
+}
+@media screen{
+  :root[data-theme="dark"]{
+    --tooth-col:#2A201E; --tooth-col-hover:#3A2A27;
+    --tooth-sel:#B9733A; --tooth-plan:#A9455F; --tooth-on-hi:#FFF4EE;
+    --tooth-crown:#7B756F; --tooth-root:#615C57; --tooth-line:#A39C95;
+    --tooth-caries:#17110E; --tooth-fill:#BDB7B1; --tooth-cap:#D2CCC6; --tooth-cap-line:#EDE9E5;
+    --tooth-implant:#A887DE; --tooth-implant-line:#D2BDF5;
+    --tooth-endo:#C97085; --tooth-endo-line:#F2B3C1; --tooth-apex:rgba(242,147,138,.30);
+    --tooth-surf:#4A4540; --tooth-surf-line:#8A837C;
+  }
+}
+
+/* layout */
+.formula{display:flex;flex-direction:column;align-items:center;padding:16px 10px 8px;gap:0;overflow-x:auto;overflow-y:visible}
+.formula .f-row{display:flex;padding:0 4px}
+.formula .f-q{display:flex;gap:3px;padding:0 6px}
+.formula .f-q.l{border-right:1.5px solid var(--line)}
+.formula .f-mid{width:100%;max-width:760px;border-top:1.5px solid var(--line);margin:6px 0}
+.formula .f-row.up .ft{border-radius:8px 8px 4px 4px;justify-content:flex-end}
+.formula .f-row.lo .ft{border-radius:4px 4px 8px 8px;justify-content:flex-start}
+
+/* one tooth = one column with a soft pink backing */
+.formula .ft{display:flex;flex-direction:column;align-items:center;gap:3px;width:44px;padding:5px 0;margin:0;
+  background:var(--tooth-col);border:1px solid transparent;cursor:pointer;font:inherit;color:var(--ink2)}
+.formula .ft:hover{background:var(--tooth-col-hover)}
+.formula .ft:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.formula .ft.plan{background:var(--tooth-plan);color:var(--tooth-on-hi)}
+.formula .ft.sel{background:var(--tooth-sel);color:var(--tooth-on-hi)}
+.formula .ft.plan:hover,.formula .ft.sel:hover{filter:brightness(1.04)}
+.formula .ft svg{display:block;flex:none;overflow:visible}
+.formula .ft .tooth-g{width:36px;height:86px}
+.formula .ft .surf{width:16px;height:16px}
+.ft-id{display:flex;align-items:center;gap:2px;height:16px}
+.ft-id b{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;color:inherit;min-width:14px;text-align:right}
+
+
+/* tooth drawing (reset the global svg{stroke} used by the line icons) */
+.tooth-g,.surf{stroke:none;fill:none;stroke-width:1}
+.tooth-g .t-root,.tooth-g .t-crown{stroke:var(--tooth-line);stroke-width:1;stroke-linejoin:round}
+.tooth-g .t-root{fill:var(--tooth-root)}
+.tooth-g .t-pal{opacity:.8}
+.tooth-g .t-crown{fill:var(--tooth-crown)}
+.tooth-g .t-cap{fill:var(--tooth-cap);stroke:var(--tooth-cap-line);stroke-width:1.3}
+.tooth-g .t-fil{fill:var(--tooth-fill)}
+.tooth-g .t-car{fill:var(--tooth-caries)}
+.tooth-g .t-lost{fill:none;stroke-dasharray:2.4 2}
+.tooth-g.is-endo .t-root{fill:var(--tooth-endo);stroke:var(--tooth-endo-line)}
+.tooth-g .t-canal{fill:none;stroke:var(--tooth-endo-line);stroke-width:1.6;stroke-linecap:round}
+.tooth-g .t-apex{fill:var(--tooth-apex);stroke:var(--tooth-endo-line);stroke-width:.8}
+.tooth-g .t-imp{fill:var(--tooth-implant);stroke:var(--tooth-implant-line);stroke-width:1}
+.tooth-g .t-imp-th{fill:none;stroke:var(--tooth-implant-line);stroke-width:1.1;stroke-linecap:round}
+.tooth-g .t-x{fill:none;stroke:var(--tooth-x);stroke-width:2;stroke-linecap:round}
+.tooth-g .t-mob{fill:none;stroke:var(--tooth-mob);stroke-width:1.6;stroke-linecap:round}
+.tooth-g.is-miss{opacity:.32}
+.tooth-g.is-miss :is(.t-root,.t-crown){fill:none;stroke-dasharray:2.4 2}
+
+/* 5 surfaces */
+.surf .s-p{fill:var(--tooth-surf);stroke:var(--tooth-surf-line);stroke-width:1}
+.surf .s-car{fill:var(--tooth-caries)}
+.surf .s-fil{fill:var(--tooth-fill)}
+.surf .s-cap{fill:var(--tooth-cap)}
+.surf.is-miss{opacity:.35}
+
+/* legend swatches */
+.f-legend{justify-content:center}
+.f-legend i{border-radius:3px;border:1px solid var(--tooth-line)}
+.f-legend .lg-car{background:var(--tooth-caries)}
+.f-legend .lg-fil{background:var(--tooth-fill)}
+.f-legend .lg-cap{background:var(--tooth-cap)}
+.f-legend .lg-endo{background:var(--tooth-endo);border-color:var(--tooth-endo-line)}
+.f-legend .lg-imp{background:var(--tooth-implant);border-color:var(--tooth-implant-line)}
+.f-legend .lg-miss{background:none;border-style:dashed}
+.f-legend .lg-plan{background:var(--tooth-plan);border-color:transparent}
+
+/* inside the treatment record the formula sits in a narrower modal */
+.tf .formula{padding:6px 0 4px;max-width:100%}
+
+@media print{.formula .ft{-webkit-print-color-adjust:exact;print-color-adjust:exact}}

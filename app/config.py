@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "2.0.0"
 
 # Clinic branding lives in app/brand.json (not in the public repo). Without it the app is
 # a neutral "Dental Desk"; the clinic's build ships its own name, mark and data folder.
@@ -29,7 +29,7 @@ def _load_brand() -> dict:
 
 BRAND = _load_brand()
 APP_NAME = BRAND["folder"]
-APP_TITLE = f"{BRAND['name']} — офлайн-расписание"
+APP_TITLE = f"{BRAND['name']} — программа клиники"
 
 
 def data_dir() -> Path:

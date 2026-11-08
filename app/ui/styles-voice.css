@@ -1,0 +1,36 @@
+/* ===== Visit recording and employees' voices (dictate.js). Colors only via theme tokens. ===== */
+:root{--vs-on-danger:#FFFFFF} /* --danger-strong is dark red in both themes */
+.dict-bar{flex-wrap:wrap}
+.dict-bar .dict-btn:disabled{opacity:.45}
+.dict-bar.rec #dictVisit:not(:disabled) span,.dict-bar.rec #dictGo:not(:disabled) span{font-weight:600}
+.dict-bar.paused{border-color:var(--warn);background:var(--panel2)}
+.dict-bar.paused .dict-btn:not(:disabled){background:var(--warn);border-color:var(--warn);color:var(--ink)}
+
+/* settings: voice prints */
+.vs-model{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 10px}
+.vs-model .vm-bar{flex:1;max-width:240px}
+.vs-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.vs-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--line)}
+.vs-row:first-child{border-top:0}
+.vs-row .grow{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.vs-row .grow small{font-size:12px}
+
+/* enrollment dialog */
+.vs-enroll{display:flex;flex-direction:column;gap:12px}
+.vs-text{font-size:15.5px;line-height:1.65;padding:14px 16px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);
+  color:var(--ink);max-height:46vh;overflow:auto}
+.vs-rec{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.vs-rec .btn{gap:8px}
+.vs-rec .btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.vs-rec .btn.danger-fill{background:var(--danger-strong);border-color:var(--danger-strong);color:var(--vs-on-danger)}
+
+/* settings: AI on this computer */
+.ai-local{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px}
+.ai-local[hidden]{display:none}
+.la-step{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.la-step .grow{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.la-step .grow small{font-size:12px}
+.la-prog{display:flex;align-items:center;gap:8px;min-width:200px}
+.la-prog .vm-bar{flex:1}
+.la-btns{gap:6px;flex-wrap:nowrap}
+.ai-local .voice-models{margin:0}

@@ -84,6 +84,9 @@ class DB:
             for col in ("remote_id TEXT", "push_status TEXT", "push_error TEXT", "push_at TEXT", *extra):
                 if col.split()[0] not in have:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
+        lv = {r[1] for r in self.conn.execute("PRAGMA table_info(local_visits)")}
+        if "push_force" not in lv:  # «send anyway» despite a double booking in Dentist Plus
+            self.conn.execute("ALTER TABLE local_visits ADD COLUMN push_force INTEGER DEFAULT 0")
         self.conn.commit()
 
     @contextmanager
@@ -218,6 +221,22 @@ class DB:
                 for t in self.LOCAL_TABLES + ("notes",):
                     c.execute(f"DELETE FROM {t}")
                 c.execute("DELETE FROM services WHERE source='demo'")
+                # demo stock and equipment (tables exist once the stock module started)
+                for sql in ("DELETE FROM stock_moves WHERE material_id LIKE 'demo_%'",
+                            "DELETE FROM stock_docs WHERE id LIKE 'demo_%'",
+                            "DELETE FROM service_materials WHERE service_id LIKE 'demo_%' OR material_id LIKE 'demo_%'",
+                            "DELETE FROM materials WHERE id LIKE 'demo_%'", "DELETE FROM suppliers WHERE id LIKE 'demo_%'",
+                            "DELETE FROM equipment_events WHERE equipment_id LIKE 'demo_%'",
+                            "DELETE FROM equipment WHERE id LIKE 'demo_%'",
+                            # demo accounting, shifts and marketing (patients are gone, so are their sources and calls)
+                            "DELETE FROM expenses WHERE id LIKE 'demo_%'", "DELETE FROM work_shifts WHERE user_name='Демо'",
+                            "DELETE FROM salary_schemes WHERE person IN ('d:11','d:12','d:13','d:14','d:15')",
+                            "DELETE FROM patient_marketing WHERE patient_id NOT IN (SELECT id FROM patients)",
+                            "DELETE FROM marketing_calls WHERE patient_id NOT IN (SELECT id FROM patients)"):
+                    try:
+                        c.execute(sql)
+                    except sqlite3.OperationalError:
+                        pass
 
     def pending_count(self):
         n = sum(self.one(f"SELECT COUNT(*) n FROM {t} WHERE transferred=0")["n"] for t in self.LOCAL_TABLES)
