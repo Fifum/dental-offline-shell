@@ -1,0 +1,80 @@
+/* Version 2.3: allergy warnings, sterilization journal, patient files and X-rays, periodontal chart */
+
+/* allergy */
+.allergy-bar{grid-column:1/-1;border-radius:9px;padding:9px 12px;background:var(--warn-soft);color:var(--warn-ink);font-size:13px;line-height:1.5;margin-bottom:8px}
+.allergy-bar.stop{background:var(--danger-soft);color:var(--danger);box-shadow:inset 0 0 0 1.5px var(--danger)}
+.allergy-bar.warn{box-shadow:inset 0 0 0 1.5px var(--warn-ink)}
+.allergy-bar .al-w{margin-top:3px;font-weight:600}
+.allergy-bar .al-w.stop{color:var(--danger)}
+.allergy-note{background:var(--danger-soft);color:var(--danger)}
+
+/* sterilization journal */
+#printArea .no-print,.st-tbl .no-print:empty{display:none}
+.st-tbl td{vertical-align:top}
+
+/* patient files */
+.pf-tools{flex-wrap:wrap;gap:8px}
+.pf-add{cursor:pointer}
+.pf-hint{font-size:12.5px}
+#pfBody.pf-drop{outline:2px dashed var(--accent);outline-offset:-6px;border-radius:12px}
+.pf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px;padding:12px 16px}
+.pf-card{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:0;overflow:hidden;cursor:pointer;text-align:left;font:inherit;color:inherit;transition:transform .15s var(--ease-out,ease),box-shadow .15s}
+.pf-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.12)}
+.pf-card.on{box-shadow:inset 0 0 0 2px var(--accent)}
+.pf-th{display:flex;align-items:center;justify-content:center;height:128px;background:#0d0d0d}
+.pf-th img{max-width:100%;max-height:100%;object-fit:contain}
+.pf-ext{color:#ddd;font-weight:700;letter-spacing:.08em}
+.pf-cap{display:flex;flex-direction:column;gap:2px;padding:8px 10px;font-size:13px;min-width:0}
+.pf-cap b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pf-cap small{color:var(--muted)}
+
+/* viewer */
+.fv-modal{width:min(1280px,96vw)!important;max-width:none!important}
+.fv{display:grid;grid-template-columns:1fr 280px;gap:14px;min-height:60vh}
+.fv-stage{position:relative;overflow:hidden;background:#0b0b0b;border-radius:10px;min-height:60vh;cursor:grab;touch-action:none}
+.fv-stage.grab{cursor:grabbing}
+.fv-pan{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;transform-origin:center}
+.fv-pan img{position:absolute;max-width:100%;max-height:100%;object-fit:contain;user-select:none}
+.fv-split{position:absolute;left:16px;right:16px;bottom:14px;z-index:2}
+.fv-labels{position:absolute;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;z-index:2;pointer-events:none}
+.fv-labels span{background:rgba(0,0,0,.6);color:#fff;font-size:12px;padding:2px 8px;border-radius:6px}
+.fv-pdf{width:100%;height:70vh;border:0;background:#fff}
+.fv-side{display:flex;flex-direction:column;gap:10px;min-width:0}
+.fv-tools{display:flex;flex-wrap:wrap;gap:6px}
+.fv-tools .on{box-shadow:inset 0 0 0 2px var(--accent)}
+.fv-strip{display:flex;gap:6px;overflow-x:auto;padding:4px 0}
+.fv-strip button{flex:0 0 64px;height:52px;border:1px solid var(--line);border-radius:6px;background:#0d0d0d;padding:0;cursor:pointer;overflow:hidden}
+.fv-strip button.on{box-shadow:inset 0 0 0 2px var(--accent)}
+.fv-strip img{width:100%;height:100%;object-fit:contain}
+.fv-kv{grid-template-columns:1fr!important}
+.fv-kv div{padding:6px 0}
+@media (max-width:1000px){.fv{grid-template-columns:1fr}.fv-stage{min-height:50vh}}
+
+/* periodontal chart */
+.pr-modal{width:min(1320px,97vw)!important;max-width:none!important}
+.pr-wrap{overflow-x:auto}
+.pr-voice{display:flex;flex-direction:column;justify-content:flex-end;gap:4px}
+.pr-voice .rec-on{box-shadow:inset 0 0 0 2px var(--danger);color:var(--danger)}
+.pr-tbl{border-collapse:collapse;margin:8px 0;min-width:1080px;width:100%}
+.pr-tbl.lower{margin-top:14px}
+.pr-tbl th{font-size:11.5px;font-weight:600;color:var(--muted);text-align:right;padding:2px 8px 2px 0;white-space:nowrap;width:118px}
+.pr-tbl td{padding:1px 2px;text-align:center;border-left:1px solid var(--line2)}
+.pr-tbl td:nth-child(9){border-left:2px solid var(--line)}
+.pr-tbl td.miss{background:repeating-linear-gradient(45deg,transparent 0 5px,var(--line2) 5px 6px)}
+.pr-sites{display:flex;gap:1px;justify-content:center}
+.pr-site{display:flex;flex-direction:column;align-items:center}
+.pr-in{width:20px;height:22px;padding:0;border:1px solid var(--line);border-radius:4px;text-align:center;font:inherit;font-size:12.5px;font-variant-numeric:tabular-nums;background:var(--panel);color:inherit}
+.pr-in.one{width:26px}
+.pr-in:focus{outline:2px solid var(--accent);outline-offset:0}
+.pr-in.d4{background:var(--warn-soft);color:var(--warn-ink);font-weight:700}
+.pr-in.d6{background:var(--danger-soft);color:var(--danger);font-weight:700}
+.pr-in[disabled]{opacity:.35}
+.pr-bop{width:9px;height:9px;margin-top:2px;border-radius:50%;border:1px solid var(--line);background:transparent;padding:0;cursor:pointer}
+.pr-bop.on{background:var(--danger);border-color:var(--danger)}
+.pr-tooth{min-width:30px;padding:3px 0;border:0;border-radius:5px;background:var(--gray-soft);font:inherit;font-weight:700;font-size:12.5px;cursor:pointer;color:inherit}
+.pr-tooth.miss{text-decoration:line-through;opacity:.45}
+.pr-num td{padding:4px 2px}
+.pr-stats{margin:6px 0 10px;font-weight:600}
+.pr-help{font-size:12px;margin-top:6px}
+#printArea .pr-print .pr-in{display:inline-block;border:0;min-width:12px}
+#printArea .pr-print .pr-tbl{min-width:0;font-size:9pt}

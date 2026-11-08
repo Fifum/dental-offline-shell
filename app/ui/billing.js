@@ -17,6 +17,7 @@ async function openInvoice(o) {
         <button class="linkbtn" id="ivFree">+ услуга не из прайса</button>
       </div>
       <div class="inv-right">
+        <div class="allergy-bar" id="ivAllergy" hidden></div>
         ${isPlan ? `<div class="grid2"><label class="fl">Название плана<input class="input" id="ivTitle" value="${esc((inv && inv.title) || "План лечения от " + fmtDate(iso(new Date())))}"></label>
           <label class="fl">Статус плана<select class="input" id="ivPSt">${PLAN_ST.map(s => `<option ${s === ((inv && inv.plan_status) || "Предварительный") ? "selected" : ""}>${s}</option>`).join("")}</select></label></div>` : ""}
         <div class="grid2"><label class="fl">Врач<select class="input" id="ivDoc"><option value="">—</option>${R.doctors.map(d => `<option value="${esc(d.id)}" ${d.id === ((inv && inv.doctor_id) || o.doctor_id) ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></label>
@@ -60,6 +61,7 @@ async function openInvoice(o) {
       $$("#ivItems .sum", box).forEach((td, i) => td.textContent = money(st.items[i].sum)); });
     $$("#ivItems [data-del]", box).forEach(b => b.onclick = () => { st.items.splice(+b.dataset.del, 1); drawItems(); });
     total();
+    api.allergy_check(o.patient_id, st.items.map(x => x.title).join("\n")).then(r => allergyBar($("#ivAllergy", box), r)).catch(() => {});
   };
   const drawSvc = async () => {
     const rows = await api.services($("#ivQ", box).value);

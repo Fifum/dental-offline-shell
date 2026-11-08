@@ -39,6 +39,9 @@ working without it.
 | **Visit reminders** | One click opens WhatsApp with a ready reminder text (name, date, time, doctor, clinic) or copies it for Telegram; editable template; sent reminders are marked for the whole team |
 | **Patient card** | Visits, dental formula (permanent and milk teeth), treatments, payments, treatment plans, documents, notes, full history feed |
 | **Medical record** | Complaints, anamnesis, examination, treatment with one-click phrase templates, ICD-10 dental codes, interactive tooth chart |
+| **X-rays and files** | X-rays (DICOM included, windowing and MONOCHROME1 handled), photos, scans and PDFs in the patient card; add by button, drag & drop, Ctrl+V or from the visiograph's export folder; viewer with zoom, pan, brightness, contrast, invert, rotate and a before/after split comparison; files mirrored to the backup flash drive |
+| **Periodontal chart** | Pocket depth, recession, bleeding, mobility and furcation for 32 teeth; fast keyboard entry, voice entry ("tooth sixteen, three two four, bleeding, palatal…"), colour-coded depths, mean depth / CAL / % ≥ 4 mm / BOP and the change since the previous chart |
+| **Allergy check** | The patient's allergies (card and anamnesis) against the treatment, recommendations and billed services: same substance is a stop, same group (e.g. amide anaesthetics, penicillins) is a warning |
 | **Documents** | 11 templates (consents, contract, plan, act, extract, form 043/u, receipt) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
 | **Money** | Invoices from the price list with per-line discounts, partial payments, staged treatment plans billed step by step, daily cash report |
 | **Transfer to Dentist Plus** | A checklist of everything created offline — or automatic sending of new patients and appointments |
@@ -47,6 +50,7 @@ working without it.
 | **Fiscal receipts** | 54-FZ receipts on ATOL (DTO 10 web server) or Shtrih-M (COM driver) registers, or a test mode: receipt on payment, partial payment and credit rules, returns, shifts, X/Z reports, failed receipts kept for retry |
 | **Stock** | Materials with minimum levels, supplier invoices, write-offs with a printed act, stock counts, consumption norms per service — billing a service writes its materials off automatically |
 | **Equipment** | Register with inventory numbers, location, warranty and service dates, service history, write-off with a commission and a printed act |
+| **Sterilization journal** | Autoclave and dry-heat cycles with mode, chemical and biological indicators, load and operator; cycle numbers per sterilizer and year, failed cycles flagged, printable for inspections |
 | **Clinic network** | One computer is the server; reception, surgeries and the director's PC connect over the local network and find it automatically |
 | **Staff accounts** | Self-registration, director approval, password sign-in, roles (director, administrator, doctor, assistant) with per-person permission overrides, action journal |
 | **Backups** | A verified, compressed copy of the whole database at start, every 2 hours and on exit, made with SQLite's online backup while the app keeps working; rotation (everything for 2 days, one per day for 30); an optional second folder on a flash drive; one-click restore that first saves the current data and then restarts the app |
@@ -136,6 +140,10 @@ Dentist Plus partner API
 | `app/backup.py` | Automatic backups: online copy, integrity check, rotation, second folder, restore with a safety copy |
 | `app/security.py` | Disk encryption state (BitLocker / Device Encryption) without admin rights |
 | `app/waitlist.py` | Waiting list: entries, filters by doctor and day, booked / removed |
+| `app/files.py` | Patient files: storage, previews (Pillow, pydicom), visiograph folder import, mirror for backups |
+| `app/perio.py` | Periodontal chart: validation, statistics, voice commands |
+| `app/allergy.py` | Allergy rules: substances, groups, allergies from the card and anamnesis |
+| `app/sterilization.py` | Sterilization journal |
 | `app/config.py` | Paths, settings, DPAPI password protection, clinic branding |
 | `app/sync.py` | Background worker: online check, pull, purge, push, offline mode |
 | `app/api_client.py` | Partner API client: auth, paging in any shape, retries, writes |
@@ -203,6 +211,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_dictation.py             # 25 checks: parsing rules, AI layer vs a fake server, real recognition if a model is present
 .venv\Scripts\python tests\test_backup.py               # 56 checks: copy and check, rotation, missing flash drive, restore round-trip
 .venv\Scripts\python tests\test_schedule_tools.py       # 64 checks: drag-move, recurring visits, waiting list, reminders, disk encryption
+.venv\Scripts\python tests\test_medcard_tools.py        # 105 checks: allergy rules, sterilization, periodontal chart and voice, files, DICOM, visiograph folder
 ```
 
 Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,

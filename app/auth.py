@@ -48,6 +48,7 @@ PERMS = [
     ("stock_view", "Склад: просмотр остатков"),
     ("stock_edit", "Склад: приход, списание, инвентаризация"),
     ("equipment", "Оборудование: учёт, обслуживание, списание"),
+    ("sterilization", "Журнал стерилизации"),
     ("settings", "Настройки и подключение к Dentist Plus"),
     ("staff", "Сотрудники, права и журнал действий"),
 ]
@@ -58,10 +59,11 @@ ROLES = {
     "admin": {"title": "Администратор", "perms": [
         "schedule_view", "schedule_edit", "patients_view", "patients_edit", "medcard_view", "docs",
         "billing", "payments", "cash_report", "fiscal", "transfer", "refs", "stock_view", "stock_edit",
-        "marketing", "shifts_edit"]},
+        "marketing", "shifts_edit", "sterilization"]},
     "doctor": {"title": "Врач", "perms": [
-        "schedule_view", "patients_view", "patients_edit", "medcard_view", "medcard_edit", "docs", "billing", "stock_view"]},
-    "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view"]},
+        "schedule_view", "patients_view", "patients_edit", "medcard_view", "medcard_edit", "docs", "billing", "stock_view",
+        "sterilization"]},
+    "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view", "sterilization"]},
     "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment"]},
 }
 
@@ -93,6 +95,16 @@ METHOD_PERMS = {
     "invoice": ("billing", "payments"), "save_invoice": "billing", "delete_invoice": "billing",
     "plan_to_invoice": "billing", "set_plan_status": "billing",
     "add_payment": "payments", "delete_payment": "payments", "cash_day": "cash_report",
+    "allergy_check": ("medcard_view", "medcard_edit", "billing", "patients_view"),
+    "steril_options": ("sterilization", "equipment"), "steril_list": ("sterilization", "equipment"),
+    "steril_save": "sterilization", "steril_delete": "sterilization",
+    "files_list": ("medcard_view", "patients_view"), "file_thumbs": ("medcard_view", "patients_view"),
+    "file_get": ("medcard_view", "patients_view"), "file_add": ("medcard_edit", "patients_edit"),
+    "file_update": ("medcard_edit", "patients_edit"), "file_delete": "medcard_edit",
+    "files_inbox": ("medcard_edit", "patients_edit"), "files_inbox_import": ("medcard_edit", "patients_edit"),
+    "files_settings": ("settings", "medcard_edit", "patients_edit"), "files_settings_save": "settings",
+    "perio_list": "medcard_view", "perio_get": "medcard_view", "perio_save": "medcard_edit", "perio_delete": "medcard_edit",
+    "perio_parse": "medcard_edit", "perio_voice": "medcard_edit",
     "save_visit_series": "schedule_edit", "visit_series": ("schedule_view", "schedule_edit"), "cancel_series": "schedule_edit",
     "waitlist": ("schedule_view", "schedule_edit"), "waitlist_count": ("schedule_view", "schedule_edit"),
     "waitlist_save": "schedule_edit", "waitlist_done": "schedule_edit", "waitlist_remove": "schedule_edit",
@@ -143,6 +155,10 @@ METHOD_PERMS = {
 # Changes worth keeping in the action journal, with a human label.
 AUDITED = {
     "save_visit": "Запись на приём", "set_visit_status": "Статус приёма", "revert_visit": "Отмена изменения записи",
+    "file_add": "Файл в карте пациента", "file_update": "Описание файла пациента", "file_delete": "Удаление файла пациента",
+    "files_inbox_import": "Снимки из визиографа в карту", "files_settings_save": "Папка снимков визиографа",
+    "perio_save": "Пародонтограмма", "perio_delete": "Удаление пародонтограммы",
+    "steril_save": "Цикл стерилизации", "steril_delete": "Удаление цикла стерилизации",
     "save_visit_series": "Повторяющиеся записи", "cancel_series": "Отмена серии записей",
     "waitlist_save": "Лист ожидания", "waitlist_done": "Запись из листа ожидания", "waitlist_remove": "Удаление из листа ожидания",
     "reminder_template_save": "Текст напоминания о визите",

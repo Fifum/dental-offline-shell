@@ -43,6 +43,12 @@ class Api:
         self._mk = Marketing(db)
         from waitlist import Waitlist
         self._wait = Waitlist(db)
+        from sterilization import Sterilization
+        self._steril = Sterilization(db)
+        from perio import Perio
+        self._perio = Perio(db)
+        from files import Files
+        self._files = Files(db)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -208,6 +214,91 @@ class Api:
 
     def set_visit_status(self, vid, status):
         return self._local.set_visit_status(vid, status)
+
+    # ------------------------------------------------ patient files, X-rays --
+    def files_list(self, patient_id):
+        return self._files.list(patient_id)
+
+    def file_thumbs(self, ids):
+        return self._files.thumbs(ids)
+
+    def file_get(self, fid, which="view"):
+        return self._files.content(fid, which if which in ("view", "thumb", "orig") else "view")
+
+    def file_add(self, patient_id, name, data_b64, meta=None):
+        import files
+        return self._files.add(patient_id, name, files.b64_bytes(data_b64), meta or {}, self._who())
+
+    def file_update(self, fid, meta):
+        return self._files.update(fid, meta or {})
+
+    def file_delete(self, fid):
+        return self._files.delete(fid)
+
+    def files_inbox(self):
+        return self._files.inbox()
+
+    def files_inbox_import(self, patient_id, names, meta=None):
+        return self._files.inbox_import(patient_id, names, meta or {}, self._who())
+
+    def files_settings(self):
+        import files
+        return {"inbox": self._files.inbox_dir(), "folder": str(files.root()), "kinds": files.KINDS,
+                "max_mb": files.MAX_BYTES // 1024 // 1024}
+
+    def files_settings_save(self, f):
+        self._files.save_inbox_dir((f or {}).get("inbox", ""))
+        return self.files_settings()
+
+    # ------------------------------------------------ periodontal chart --
+    def perio_list(self, patient_id):
+        return self._perio.list(patient_id)
+
+    def perio_get(self, cid):
+        return self._perio.get(cid)
+
+    def perio_save(self, f):
+        return self._perio.save(f or {}, self._who())
+
+    def perio_delete(self, cid):
+        return self._perio.delete(cid)
+
+    def perio_parse(self, text):
+        import perio
+        return perio.parse_voice(text)
+
+    def perio_voice(self, audio_b64, mime="audio/webm"):
+        """The doctor dictates the chart: recognised on this computer, turned into chart commands."""
+        import perio
+        import speech
+        audio, suffix = self._audio(audio_b64, mime)
+        rec = speech.transcribe(audio, suffix, perio.PERIO_PROMPT)
+        return {"text": rec["text"], "commands": perio.parse_voice(rec["text"]), "seconds": rec["seconds"]}
+
+    # ------------------------------------------------ sterilization journal --
+    def steril_options(self):
+        return self._steril.options()
+
+    def steril_list(self, date_from=None, date_to=None, sterilizer=None):
+        return self._steril.list(date_from, date_to, sterilizer or None)
+
+    def steril_save(self, f):
+        return self._steril.save(f or {}, self._who())
+
+    def steril_delete(self, cid):
+        return self._steril.delete(cid)
+
+    # --------------------------------------------------------- allergies --
+    def _allergies(self, pid, anamnesis=""):
+        import allergy
+        p = self._db.patient(pid) if pid else None
+        return allergy.patient_allergies((p or {}).get("data") or {}, anamnesis or "")
+
+    def allergy_check(self, patient_id, text, anamnesis=""):
+        """Warnings for a treatment / prescription / service list against the patient's allergies."""
+        import allergy
+        al = self._allergies(patient_id, anamnesis)
+        return {"allergies": al, "warnings": allergy.check(al, text)}
 
     # ---------------------------------------------- recurring visits, waiting list, reminders --
     def save_visit_series(self, f, every, count):
@@ -746,6 +837,10 @@ class Api:
         v = self._db.visit(vid)
         if v:
             v["conflict_text"] = self._visit_conflicts(v)
+            try:
+                v["allergies"] = self._allergies(v.get("patient_id"))
+            except Exception:  # noqa: BLE001
+                v["allergies"] = []
         return v
 
     def _visit_conflicts(self, v):
@@ -776,6 +871,8 @@ class Api:
             p["balance_local"] = self._local.balance(pid)
             p["teeth_local"] = self._local.teeth_state(pid)
             p["marketing"] = self._mk.patient_info(pid)
+            p["files_count"] = self._files.count(pid)
+            p["perio_count"] = len(self._perio.list(pid))
         return p
 
     def add_note(self, pid, text):

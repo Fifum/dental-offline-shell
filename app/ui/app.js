@@ -150,7 +150,7 @@ const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", set
 
 /* ---------------------------------------------------------------- views */
 const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: "cash_report",
-  journal: "transfer", refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment"],
+  journal: "transfer", refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment", "sterilization"],
   reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"]};
 const canView = v => { const p = VIEW_PERM[v]; return !p || (Array.isArray(p) ? canAny(...p) : can(p)); };
 function firstView() { return ["schedule", "patients", "cash", "reports", "accounting", "marketing", "shifts", "stock", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
@@ -471,6 +471,7 @@ async function openVisit(id) {
       ${kvRow("Врач", v.doctor_name)}${kvRow("Филиал", v.branch_name)}${kvRow("Телефон пациента", v.patient_phone)}${kvRow("Услуга / комментарий", v.title)}${kvRow("Комментарий", v.comment)}
     </dl>${Object.keys(raw).length ? `<div class="raw">${rawTree(raw, 0, ["id", "patient_id", "doctor_id", "branch_id", "start", "end", "status", "title"])}</div>` : ""}</div>
     ${v.conflict_text ? `<div class="conflict-note"><b>Двойная запись.</b> ${esc(v.conflict_text[0].toUpperCase() + v.conflict_text.slice(1))}. Перенесите одну из записей или уточните у пациентов.</div>` : ""}
+    ${v.allergies && v.allergies.length ? `<div class="conflict-note allergy-note"><b>Аллергия:</b> ${esc(v.allergies.join("; "))}</div>` : ""}
     ${v.series_id ? `<div class="series-note" id="dwSeries">Повторяющийся визит…</div>` : ""}
     ${v.local ? `<div class="local-note">Изменено в этой программе: <b>${esc({create: "новая запись", edit: "изменение", move: "перенос", cancel: "отмена", status: "смена статуса"}[v.action] || "изменение")}</b>. Нужно перенести в Dentist Plus.
        ${v.origin_id ? `<button class="linkbtn" id="dwRevert">Вернуть как в Dentist Plus</button>` : ""}</div>` : ""}
@@ -523,6 +524,15 @@ async function openVisit(id) {
   }
   $("#scrim").hidden = false;
   setTimeout(() => $("#drawer").classList.add("open"), 10);
+}
+/** Allergy banner in the record / invoice editors: the allergy itself, and red lines for clashes with what is prescribed. */
+function allergyBar(el, r) {
+  if (!el) return;
+  const al = (r && r.allergies) || [], w = (r && r.warnings) || [];
+  el.hidden = !al.length;
+  if (!al.length) { el.innerHTML = ""; return; }
+  el.className = "allergy-bar" + (w.some(x => x.level === "stop") ? " stop" : w.length ? " warn" : "");
+  el.innerHTML = `<b>Аллергия: ${esc(al.join("; "))}</b>` + w.map(x => `<div class="al-w ${x.level}">${x.level === "stop" ? "Стоп" : "Осторожно"}: ${esc(x.text)}</div>`).join("");
 }
 function afterChange() {
   refreshStatus();
@@ -759,11 +769,13 @@ function renderPatient(tab) {
   const recByVisit = {}; p.records.forEach(r => { if (r.visit_id) recByVisit[r.visit_id] = r; });
   const ctx = {patient_id: p.id, doctor_id: (p.visits.find(v => v.start.slice(0, 10) === iso(new Date())) || p.visits[0] || {}).doctor_id};
 
-  const tabs = [["visits", "Визиты", p.visits.length], ["formula", "Формула"], ["records", "Лечения", p.records.length], ["payments", "Оплаты", invs.length],
+  const tabs = [["visits", "Визиты", p.visits.length], ["formula", "Формула"], ["records", "Лечения", p.records.length],
+    ["files", "Снимки и файлы", p.files_count || ""], ["perio", "Пародонтограмма", p.perio_count || ""], ["payments", "Оплаты", invs.length],
     ["plans", "План лечения", plans.length], ["docs", "Документы", p.documents.length], ["notes", "Примечания", p.notes.length],
     ...extras.map(e => ["x:" + e.kind, label(e.kind), Array.isArray(e.data) ? e.data.length : ""]),
     ["personal", "Персональные данные"], ["feed", "Живая лента"]].filter(([k]) => {
-    if (k === "formula" || k === "records") return can("medcard_view");
+    if (k === "formula" || k === "records" || k === "perio") return can("medcard_view");
+    if (k === "files") return canAny("medcard_view", "patients_view");
     if (k === "payments" || k === "plans") return canAny("billing", "payments");
     if (k === "docs") return can("docs");
     return true;
@@ -837,6 +849,8 @@ function renderPatient(tab) {
     ev.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
     body = `<div class="feed">${ev.map(e => `<div class="fe"><div class="fe-at">${fmtDT(e.at)}</div><div class="fe-card fe-${e.icon}"><div class="fe-h"><b>${esc(e.title)}</b>${e.st ? `<span class="pill ${stClass(e.st)}">${esc(e.st)}</span>` : ""}</div>${
       e.lines.filter(Boolean).map(l => `<div>${esc(l)}</div>`).join("")}</div></div>`).join("") || `<div class="empty"><b>Событий нет</b></div>`}</div>`;
+  } else if (tab === "files" || tab === "perio") {
+    body = `<div id="${tab === "files" ? "pfBody" : "perioBody"}"><div class="scan"><i></i>Загрузка…</div></div>`;
   } else if (tab.startsWith("x:")) {
     const e = extras.find(x => "x:" + x.kind === tab);
     const arr = Array.isArray(e.data) ? e.data : [e.data];
@@ -873,6 +887,8 @@ function renderPatient(tab) {
     <div class="tabs">${tabs.map(([k, t, c]) => `<button class="tab ${k === tab ? "on" : ""}" data-t="${esc(k)}">${esc(t)}${c ? `<span class="cnt">${c}</span>` : ""}</button>`).join("")}</div>
     <div class="pbody">${body}</div>`;
 
+  if (tab === "files" && typeof loadPatientFiles === "function") loadPatientFiles(p);
+  if (tab === "perio" && typeof loadPerio === "function") loadPerio(p);
   // hide what this employee may not do
   const hideIf = (sel, cond) => $$(sel, $("#patientCard")).forEach(el => { if (cond) el.remove(); });
   hideIf("#aAnketa, #aContract, #ddPrint, #tAddDoc, [data-add=doc], .ia[data-act=doc], [data-receipt]", !can("docs"));
@@ -933,6 +949,7 @@ async function loadSettings() {
   loadVoiceSettings();
   if (typeof loadBackupSettings === "function") loadBackupSettings();
   if (typeof loadSecuritySettings === "function") loadSecuritySettings();
+  if (typeof loadFilesSettings === "function") loadFilesSettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
       : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.";

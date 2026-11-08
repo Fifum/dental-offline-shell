@@ -229,6 +229,11 @@ def _copy_extra(target: Path, s: dict, now: datetime):
         shutil.copy2(target, part)
         os.replace(part, ex / target.name)
         rotate(ex, s, now)
+        try:  # X-rays and photos are not in the database copy: keep a mirror of them on the second folder
+            import files  # noqa: PLC0415
+            files.mirror(ex / "files")
+        except Exception as e:  # noqa: BLE001
+            log.warning("patient files mirror failed: %s", e)
         return None
     except OSError as e:
         return f"Не удалось записать копию во вторую папку ({root}): {e.strerror or e}"

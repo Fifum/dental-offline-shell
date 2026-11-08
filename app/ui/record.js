@@ -19,6 +19,7 @@ async function openRecord(o) {
   const box = modal(`
     <div class="m-h"><h3>Запись в медкарту · ${esc(pat.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b rec-grid">
+      <div class="allergy-bar" id="rAllergy" hidden></div>
       ${dictationBar()}
       <div class="grid3">
         <label class="fl">Дата приёма<input class="input" type="date" id="rDate" value="${esc((rec && rec.date) || o.date || iso(new Date()))}"></label>
@@ -82,7 +83,17 @@ async function openRecord(o) {
   };
   $("#rDiagQ", box).onkeydown = e => { if (e.key === "Enter") $("#rDiagAdd", box).click(); };
   drawTeeth(); drawDiag();
+  // allergy check: the patient's allergies against what is written in the treatment and recommendations
+  let alT;
+  const checkAllergy = () => { clearTimeout(alT); alT = setTimeout(async () => {
+    const text = ["treatment", "recommendations", "objective"].map(k => $("#rf_" + k, box).value).join("\n") + "\n" + st.diagnoses.map(x => x.title).join("\n");
+    try { allergyBar($("#rAllergy", box), await api.allergy_check(o.patient_id, text, $("#rf_anamnesis", box).value)); } catch (e) { /* not critical */ }
+  }, 350); };
+  ["treatment", "recommendations", "objective", "anamnesis"].forEach(k => $("#rf_" + k, box).addEventListener("input", checkAllergy));
+  $$(".chip", box).forEach(c => c.addEventListener("click", checkAllergy));
+  checkAllergy();
   attachDictation(box, o.patient_id, r => {
+    setTimeout(checkAllergy, 50);
     for (const [k, v] of Object.entries(r.fields || {})) {
       const ta = $("#rf_" + k, box); if (!ta || !v) continue;
       const cur = ta.value.trim();

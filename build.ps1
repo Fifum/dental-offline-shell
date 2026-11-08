@@ -25,6 +25,7 @@ if (Test-Path app\brand.json) {
   --collect-data faster_whisper `
   --collect-binaries ctranslate2 `
   --collect-data onnxruntime `
+  --collect-submodules pydicom `
   app\main.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
