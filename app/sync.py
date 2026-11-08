@@ -42,7 +42,11 @@ class SyncWorker(threading.Thread):
 
     # ------------------------------------------------------------- loop --
     def run(self):
-        time.sleep(1.5)
+        # Let the window open and show the saved data first: the first sync writes to the database and would
+        # make the first screens wait. A fresh database (nothing synced yet) is filled almost at once.
+        delay = 6 if self.db.meta_get("last_ok") else 1.5
+        if self.wake.wait(delay):  # «Обновить» pressed meanwhile: go now
+            self.wake.clear()
         while not self.stop_flag:
             s = config.load_settings()
             ok = self.sync_once(s)

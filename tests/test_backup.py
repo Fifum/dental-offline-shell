@@ -169,8 +169,10 @@ check("restore from second folder", a.backup_restore("extra", r3["name"])["resto
 # ---- the worker: copy at start when due, none on exit right after
 for f in backup.folder().iterdir():
     f.unlink()
+check("start copy waits for the window to open", backup.BackupWorker.START_DELAY >= 30)
 w = backup.BackupWorker(d.path)
 w.CHECK_SECONDS = 3600
+w.START_DELAY = 0
 w.start()
 w.join(timeout=0.01)
 import time  # noqa: E402

@@ -1060,11 +1060,15 @@ class Api:
         return backup.restore(where, name, self._db.conn, self._db._lock, db_path=self._db.path)
 
     def network_info(self):
-        from server import local_addresses
+        from server import local_addresses, network_categories
         s = config.load_settings()
         port = int(s.get("port") or 8765)
-        return {"mode": s.get("net_mode") or "server", "port": port, "addresses": local_addresses(),
-                "urls": [f"http://{ip}:{port}/" for ip in local_addresses()]}
+        ips = local_addresses()
+        cats = network_categories()
+        return {"mode": s.get("net_mode") or "server", "port": port, "addresses": ips,
+                "urls": [f"http://{ip}:{port}/" for ip in ips],
+                # Windows blocks incoming connections on a «Public» network: tablets and other PCs cannot connect
+                "public": bool(ips) and cats.get(ips[0]) == "Public"}
 
     # ---------------------------------------------------------- schedule --
     def day(self, day: str, branch_id: str | None = None):
@@ -1277,87 +1281,36 @@ def single_instance():
     return ctypes.windll.kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
 
 
-def _install_dir():
-    base = os.environ.get("APP_INSTALL_DIR") or os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", config.APP_NAME)
-    return os.path.abspath(base)
-
-
-def _make_shortcuts(target):
-    """Desktop + Start menu shortcuts via PowerShell (no extra dependencies)."""
-    import base64
-    import subprocess
-    desktop = os.environ.get("APP_DESKTOP")
-    desk_expr = f"'{desktop}'" if desktop else "[Environment]::GetFolderPath('Desktop')"
-    progs_expr = f"'{desktop}'" if desktop else "[Environment]::GetFolderPath('Programs')"
-    ps = f"""
-$t = '{target}'
-$sh = New-Object -ComObject WScript.Shell
-foreach ($d in @({desk_expr}, {progs_expr})) {{
-  $l = $sh.CreateShortcut((Join-Path $d '{config.BRAND["name"]}.lnk'))
-  $l.TargetPath = $t; $l.WorkingDirectory = (Split-Path $t); $l.IconLocation = "$t,0"
-  $l.Description = '{config.BRAND["name"]} — расписание и медкарты'; $l.Save()
-}}"""
-    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
-    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
-                   creationflags=0x08000000, timeout=60, check=False)  # CREATE_NO_WINDOW
-
-
 def self_install():
-    """Running a downloaded exe (e.g. from Telegram) installs it for this user and starts the installed
-    copy. Running a newer exe later updates the installed one. Returns True if this process should exit."""
-    if not getattr(sys, "frozen", False) or os.name != "nt" or "--no-install" in sys.argv:
+    """Running a downloaded single-file exe (an older kind of build) installs it for this user and starts the
+    installed copy. Since 2.6.1 releases are an installer (setup_main.py) that puts the program folder in place,
+    and the installed folder build never installs itself. Returns True if this process should exit."""
+    import installer
+    if not getattr(sys, "frozen", False) or os.name != "nt" or "--no-install" in sys.argv or installer.is_onedir():
         return False
     import shutil
-    import subprocess
     exe = os.path.abspath(sys.executable)
-    target_dir = _install_dir()
-    target = os.path.join(target_dir, config.BRAND["exe"] + ".exe")
+    target_dir = installer.install_dir()
+    target = installer.target_exe()
     if os.path.normcase(exe) == os.path.normcase(target):
         return False
-    def _copy():
+    if not installer.close_running(target, seconds=10):
+        installer.message(f"{config.BRAND['name']} уже открыта.\n\nЗакройте программу (значок в панели задач, правый щелчок → Закрыть окно) "
+                          "и запустите этот файл ещё раз — программа обновится.")
+        return True
+    try:
         os.makedirs(target_dir, exist_ok=True)
         shutil.copy2(exe, target + ".new")
         os.replace(target + ".new", target)
-
-    try:
-        _copy()
-    except PermissionError:
-        # the old version is open: ask it to close (it saves everything on close), then update
-        updated = False
-        try:
-            import ctypes
-            import time
-            hwnd = ctypes.windll.user32.FindWindowW(None, config.APP_TITLE)
-            if hwnd:
-                ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
-                for _ in range(40):
-                    time.sleep(0.25)
-                    try:
-                        _copy()
-                        updated = True
-                        break
-                    except PermissionError:
-                        continue
-        except Exception as e:  # noqa: BLE001
-            log.warning("auto-close for update failed: %s", e)
-        if not updated:
-            try:
-                os.remove(target + ".new")
-            except OSError:
-                pass
-            ctypes_msg(f"{config.BRAND['name']} уже открыта.\n\nЗакройте программу (значок в панели задач, правый щелчок → Закрыть окно) "
-                       "и запустите этот файл ещё раз — программа обновится.")
-            return True
     except OSError as e:
         log.warning("self-install failed, running in place: %s", e)
         return False
     try:
-        _make_shortcuts(target)
+        installer.make_shortcuts(target)
     except Exception as e:  # noqa: BLE001
         log.warning("shortcuts failed: %s", e)
     log.info("installed to %s", target)
-    subprocess.Popen([target, *[a for a in sys.argv[1:] if a != "--no-install"]], close_fds=True,
-                     creationflags=0x00000008 | 0x00000200)  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    installer.launch(target, [a for a in sys.argv[1:] if a != "--no-install"])
     return True
 
 

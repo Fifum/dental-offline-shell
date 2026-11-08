@@ -20,6 +20,7 @@ const api = new Proxy({}, {get: (_, name) => (...args) => post("api", name, args
 const authApi = new Proxy({}, {get: (_, name) => (...args) => post("auth", name, args)});
 const can = p => !!(ME && ME.perms.includes(p));
 const canAny = (...ps) => ps.some(can);
+const NET_PUBLIC_HINT = "Windows считает эту сеть Wi-Fi «общедоступной» и не пускает к компьютеру планшеты и другие компьютеры. Сделайте её частной: Параметры Windows → Сеть и Интернет → Wi-Fi → свойства вашей сети → «Частная сеть». Если не поможет — Настройки программы → «Разрешить подключения в брандмауэре Windows».";
 const errText = e => String((e && (e.message || e)) || "Ошибка").replace(/^Error:\s*/, "");
 window.addEventListener("unhandledrejection", e => { const t = errText(e.reason); if (!/Нет связи|Войдите/.test(t)) toast(t, true); });
 
@@ -963,8 +964,8 @@ async function loadSettings() {
   if (typeof loadTabletSettings === "function") loadTabletSettings();
   if (typeof loadMoneySettings === "function") loadMoneySettings();
   api.network_info().then(n => {
-    $("#netBox").innerHTML = n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
-      : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.";
+    $("#netBox").innerHTML = (n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
+      : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.") + (n.public ? `<div class="warn-line" style="margin-top:6px">${NET_PUBLIC_HINT}</div>` : "");
   }).catch(() => {});
   $("#histTable tbody").innerHTML = s.history.map(h => `<tr><td>${fmtDT(h.finished)}</td><td class="${h.ok ? "ok-t" : "bad-t"}">${esc(h.message)}</td><td>${h.counts.visits ?? "—"}</td><td>${h.counts.patients ?? "—"}</td></tr>`).join("")
     || `<tr><td colspan="4" class="muted">Ещё не было</td></tr>`;

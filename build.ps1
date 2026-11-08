@@ -15,7 +15,9 @@ if (Test-Path app\brand.json) {
   $extra = @("--add-data", "app\brand.json;.")
 }
 
-& $py -m PyInstaller --noconfirm --clean --onefile --windowed `
+# 1. The program as a folder (exe + _internal): installed once, it starts without unpacking anything.
+#    A single-file build unpacked ~300 MB into a temporary folder on every start (and the antivirus re-checked it).
+& $py -m PyInstaller --noconfirm --clean --onedir --windowed --noupx `
   --name $name `
   --icon $icon `
   --add-data "app\ui;ui" @extra `
@@ -29,6 +31,18 @@ if (Test-Path app\brand.json) {
   app\main.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
+# 2. The folder in a zip, and a small single-file installer around it: that one exe is what the clinic gets.
+& $py tools\pack_app.py "dist\$name" "build\app.zip"
+if ($LASTEXITCODE -ne 0) { throw "packing failed" }
+& $py -m PyInstaller --noconfirm --clean --onefile --windowed --noupx `
+  --name $name `
+  --icon "$PSScriptRoot\$icon" `
+  --specpath build\setup --workpath build\setup --distpath build\setup\dist `
+  --add-data "$PSScriptRoot\build\app.zip;." @(if ($extra.Count) { "--add-data", "$PSScriptRoot\app\brand.json;." }) `
+  --paths "$PSScriptRoot\app" `
+  "$PSScriptRoot\app\setup_main.py"
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller (installer) failed" }
+
 # Every release carries its version in the file name (DentalDesk-2.1.0.exe). The newest one stays in
 # release\, earlier releases (exe and zip packages of other versions) move to release\old\.
 $ver = ([regex]::Match((Get-Content app\config.py -Raw -Encoding UTF8), 'VERSION\s*=\s*"([^"]+)"')).Groups[1].Value
@@ -37,5 +51,5 @@ New-Item -ItemType Directory -Force release, release\old | Out-Null
 Get-ChildItem release -File | Where-Object { $_.Extension -in ".exe", ".zip" -and -not $_.Name.Contains($ver) } |
   ForEach-Object { Move-Item $_.FullName (Join-Path "release\old" $_.Name) -Force; Write-Host "old: release\old\$($_.Name)" }
 $out = "release\$name-$ver.exe"
-Copy-Item "dist\$name.exe" $out -Force
-Write-Host "Готово: $out — один файл, сам устанавливается при первом запуске"
+Copy-Item "build\setup\dist\$name.exe" $out -Force
+Write-Host "Готово: $out — один файл-установщик: ставит программу папкой и запускает её"

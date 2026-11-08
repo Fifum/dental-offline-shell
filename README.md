@@ -139,7 +139,9 @@ Dentist Plus partner API
 
 | File | Role |
 |---|---|
-| `app/main.py` | Window, server/client start, data API, self-install and update, autostart |
+| `app/main.py` | Window, server/client start, data API, autostart |
+| `app/installer.py` | Install and update the program folder for the current user: close the running copy, swap folders safely, shortcuts |
+| `app/setup_main.py` | The shipped `.exe`: a small installer carrying the program folder as a zip |
 | `app/server.py` | Clinic server: HTTP API, permission checks, UI files, network discovery |
 | `app/auth.py` | Staff accounts, password hashing, sessions, roles and permissions, action journal |
 | `app/speech.py` | Offline speech recognition: model download, transcription |
@@ -182,6 +184,10 @@ Dentist Plus partner API
   short retries and the sync moves on, counting the error.
 - **Shipping to a non-technical client.** The `.exe` installs itself to the user profile on first run,
   creates desktop and Start menu shortcuts, and running a newer `.exe` updates it in place.
+- **Start time.** A single-file PyInstaller build unpacked ~300 MB (speech recognition, ONNX, WebView2 bridge)
+  into a temp folder on every start, and the antivirus re-scanned it each time. The shipped `.exe` is now a small
+  installer that puts a folder build in place once; the program then starts with nothing to unpack (3.2 s → 1.1 s
+  to a ready server on the test laptop; more on slower disks). The start-up backup and the first sync wait until the window is up.
 - **Secrets.** The API password is encrypted with Windows DPAPI and only decrypts under the same
   Windows account.
 
@@ -233,6 +239,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_documents_tools.py      # 92 checks: signatures, questionnaire, tablet over HTTP, tax certificate, Excel
 .venv\Scripts\python tests\test_money_tools.py          # 107 checks: lab orders and payroll, certificates, bonuses, families, SBP, fiscal rules
 .venv\Scripts\python tests\test_stock_lots.py           # 55 checks: FEFO lots, expiry, expired write-off, purchase list, cheapest supplier, barcode scanner, rights
+.venv\Scripts\python tests\test_installer.py            # 15 checks: folder install, in-place update, broken installer, leftovers, data folder untouched
 ```
 
 Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,

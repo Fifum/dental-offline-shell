@@ -397,7 +397,11 @@ class BackupWorker(threading.Thread):
         except Exception as e:  # noqa: BLE001
             log.warning("backup (%s) failed: %s", reason, e)
 
+    START_DELAY = 45  # the start copy waits until the window has opened and the first screens are loaded
+
     def run(self):
+        if self._stop.wait(self.START_DELAY):
+            return  # closed within the first seconds: stop() makes the copy
         if self._due():
             self._try("start")
         while not self._stop.wait(self.CHECK_SECONDS):

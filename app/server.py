@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import sys
 import threading
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -276,19 +277,62 @@ def ping(url, timeout=2.0) -> dict | None:
         return None
 
 
+def _route_ip(target):
+    """The local address Windows would send from to reach `target` (UDP connect sends nothing)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((target, 1))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return ""
+
+
+def _is_lan(ip):
+    """Ordinary home / office network ranges (Wi-Fi, cable): 192.168.x.x, 10.x.x.x, 172.16–31.x.x."""
+    p = [int(x) for x in ip.split(".")]
+    return p[0] == 10 or (p[0] == 192 and p[1] == 168) or (p[0] == 172 and 16 <= p[1] <= 31)
+
+
 def local_addresses() -> list[str]:
-    """IPv4 addresses of this computer that other clinic computers can use."""
+    """IPv4 addresses of this computer that other clinic computers can use, the most likely one first.
+
+    Skipped: loopback and 169.254.x.x (an adapter that got no address, e.g. a disconnected VPN). First comes the
+    Wi-Fi / cable address the default route goes through, then other local networks, then VPN-like addresses
+    (Radmin 26.x, Tailscale 100.64–127.x and the like), which a tablet on the clinic Wi-Fi cannot reach."""
     ips = set()
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ips.add(info[4][0])
     except OSError:
         pass
+    main = _route_ip("8.8.8.8")  # the interface with the internet route (no packet is sent)
+    for ip in (main, _route_ip("10.255.255.255"), _route_ip("192.168.255.255")):
+        if ip:
+            ips.add(ip)
+    ips = {ip for ip in ips if ip and not ip.startswith(("127.", "169.254.", "0."))}
+    return sorted(ips, key=lambda ip: (not _is_lan(ip), ip != main, [int(x) for x in ip.split(".")]))
+
+
+def network_categories() -> dict:
+    """Windows network type of each local address: {"192.168.1.14": "Public"} (Public / Private / DomainAuthenticated).
+    A «Public» network blocks incoming connections, so a tablet or another PC cannot reach this one."""
+    if sys.platform != "win32":
+        return {}
+    import subprocess
+    ps = ("$p=@{}; Get-NetConnectionProfile | ForEach-Object { $p[$_.InterfaceIndex]=[string]$_.NetworkCategory };"
+          "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $p.ContainsKey($_.InterfaceIndex) } |"
+          " ForEach-Object { $_.IPAddress + '=' + $p[$_.InterfaceIndex] }")
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("10.255.255.255", 1))
-        ips.add(s.getsockname()[0])
-        s.close()
-    except OSError:
-        pass
-    return sorted(ip for ip in ips if not ip.startswith("127."))
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True, text=True,
+                           timeout=8, creationflags=0x08000000, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out = {}
+    for line in (r.stdout or "").splitlines():
+        ip, _, cat = line.strip().partition("=")
+        if ip and cat:
+            out[ip] = cat
+    return out

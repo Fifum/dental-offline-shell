@@ -175,6 +175,26 @@ missing = sorted(public - set(authm.METHOD_PERMS))
 check("all Api methods have permission rules", not missing, missing)
 
 srv.stop()
+
+# --- the address shown for tablets and other PCs: the Wi-Fi one, never a disconnected VPN adapter (169.254.x.x)
+import server as srvm  # noqa: E402
+_gai, _route = socket.getaddrinfo, srvm._route_ip
+fake = ["169.254.83.107", "26.90.93.2", "192.168.1.14", "100.101.5.7", "127.0.0.1"]
+socket.getaddrinfo = lambda *a, **k: [(2, 1, 0, "", (ip, 0)) for ip in fake]
+srvm._route_ip = lambda target: "192.168.1.14" if target == "8.8.8.8" else ""
+try:
+    ips = srvm.local_addresses()
+    check("LAN address first, link-local dropped", ips[0] == "192.168.1.14" and "169.254.83.107" not in ips and "127.0.0.1" not in ips, ips)
+    check("VPN addresses after the LAN one", ips == ["192.168.1.14", "26.90.93.2", "100.101.5.7"], ips)
+    srvm._route_ip = lambda target: "26.90.93.2" if target == "8.8.8.8" else ""  # internet goes through a VPN
+    check("LAN still first when the default route is a VPN", srvm.local_addresses()[0] == "192.168.1.14")
+    fake[:] = ["10.0.0.5", "192.168.0.20"]
+    srvm._route_ip = lambda target: "192.168.0.20" if target == "8.8.8.8" else ""
+    check("among LANs the one with the internet route first", srvm.local_addresses()[0] == "192.168.0.20")
+finally:
+    socket.getaddrinfo, srvm._route_ip = _gai, _route
+check("network categories return a dict", isinstance(srvm.network_categories(), dict))
+
 print(f"OK: {OK[0]}  FAIL: {len(FAIL)}")
 for f in FAIL:
     print(" -", f)

@@ -153,14 +153,15 @@ async function loadTabletSettings() {
       ${list.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${esc(fmtDT(t.created_at))}</td><td>${esc(fmtDT(t.last_seen))}</td><td class="row-acts"><button class="linkbtn" data-rv="${esc(t.id)}">отключить</button></td></tr>`).join("")}
     </tbody></table>` : `<p class="muted">Планшетов пока нет.</p>`}
     <div class="row"><button class="btn" id="tbPair">Подключить планшет</button></div>
-    <p class="hint">Планшет должен быть в той же сети Wi-Fi, что и этот компьютер. Адрес для планшета: ${net.urls.length ? net.urls.map(u => `<code>${esc(u)}t</code>`).join(" или ") : "компьютер не подключён к сети"}.</p>`;
+    <p class="hint">Планшет должен быть в той же сети Wi-Fi, что и этот компьютер. Адрес для планшета: ${net.urls.length ? net.urls.map(u => `<code>${esc(u)}t</code>`).join(" или ") : "компьютер не подключён к сети"}.</p>
+    ${net.public ? `<div class="warn-line">${NET_PUBLIC_HINT}</div>` : ""}`;
   $$("[data-rv]", box).forEach(b => b.onclick = async () => { if (await ask("Отключить планшет?", {danger: true, ok: "Отключить", text: "Чтобы снова пользоваться им, его нужно будет подключить новым кодом."})) { await api.tablet_revoke(b.dataset.rv); loadTabletSettings(); } });
   $("#tbPair", box).onclick = async () => {
     const v = await askInput("Подключить планшет", [{label: "Название планшета", value: list.length ? `Планшет ${list.length + 1}` : "Планшет ресепшена"}], {ok: "Получить код"});
     if (!v) return;
     const c = await api.tablet_code(v[0]);
     await ask(`Код: ${c.code.slice(0, 3)} ${c.code.slice(3)}`, {icon: "edit", ok: "Готово", cancel: "Закрыть",
-      text: `На планшете откройте в браузере ${net.urls[0] ? net.urls[0] + "t" : "адрес этого компьютера с портом 8765 и /t"} и введите этот код. Код действует 10 минут.`});
+      text: `На планшете откройте в браузере ${net.urls[0] ? net.urls[0] + "t" : "адрес этого компьютера с портом 8765 и /t"} и введите этот код. Код действует 10 минут.${net.public ? "\n\n" + NET_PUBLIC_HINT : ""}`});
     loadTabletSettings();
   };
 }
