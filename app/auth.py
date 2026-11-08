@@ -98,6 +98,13 @@ METHOD_PERMS = {
     "allergy_check": ("medcard_view", "medcard_edit", "billing", "patients_view"),
     "steril_options": ("sterilization", "equipment"), "steril_list": ("sterilization", "equipment"),
     "steril_save": "sterilization", "steril_delete": "sterilization",
+    "taxcert_data": ("payments", "cash_report", "docs"), "taxcert_issue": ("payments", "docs"), "taxcert_list": ("payments", "cash_report", "docs"),
+    "export_xlsx": ANY_USER,
+    "document_signatures": ("docs", "medcard_view", "patients_view"), "document_sign": "docs",
+    "questionnaire_questions": ("patients_view", "docs", "patients_edit"), "questionnaire_save": ("patients_edit", "docs", "medcard_edit"),
+    "questionnaire_latest": ("patients_view", "medcard_view"),
+    "tablet_code": "settings", "tablets_list": ("settings", "docs", "patients_edit"), "tablet_revoke": "settings",
+    "tablet_send": ("docs", "patients_edit"), "tablet_status": ("docs", "patients_edit"), "tablet_cancel": ("docs", "patients_edit"),
     "files_list": ("medcard_view", "patients_view"), "file_thumbs": ("medcard_view", "patients_view"),
     "file_get": ("medcard_view", "patients_view"), "file_add": ("medcard_edit", "patients_edit"),
     "file_update": ("medcard_edit", "patients_edit"), "file_delete": "medcard_edit",
@@ -155,6 +162,9 @@ METHOD_PERMS = {
 # Changes worth keeping in the action journal, with a human label.
 AUDITED = {
     "save_visit": "Запись на приём", "set_visit_status": "Статус приёма", "revert_visit": "Отмена изменения записи",
+    "taxcert_issue": "Справка для налогового вычета", "export_xlsx": "Выгрузка таблицы в Excel",
+    "document_sign": "Подпись документа", "questionnaire_save": "Анкета о здоровье",
+    "tablet_code": "Код подключения планшета", "tablet_revoke": "Отключение планшета", "tablet_send": "Задание на планшет",
     "file_add": "Файл в карте пациента", "file_update": "Описание файла пациента", "file_delete": "Удаление файла пациента",
     "files_inbox_import": "Снимки из визиографа в карту", "files_settings_save": "Папка снимков визиографа",
     "perio_save": "Пародонтограмма", "perio_delete": "Удаление пародонтограммы",

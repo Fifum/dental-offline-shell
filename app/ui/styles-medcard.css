@@ -78,3 +78,20 @@
 .pr-help{font-size:12px;margin-top:6px}
 #printArea .pr-print .pr-in{display:inline-block;border:0;min-width:12px}
 #printArea .pr-print .pr-tbl{min-width:0;font-size:9pt}
+/* signatures, questionnaire, tablet */
+.sig-pad{position:relative;flex:none;height:180px;border:1.5px dashed var(--line);border-radius:12px;background:#fff;margin:10px 0 4px}
+.sig-pad canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
+.sig-line{position:absolute;left:14px;bottom:10px;color:#9a948e;font-size:12px;pointer-events:none}
+.sig-clear{position:absolute;right:12px;top:8px}
+.doc-sigs{display:flex;flex-wrap:wrap;gap:14px;margin:12px 0 0;padding-top:10px;border-top:1px solid var(--line2)}
+.doc-sig{display:flex;align-items:center;gap:10px;font-size:13px}
+.doc-sig img{height:56px;max-width:200px;background:#fff;border:1px solid var(--line2);border-radius:6px}
+.doc-sig small{display:block;color:var(--muted)}
+.doc-sigs.print .doc-sig img{border:0}
+.tb-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.tb-wait{min-height:90px;display:flex;align-items:center}
+.q-form{max-height:68vh;overflow:auto}
+.q-row{flex:none;display:grid;grid-template-columns:1fr auto;gap:6px 14px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line2)}
+.q-row .q-x{grid-column:1/-1}
+.q-row.q-miss .q-q{color:var(--danger);font-weight:600}
+.q-yn button.on[data-v="1"]{background:var(--danger-soft);color:var(--danger)}

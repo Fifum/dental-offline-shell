@@ -749,7 +749,7 @@ function renderPatient(tab) {
     if (/allerg|аллерг/i.test(k)) alerts.push(`<span class="alert"><svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4.5M12 17.5v.01"/></svg>Аллергия: ${esc(s)}</span>`);
     else if (/chronic|хрон|disease|заболев/i.test(k)) alerts.push(`<span class="alert w">${esc(label(k))}: ${esc(s)}</span>`);
   }
-  if (p.local) alerts.push(`<span class="alert w">Пациент создан в программе — завести в Dentist Plus</span>`);
+  if (p.questionnaire) for (const a of p.questionnaire.alerts) alerts.push(`<span class="alert${/^Аллерг/.test(a) ? "" : " w"}">Анкета: ${esc(a)}</span>`);
   let teeth = findTeeth(d);
   const tmap = {...(teeth ? teeth.map : {}), ...(p.teeth_local || {})};
   const extras = p.extras.filter(e => !isEmpty(e.data));
@@ -826,7 +826,7 @@ function renderPatient(tab) {
       : `<div class="empty"><b>Планов лечения нет</b><span>Составьте план, распечатайте его пациенту и выставляйте счета по этапам</span></div>`);
   } else if (tab === "docs") {
     body = addBtn("tAddDoc", "Создать документ") + (p.documents.length ? `<table class="tbl"><thead><tr><th>Документ</th><th>Создан</th><th>DP</th></tr></thead><tbody>${
-      p.documents.map(x => `<tr data-doc="${esc(x.id)}"><td class="lnk"><b>${esc(x.title)}</b></td><td>${fmtDT(x.created_at)}</td><td>${tr(x)}</td></tr>`).join("")}</tbody></table>`
+      p.documents.map(x => `<tr data-doc="${esc(x.id)}"><td class="lnk"><b>${esc(x.title)}</b>${x.signed ? ' <span class="pill st-ok">подписан</span>' : ""}</td><td>${fmtDT(x.created_at)}</td><td>${tr(x)}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>Документов пока нет</b><span>Анкета, договор, согласия, план, акт, выписка, карта 043 — заполняются автоматически</span></div>`);
   } else if (tab === "notes") {
     body = `<div class="notes"><span class="muted">Примечания хранятся только на этом компьютере и в Dentist Plus не отправляются.</span>
@@ -871,7 +871,7 @@ function renderPatient(tab) {
         <button class="pill-btn" id="aContract">${ICON.doc}Договор</button>
         <button class="pill-btn" id="aPay">${ICON.inv}Оплата</button>
         <div class="dd right" id="ddPrint"><button class="dd-btn pill-btn">Печать<svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
-          <div class="dd-menu"><button data-tpl="doc_card043">Медкарта 043/у</button><button data-tpl="doc_extract">Выписка из медкарты</button><button data-tpl="doc_consent_treatment">Согласие на лечение</button><button data-tpl="doc_consent_pd">Согласие на обработку ПД</button><button data-tpl="">Другой документ…</button></div></div>
+          <div class="dd-menu"><button data-tpl="doc_card043">Медкарта 043/у</button><button data-tpl="doc_extract">Выписка из медкарты</button><button data-tpl="doc_consent_treatment">Согласие на лечение</button><button data-tpl="doc_consent_pd">Согласие на обработку ПД</button><button data-tpl="">Другой документ…</button><button id="aTax">Справка для налогового вычета</button></div></div>
         <div class="dd right" id="ddAdd"><button class="dd-btn btn">Добавить<svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
           <div class="dd-menu"><button data-add="visit">Визит</button><button data-add="rec">Лечение (запись в медкарту)</button><button data-add="plan">План лечения</button><button data-add="inv">Счёт</button><button data-add="doc">Документ</button><button data-add="note">Примечание</button></div></div>
       </div></div>
@@ -893,6 +893,7 @@ function renderPatient(tab) {
   const hideIf = (sel, cond) => $$(sel, $("#patientCard")).forEach(el => { if (cond) el.remove(); });
   hideIf("#aAnketa, #aContract, #ddPrint, #tAddDoc, [data-add=doc], .ia[data-act=doc], [data-receipt]", !can("docs"));
   hideIf("#aPay, .ia[data-act=inv]", !canAny("billing", "payments"));
+  hideIf("#aTax", !canAny("payments", "docs"));
   hideIf("[data-add=inv], [data-add=plan], #tAddInv, #tAddPlan", !can("billing"));
   hideIf("[data-add=rec], #tAddRec", !can("medcard_edit"));
   hideIf(".ia[data-act=rec]", !can("medcard_view"));
@@ -908,7 +909,8 @@ function renderPatient(tab) {
     inv: () => openInvoice(ctx), doc: () => openDocPicker(ctx), note: () => renderPatient("notes")};
   $$("#ddAdd [data-add]").forEach(b => b.onclick = () => actions[b.dataset.add]());
   $$("#ddPrint [data-tpl]").forEach(b => b.onclick = () => b.dataset.tpl ? openDocFill({...ctx, template_id: b.dataset.tpl}) : openDocPicker(ctx));
-  on("#aAnketa", () => openDocFill({...ctx, template_id: "doc_anketa"}));
+  on("#aTax", () => typeof openTaxCert === "function" && openTaxCert(p));
+  on("#aAnketa", () => typeof openQuestionnaire === "function" ? openQuestionnaire(p) : openDocFill({...ctx, template_id: "doc_anketa"}));
   on("#aContract", () => openDocFill({...ctx, template_id: "doc_contract"}));
   on("#aSource", () => editPatientSource(p, () => openPatient(p.id, S.prevView)));
   on("#aPay", () => { const unpaid = invs.find(i => i.status !== "Оплачен"); openInvoice(unpaid ? {patient_id: p.id, id: unpaid.id} : ctx); });
@@ -950,6 +952,7 @@ async function loadSettings() {
   if (typeof loadBackupSettings === "function") loadBackupSettings();
   if (typeof loadSecuritySettings === "function") loadSecuritySettings();
   if (typeof loadFilesSettings === "function") loadFilesSettings();
+  if (typeof loadTabletSettings === "function") loadTabletSettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
       : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.";

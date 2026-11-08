@@ -9,7 +9,7 @@ async function sterilJournal() {
   const edit = can("sterilization");
   body.innerHTML = `<div class="tab-tools rep-tools">${periodBar()}
       <select class="input sm-sel" id="stFilter"><option value="">Все стерилизаторы</option>${STER.sterilizers.map(s => `<option ${s === S.sterFilter ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
-      <span class="grow"></span>${edit ? `<button class="btn" id="stAdd">Записать цикл</button>` : ""}<button class="icon-btn" id="stPrint" title="Распечатать журнал">${PRINT_ICON}</button></div>
+      <span class="grow"></span>${edit ? `<button class="btn" id="stAdd">Записать цикл</button>` : ""}<button class="icon-btn" title="Скачать в Excel" data-xls="#stockBody table.tbl" data-xls-name="Журнал стерилизации"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="stPrint" title="Распечатать журнал">${PRINT_ICON}</button></div>
     <div class="stat-row"><div class="stat"><span>Циклов</span><b>${r.count}</b></div><div class="stat"><span>Упаковок</span><b>${r.packs}</b></div>
       <div class="stat ${r.failed ? "warn" : ""}"><span>Брак</span><b>${r.failed}</b></div></div>
     <div class="pbody">${r.rows.length ? `<table class="tbl compact st-tbl"><thead><tr><th>№</th><th>Дата, время</th><th>Стерилизатор</th><th>Метод и режим</th><th>Что стерилизовали</th>

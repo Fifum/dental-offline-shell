@@ -148,6 +148,11 @@ class ClinicServer:
             def do_GET(self):
                 if self.path.split("?")[0] == "/ping":
                     return self._json(200, server_info(srv.port))
+                if self.path.split("?")[0] in ("/t", "/t/"):  # short address for the patient tablet
+                    self.send_response(302)
+                    self.send_header("Location", "/tablet.html")
+                    self.end_headers()
+                    return None
                 return super().do_GET()
 
             def do_POST(self):
@@ -170,6 +175,12 @@ class ClinicServer:
                         result = srv.call_auth(name, args, token, ip, agent, is_local)
                     elif kind == "api":
                         result = srv.call_api(name, args, token, ip)
+                    elif kind == "tablet":
+                        from tablet import TabletError
+                        try:
+                            result = srv.api._tablet_public(name, args, self.headers.get("X-Tablet-Key", ""), ip)
+                        except TabletError as e:
+                            return self._json(403, {"error": str(e), "tablet": True})
                     else:
                         return self._json(404, {"error": "Не найдено"})
                     return self._json(200, result)

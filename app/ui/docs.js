@@ -134,10 +134,11 @@ async function openDocument(did) {
   const d = await api.document(did);
   if (!d) return;
   const box = modal(`<div class="m-h"><h3>${esc(d.title)} <span class="muted" style="font-weight:400;font-size:13px">от ${fmtDT(d.created_at)}</span></h3><button class="x" data-close>×</button></div>
-    <div class="m-b doc-view"><div class="doc-page" id="dvPage" contenteditable="true">${d.html}</div></div>
+    <div class="m-b doc-view"><div class="doc-page" id="dvPage" contenteditable="true">${d.html}</div><div id="dvSigs"></div></div>
     <div class="m-f"><button class="btn ghost small danger" id="dvDel">Удалить</button><span class="muted">Можно поправить текст и сохранить</span>
-      <button class="btn ghost" id="dvSave">Сохранить правки</button><button class="btn" id="dvPrint">Печать</button></div>`, {wide: true});
-  $("#dvPrint", box).onclick = () => printDoc($("#dvPage", box).innerHTML);
+      <button class="btn ghost" id="dvSign">Подписать</button><button class="btn ghost" id="dvSave">Сохранить правки</button><button class="btn" id="dvPrint">Печать</button></div>`, {wide: true});
+  const sigs = typeof docSignatures === "function" ? await docSignatures(box, d) : null;
+  $("#dvPrint", box).onclick = () => printDoc($("#dvPage", box).innerHTML + (sigs ? sigs.printHtml() : ""));
   $("#dvSave", box).onclick = async () => { await api.save_document({id: d.id, patient_id: d.patient_id, title: d.title, html: $("#dvPage", box).innerHTML}); toast("Сохранено"); afterChange(); };
   $("#dvDel", box).onclick = async () => { if (await ask("Удалить документ?", {danger: true, ok: "Удалить"})) { await api.delete_document(d.id); closeModal(); afterChange(); } };
 }

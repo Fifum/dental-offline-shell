@@ -63,7 +63,7 @@ async function loadReports() {
   bindPeriod(body, loadReports);
   const pr = $("#repPrint", body); if (pr) pr.onclick = () => printTable($("#repTabs button.on").textContent, "#repBody table.tbl");
 }
-const repTools = (extra = "") => `<div class="tab-tools rep-tools">${periodBar()}<span class="grow"></span>${extra}<button class="icon-btn" id="repPrint" title="Печать">${PRINT_ICON}</button></div>`;
+const repTools = (extra = "") => `<div class="tab-tools rep-tools">${periodBar()}<span class="grow"></span>${extra}<button class="icon-btn" title="Скачать в Excel" data-xls="#repBody table.tbl" data-xls-title="#repTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="repPrint" title="Печать">${PRINT_ICON}</button></div>`;
 const moneyNote = `<div class="muted note-line">Счета и оплаты, проведённые в этой программе. Оплаты, принятые только в Dentist Plus, сюда не попадают.</div>`;
 
 async function repRevenue(body) {
@@ -130,7 +130,7 @@ async function repVisits(body) {
 async function repDebts(body) {
   const r = await api.report_debts();
   const row = x => `<td class="lnk" data-p="${esc(x.patient_id)}"><b>${esc(x.name)}</b></td><td>${esc(x.phone || "—")}</td>`;
-  body.innerHTML = `<div class="tab-tools rep-tools"><span class="muted">Состояние на сегодня</span><span class="grow"></span><button class="icon-btn" id="repPrint" title="Печать">${PRINT_ICON}</button></div>
+  body.innerHTML = `<div class="tab-tools rep-tools"><span class="muted">Состояние на сегодня</span><span class="grow"></span><button class="icon-btn" title="Скачать в Excel" data-xls="#repBody table.tbl" data-xls-title="#repTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="repPrint" title="Печать">${PRINT_ICON}</button></div>
     <div class="stat-row"><div class="stat ${r.total_debt ? "warn" : ""}"><span>Пациенты должны</span><b>${money(r.total_debt)}</b></div>
       <div class="stat"><span>Должников</span><b>${r.debts.length}</b></div>
       <div class="stat"><span>Авансы пациентов</span><b>${money(r.total_advance)}</b></div>
@@ -146,3 +146,23 @@ async function repDebts(body) {
   $$("#repBody [data-p]").forEach(td => td.onclick = () => openPatient(td.dataset.p, "reports"));
   const dc = $("#debtCalls"); if (dc) dc.onclick = () => { S.mkTab = "calls"; S.mkList = "debts"; show("marketing"); };
 }
+
+/* ---- Excel: any table on the screen → .xlsx (buttons with data-xls="<table selector>") */
+async function exportTable(title, sel) {
+  const t = $(sel); if (!t) return toast("Нет таблицы для выгрузки", true);
+  const skip = c => c.classList.contains("no-print") || c.classList.contains("row-acts") || c.classList.contains("acts");
+  const cells = tr => [...tr.children].filter(c => !skip(c)).map(c => c.innerText.replace(/[ \t]+\n/g, "\n").trim());
+  const head = t.tHead && t.tHead.rows.length ? cells(t.tHead.rows[t.tHead.rows.length - 1]) : [];
+  const rows = [...(t.tBodies[0] ? t.tBodies[0].rows : [])].map(cells).concat(t.tFoot ? [...t.tFoot.rows].map(cells) : []);
+  try { const r = await api.export_xlsx(title, head, rows); await saveDataUrl(r.name, r.url); } catch (e) { toast(errText(e), true); }
+}
+async function saveDataUrl(name, url) {
+  const pw = window.pywebview && window.pywebview.api;
+  if (pw && pw.save_file) { const path = await pw.save_file(name, url); if (path) toast(`Сохранено: ${path}`); return; }
+  const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-xls]"); if (!b) return;
+  const ts = b.dataset.xlsTitle && $(b.dataset.xlsTitle);
+  exportTable(ts ? ts.textContent.trim() : (b.dataset.xlsName || "Таблица"), b.dataset.xls);
+});

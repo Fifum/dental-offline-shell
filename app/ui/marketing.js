@@ -81,7 +81,7 @@ async function mkCalls(body) {
   const extra = S.mkList === "remind" ? `<label class="inline-f">На дату<input type="date" class="input" id="mkDay" value="${r.day || ""}"></label><button class="btn ghost small" id="mkRmTpl">Текст напоминания</button>`
     : S.mkList === "lost" ? `<label class="inline-f">Не были больше<select class="input sm-sel" id="mkMonths">${[3, 6, 9, 12, 18, 24].map(n => `<option value="${n}" ${n === +f.months ? "selected" : ""}>${n} мес.</option>`).join("")}</select></label>` : "";
   body.innerHTML = `<div class="tab-tools rep-tools"><div class="seg sm" id="mkLists">${MK_LISTS.map(([k, t]) => `<button data-l="${k}" class="${k === S.mkList ? "on" : ""}">${t}</button>`).join("")}</div>${extra}
-      <span class="grow"></span><span class="muted">${r.rows.length ? `Обзвонено ${r.done} из ${r.rows.length}` : ""}</span><button class="icon-btn" id="mkPrint" title="Печать списка">${PRINT_ICON}</button></div>
+      <span class="grow"></span><span class="muted">${r.rows.length ? `Обзвонено ${r.done} из ${r.rows.length}` : ""}</span><button class="icon-btn" title="Скачать в Excel" data-xls="#mkBody table.tbl" data-xls-title="#mkTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="mkPrint" title="Печать списка">${PRINT_ICON}</button></div>
     <div class="pbody">${callTable(r)}</div>
     <div class="muted note-line">${{remind: "Записи на выбранный день, кроме отменённых. Отметка звонка видна всем администраторам.",
       lost: "Пациенты, у которых последний визит был давно и нет будущих записей.",
@@ -98,7 +98,7 @@ async function mkBirthdays(body) {
   const days = S.mkBdDays || 14;
   const r = await api.call_list("birthdays", {days});
   body.innerHTML = `<div class="tab-tools rep-tools"><div class="seg sm" id="mkBd">${[[1, "Сегодня"], [7, "Неделя"], [14, "2 недели"], [31, "Месяц"]].map(([n, t]) => `<button data-d="${n}" class="${n === days ? "on" : ""}">${t}</button>`).join("")}</div>
-      <span class="grow"></span><span class="muted">${r.rows.length} ${plural(r.rows.length, "пациент", "пациента", "пациентов")}</span><button class="icon-btn" id="mkPrint" title="Печать списка">${PRINT_ICON}</button></div>
+      <span class="grow"></span><span class="muted">${r.rows.length} ${plural(r.rows.length, "пациент", "пациента", "пациентов")}</span><button class="icon-btn" title="Скачать в Excel" data-xls="#mkBody table.tbl" data-xls-title="#mkTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="mkPrint" title="Печать списка">${PRINT_ICON}</button></div>
     <div class="pbody">${callTable(r)}</div>
     <div class="muted note-line">Поздравление — хороший повод напомнить о профгигиене или контрольном осмотре.</div>`;
   $$("#mkBd button").forEach(b => b.onclick = () => { S.mkBdDays = +b.dataset.d; loadMarketing(); });
@@ -108,7 +108,7 @@ async function mkBirthdays(body) {
 async function mkSources(body) {
   const r = await api.mk_sources_report(S.period.from, S.period.to);
   const max = Math.max(0, ...r.rows.map(x => x.new)), pMax = Math.max(0, ...r.rows.map(x => x.paid));
-  body.innerHTML = `<div class="tab-tools rep-tools">${periodBar()}<span class="grow"></span><button class="btn ghost" id="mkSrcEdit">Список источников</button><button class="icon-btn" id="mkPrint" title="Печать">${PRINT_ICON}</button></div>
+  body.innerHTML = `<div class="tab-tools rep-tools">${periodBar()}<span class="grow"></span><button class="btn ghost" id="mkSrcEdit">Список источников</button><button class="icon-btn" title="Скачать в Excel" data-xls="#mkBody table.tbl" data-xls-title="#mkTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="mkPrint" title="Печать">${PRINT_ICON}</button></div>
     <div class="stat-row"><div class="stat"><span>Источник указан</span><b>${r.with_source} <small class="muted">из ${r.patients}</small></b></div>
       <div class="stat"><span>Новых пациентов за период</span><b>${r.rows.reduce((a, x) => a + x.new, 0)}</b></div>
       <div class="stat"><span>Оплатили за период</span><b>${money(r.rows.reduce((a, x) => a + x.paid, 0))}</b></div></div>

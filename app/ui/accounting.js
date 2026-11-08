@@ -12,7 +12,7 @@ async function loadAccounting() {
   bindPeriod(body, loadAccounting);
   const pr = $("#accPrint", body); if (pr) pr.onclick = () => printTable($("#accTabs button.on").textContent, "#accBody table.tbl");
 }
-const accTools = (extra = "", period = true) => `<div class="tab-tools rep-tools">${period ? periodBar() : ""}<span class="grow"></span>${extra}<button class="icon-btn" id="accPrint" title="Печать">${PRINT_ICON}</button></div>`;
+const accTools = (extra = "", period = true) => `<div class="tab-tools rep-tools">${period ? periodBar() : ""}<span class="grow"></span>${extra}<button class="icon-btn" title="Скачать в Excel" data-xls="#accBody table.tbl" data-xls-title="#accTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="accPrint" title="Печать">${PRINT_ICON}</button></div>`;
 const monthName = m => { const [y, mm] = m.split("-").map(Number); return ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"][mm - 1] + " " + y; };
 const shiftMonth = (m, n) => { const [y, mm] = m.split("-").map(Number); const d = new Date(y, mm - 1 + n, 1); return iso(d).slice(0, 7); };
 

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Планшет пациента</title>
+<style>
+  :root{--bg:#f4f3f1;--panel:#fff;--ink:#1d1b19;--muted:#77716b;--line:#e2ded9;--accent:#a8483a;--accent-soft:#f6e7e3;--ok:#2f7d4f;--ok-soft:#e5f2ea;--danger:#b3261e}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:17px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+  .wrap{max-width:900px;margin:0 auto;padding:20px 18px 40px;min-height:100%;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+  header b{font-size:19px}
+  header small{color:var(--muted);margin-left:auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:21px;margin:0 0 12px}
+  .muted{color:var(--muted)}
+  input.code{font-size:34px;letter-spacing:.3em;text-align:center;width:250px;padding:12px;border:2px solid var(--line);border-radius:12px}
+  button.big{font:inherit;font-size:19px;font-weight:600;padding:15px 28px;border-radius:12px;border:0;background:var(--accent);color:#fff;min-width:220px}
+  button.big:disabled{opacity:.45}
+  button.ghost{background:transparent;color:var(--accent);border:2px solid var(--accent)}
+  .doc{max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;font-size:15px}
+  .doc table{max-width:100%}
+  .pad{position:relative;height:210px;border:2px dashed var(--line);border-radius:14px;background:#fff;margin:16px 0 8px}
+  .pad canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+  .pad span{position:absolute;left:18px;bottom:12px;color:var(--muted);pointer-events:none}
+  .row{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+  .q{padding:14px 0;border-bottom:1px solid var(--line)}
+  .q p{margin:0 0 10px;font-weight:600}
+  .yn{display:flex;gap:10px}
+  .yn button{flex:1;font:inherit;font-size:18px;padding:12px;border-radius:10px;border:2px solid var(--line);background:#fff;color:var(--ink)}
+  .yn button.on[data-v="1"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+  .yn button.on[data-v="0"]{border-color:var(--ok);background:var(--ok-soft);color:var(--ok);font-weight:700}
+  .q input{width:100%;margin-top:10px;font:inherit;padding:12px;border:2px solid var(--line);border-radius:10px}
+  .q.miss p{color:var(--danger)}
+  .err{color:var(--danger);min-height:1.4em}
+  .done{font-size:64px;color:var(--ok)}
+  .dot{width:12px;height:12px;border-radius:50%;background:var(--ok);display:inline-block;animation:p 1.6s ease-in-out infinite}
+  @keyframes p{50%{opacity:.25}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><b id="brand">Клиника</b><small id="tbName"></small></header>
+  <main id="app" class="center"><span class="dot"></span></main>
+</div>
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const KEY = "dd.tabletKey";
+let key = ""; try { key = localStorage.getItem(KEY) || ""; } catch (e) { key = ""; }
+let shownTask = null, busy = false;
+
+async function call(name, args = []) {
+  const r = await fetch("/tablet/" + name, {method: "POST", headers: {"Content-Type": "application/json", "X-Tablet-Key": key}, body: JSON.stringify(args)});
+  const j = await r.json().catch(() => ({error: "Нет связи с программой клиники"}));
+  if (!r.ok) { const e = new Error(j.error || "Ошибка"); e.tablet = j.tablet; throw e; }
+  return j;
+}
+fetch("/ping").then(r => r.json()).then(j => { $("#brand").textContent = j.name || "Клиника"; }).catch(() => {});
+
+function pairScreen(msg = "") {
+  $("#app").innerHTML = `<h1>Подключение планшета</h1><p class="muted">Попросите администратора открыть в программе<br>Настройки → «Планшет для пациентов» → «Подключить планшет» и введите код.</p>
+    <input class="code" id="code" inputmode="numeric" maxlength="6" autocomplete="off"><div class="err" id="err">${esc(msg)}</div><button class="big" id="go">Подключить</button>`;
+  $("#code").focus();
+  $("#go").onclick = async () => {
+    try { const r = await call("pair", [$("#code").value.replace(/\D/g, "")]); key = r.key; try { localStorage.setItem(KEY, key); } catch (e) { /* private mode */ } waitScreen(); loop(); }
+    catch (e) { $("#err").textContent = e.message; }
+  };
+}
+
+function waitScreen() {
+  shownTask = null;
+  $("#app").className = "center";
+  $("#app").innerHTML = `<span class="dot"></span><h1>Планшет готов</h1><p class="muted">Здесь появится документ на подпись или анкета, когда сотрудник клиники отправит её.</p>`;
+}
+
+function padInit(canvas) {
+  const ctx = canvas.getContext("2d"); let down = false, last = null, empty = true;
+  const fit = () => { const r = canvas.getBoundingClientRect(), k = window.devicePixelRatio || 1; canvas.width = r.width * k; canvas.height = r.height * k; ctx.setTransform(k, 0, 0, k, 0, 0); ctx.lineCap = ctx.lineJoin = "round"; ctx.strokeStyle = "#111"; empty = true; };
+  const pos = e => { const r = canvas.getBoundingClientRect(); return {x: e.clientX - r.left, y: e.clientY - r.top}; };
+  canvas.onpointerdown = e => { down = true; last = pos(e); try { canvas.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ } };
+  canvas.onpointermove = e => { if (!down) return; const p = pos(e); ctx.lineWidth = Math.max(1.6, 3.6 - Math.hypot(p.x - last.x, p.y - last.y) / 10); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; empty = false; };
+  canvas.onpointerup = canvas.onpointercancel = () => { down = false; };
+  requestAnimationFrame(fit); setTimeout(fit, 60);
+  return {empty: () => empty, png: () => canvas.toDataURL("image/png"), clear: fit};
+}
+
+function taskScreen(t) {
+  shownTask = t.id;
+  const app = $("#app"); app.className = "";
+  const isSign = t.kind === "sign";
+  app.innerHTML = `<div class="card"><h2>${esc(t.title)}</h2><p class="muted">Пациент: <b>${esc(t.patient)}</b></p>
+    ${isSign ? `<div class="doc">${t.html}</div><p>Прочитайте документ и распишитесь пальцем в поле ниже.</p>`
+      : t.questions.map(q => `<div class="q" data-k="${esc(q.key)}"><p>${esc(q.q)}</p><div class="yn"><button data-v="1">Да</button><button data-v="0">Нет</button></div>${q.extra ? `<input placeholder="${esc(q.extra)}" hidden>` : ""}</div>`).join("") + `<p>Сведения сообщены мной лично и достоверны. Распишитесь пальцем:</p>`}
+    <div class="pad"><canvas id="pad"></canvas><span>Подпись</span></div>
+    <div class="row"><button class="big ghost" id="clr">Стереть подпись</button><button class="big" id="ok">${isSign ? "Подписать" : "Отправить анкету"}</button></div><div class="err" id="err"></div></div>`;
+  const pad = padInit($("#pad"));
+  const ans = {};
+  app.querySelectorAll(".q").forEach(r => r.querySelectorAll(".yn button").forEach(b => b.onclick = () => {
+    ans[r.dataset.k] = {yes: b.dataset.v === "1", text: ""};
+    r.querySelectorAll(".yn button").forEach(x => x.classList.toggle("on", x === b));
+    const i = r.querySelector("input"); if (i) i.hidden = b.dataset.v !== "1";
+    r.classList.remove("miss");
+  }));
+  $("#clr").onclick = () => pad.clear();
+  $("#ok").onclick = async () => {
+    const err = $("#err"); err.textContent = "";
+    if (!isSign) {
+      const miss = [...app.querySelectorAll(".q")].filter(r => !ans[r.dataset.k]);
+      if (miss.length) { miss.forEach(r => r.classList.add("miss")); miss[0].scrollIntoView({block: "center", behavior: "smooth"}); err.textContent = "Ответьте на все вопросы"; return; }
+      app.querySelectorAll(".q").forEach(r => { const i = r.querySelector("input"); if (i && ans[r.dataset.k].yes) ans[r.dataset.k].text = i.value; });
+    }
+    if (pad.empty()) { err.textContent = "Распишитесь в поле подписи"; return; }
+    $("#ok").disabled = true; busy = true;
+    try {
+      await call("submit", [t.id, {image: pad.png(), answers: isSign ? null : ans}]);
+      app.className = "center"; app.innerHTML = `<div class="done">✓</div><h1>Спасибо!</h1><p class="muted">Верните, пожалуйста, планшет администратору.</p>`;
+      setTimeout(() => { busy = false; waitScreen(); }, 6000);
+    } catch (e) { err.textContent = e.message; $("#ok").disabled = false; busy = false; }
+  };
+}
+
+async function loop() {
+  while (key) {
+    if (!busy) {
+      try {
+        const r = await call("task");
+        $("#tbName").textContent = r.tablet || "";
+        if (r.task && r.task.id !== shownTask) taskScreen(r.task);
+        else if (!r.task && shownTask) waitScreen();
+      } catch (e) {
+        if (e.tablet) { key = ""; try { localStorage.removeItem(KEY); } catch (x) { /* ignore */ } pairScreen(e.message); return; }
+      }
+    }
+    await new Promise(x => setTimeout(x, 2000));
+  }
+}
+if (key) { waitScreen(); loop(); } else pairScreen();
+</script>
+</body>
+</html>

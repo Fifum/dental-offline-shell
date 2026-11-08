@@ -49,6 +49,12 @@ class Api:
         self._perio = Perio(db)
         from files import Files
         self._files = Files(db)
+        from forms import Forms
+        from tablet import Tablets
+        self._forms = Forms(db, self._local)
+        self._tablets = Tablets(db)
+        from taxcert import TaxCerts
+        self._tax = TaxCerts(db)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -215,6 +221,99 @@ class Api:
     def set_visit_status(self, vid, status):
         return self._local.set_visit_status(vid, status)
 
+    # ------------------------------------------------ tax deduction certificate --
+    def taxcert_data(self, patient_id, year):
+        return self._tax.data(patient_id, year)
+
+    def taxcert_issue(self, f):
+        return self._tax.issue(f or {}, self._clinic(), self._local, self._who())
+
+    def taxcert_list(self, year):
+        return self._tax.list(year)
+
+    # ------------------------------------------------------------ Excel export --
+    def export_xlsx(self, title, headers, rows):
+        """A table from the screen → .xlsx (returned as a data URL to save on the computer)."""
+        import base64
+        import xlsx
+        data = xlsx.build(str(title or "Таблица")[:31], headers or [], rows or [])
+        return {"name": xlsx.file_name(title), "url": "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"
+                + base64.b64encode(data).decode()}
+
+    # ------------------------------------------ signatures, questionnaire, tablet --
+    def _clinic(self):
+        return config.load_settings().get("clinic") or {}
+
+    def document_signatures(self, doc_id):
+        return self._forms.signatures(doc_id)
+
+    def document_sign(self, doc_id, signer, image, role="patient"):
+        return self._forms.sign_document(doc_id, signer, image, role, "screen", "", self._who())
+
+    def questionnaire_questions(self):
+        return self._forms.questions()
+
+    def questionnaire_save(self, patient_id, answers, signature):
+        return self._forms.save_questionnaire(patient_id, answers, signature, self._clinic(), "screen", self._who())
+
+    def questionnaire_latest(self, patient_id):
+        return self._forms.latest(patient_id)
+
+    def tablet_code(self, name=""):
+        return self._tablets.new_code(name, self._who())
+
+    def tablets_list(self):
+        return self._tablets.list()
+
+    def tablet_revoke(self, tid):
+        return self._tablets.revoke(tid)
+
+    def tablet_send(self, tid, kind, patient_id, document_id=None):
+        """Send «sign this document» or «fill in the questionnaire» to a paired tablet."""
+        p = self._db.patient(patient_id)
+        if not p:
+            raise ValueError("Пациент не найден")
+        if kind == "sign":
+            d = self._db.one("SELECT id, title, html, patient_id FROM documents WHERE id=?", (document_id,))
+            if not d or d["patient_id"] != patient_id:
+                raise ValueError("Документ не найден")
+            task = {"kind": "sign", "title": d["title"], "patient": p["name"], "html": d["html"], "signer": p["name"],
+                    "document_id": d["id"], "patient_id": patient_id}
+        elif kind == "anketa":
+            task = {"kind": "anketa", "title": "Анкета о состоянии здоровья", "patient": p["name"],
+                    "questions": self._forms.questions(), "patient_id": patient_id}
+        else:
+            raise ValueError("Неизвестное задание для планшета")
+        return self._tablets.send(tid, task, self._who())
+
+    def tablet_status(self, tid, task_id):
+        return self._tablets.status(tid, task_id)
+
+    def tablet_cancel(self, tid, task_id):
+        return self._tablets.cancel(tid, task_id)
+
+    def _tablet_public(self, name, args, key, ip):
+        """Requests from the tablet itself (no employee login): pair, task, submit."""
+        if name == "pair":
+            return self._tablets.pair(args[0] if args else "", ip)
+        tb = self._tablets.tablet_by_key(key, ip)
+        if name == "task":
+            return {"tablet": tb["name"], "task": self._tablets.current(tb["id"])}
+        if name == "submit":
+            task_id, data = (args + [None, None])[:2]
+            t = self._tablets.take(tb["id"], task_id)
+            data = data or {}
+            place = f"планшет «{tb['name']}»"
+            if t["kind"] == "sign":
+                r = self._forms.sign_document(t["document_id"], t["signer"], data.get("image"), "patient", place, ip, "")
+                result = {"signature_id": r["id"]}
+            else:
+                r = self._forms.save_questionnaire(t["patient_id"], data.get("answers"), data.get("image"), self._clinic(), place, "")
+                result = {"document_id": r["document_id"], "alerts": r["alerts"]}
+            self._tablets.done(tb["id"], task_id, result)
+            return {"ok": True}
+        raise ValueError("Неизвестное действие")
+
     # ------------------------------------------------ patient files, X-rays --
     def files_list(self, patient_id):
         return self._files.list(patient_id)
@@ -292,7 +391,11 @@ class Api:
     def _allergies(self, pid, anamnesis=""):
         import allergy
         p = self._db.patient(pid) if pid else None
-        return allergy.patient_allergies((p or {}).get("data") or {}, anamnesis or "")
+        out = allergy.patient_allergies((p or {}).get("data") or {}, anamnesis or "")
+        q = self._forms.allergy_text(pid) if pid else ""  # what the patient wrote in the questionnaire
+        if q and q not in out:
+            out.append(q)
+        return out
 
     def allergy_check(self, patient_id, text, anamnesis=""):
         """Warnings for a treatment / prescription / service list against the patient's allergies."""
@@ -872,6 +975,10 @@ class Api:
             p["teeth_local"] = self._local.teeth_state(pid)
             p["marketing"] = self._mk.patient_info(pid)
             p["files_count"] = self._files.count(pid)
+            p["questionnaire"] = self._forms.latest(pid)
+            signed = self._forms.signed_ids([d["id"] for d in p["documents"]])
+            for d in p["documents"]:
+                d["signed"] = d["id"] in signed
             p["perio_count"] = len(self._perio.list(pid))
         return p
 
@@ -1248,6 +1355,28 @@ class Setup:
         kind = getattr(getattr(webview, "FileDialog", None), "FOLDER", None) or getattr(webview, "FOLDER_DIALOG", 20)
         res = self._window.create_file_dialog(kind)
         return str(res[0]) if res else ""
+
+    def save_file(self, name, data_url):
+        """«Сохранить как…» for an export (Excel). Returns the chosen path or '' when cancelled."""
+        import base64
+        import webview
+        name = str(name or "export.xlsx")
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in (".xlsx", ".csv", ".xml", ".pdf") or not self._window:
+            return ""
+        kind = getattr(getattr(webview, "FileDialog", None), "SAVE", None) or getattr(webview, "SAVE_DIALOG", 30)
+        types = {".xlsx": ("Книга Excel (*.xlsx)",), ".csv": ("CSV (*.csv)",), ".xml": ("XML (*.xml)",), ".pdf": ("PDF (*.pdf)",)}[ext]
+        res = self._window.create_file_dialog(kind, save_filename=os.path.basename(name), file_types=types)
+        path = res[0] if isinstance(res, (list, tuple)) and res else res
+        if not path:
+            return ""
+        path = str(path)
+        if not path.lower().endswith(ext):
+            path += ext
+        payload = str(data_url).split(",", 1)[1] if "," in str(data_url) else str(data_url)
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(payload))
+        return path
 
     def open_url(self, url):
         """Open a WhatsApp / Telegram chat or a phone link in the system (only these kinds of links)."""

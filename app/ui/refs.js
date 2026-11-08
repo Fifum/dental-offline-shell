@@ -2,7 +2,7 @@
 /* Templates (documents, record phrases), price list, clinic requisites */
 const PHRASE_CATS = {complaints: "Жалобы", anamnesis: "Анамнез", objective: "Объективно", treatment: "Лечение", recommendations: "Рекомендации"};
 const CLINIC_FIELDS = [["name", "Название (как в документах)", "ООО «...»"], ["address", "Адрес", ""], ["phone", "Телефон", ""],
-  ["inn", "ИНН", ""], ["ogrn", "ОГРН", ""], ["license", "Лицензия (номер и дата)", "№ ... от ..."], ["director", "Руководитель (в лице...)", "генерального директора ..."]];
+  ["inn", "ИНН", ""], ["kpp", "КПП (для организации)", ""], ["ogrn", "ОГРН", ""], ["license", "Лицензия (номер и дата)", "№ ... от ..."], ["director", "Руководитель (в лице...)", "генерального директора ..."]];
 const PLACEHOLDERS = ["patient.fio", "patient.birth", "patient.phone", "patient.address", "patient.card", "doctor.fio", "doctor.position",
   "clinic.name", "clinic.address", "clinic.inn", "clinic.ogrn", "clinic.license", "clinic.director", "clinic.phone", "today", "visit.date",
   "record.complaints", "record.anamnesis", "record.objective", "record.diagnoses", "record.treatment", "record.recommendations",
