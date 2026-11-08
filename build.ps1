@@ -1,4 +1,4 @@
-﻿# Builds a single self-installing exe into release\.
+﻿# Builds a single self-installing exe into release\<name>-<version>.exe; earlier versions go to release\old\.
 # With app\brand.json present (clinic build) the exe gets the clinic's name, icon and data folder;
 # without it — the neutral "Dental Desk" build from the public repo.
 $ErrorActionPreference = "Stop"
@@ -28,6 +28,13 @@ if (Test-Path app\brand.json) {
   app\main.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
-New-Item -ItemType Directory -Force release | Out-Null
-Copy-Item "dist\$name.exe" "release\$name.exe" -Force
-Write-Host "Готово: release\$name.exe — один файл, сам устанавливается при первом запуске"
+# Every release carries its version in the file name (DentalDesk-2.1.0.exe). The newest one stays in
+# release\, earlier releases (exe and zip packages of other versions) move to release\old\.
+$ver = ([regex]::Match((Get-Content app\config.py -Raw -Encoding UTF8), 'VERSION\s*=\s*"([^"]+)"')).Groups[1].Value
+if (-not $ver) { throw "VERSION not found in app\config.py" }
+New-Item -ItemType Directory -Force release, release\old | Out-Null
+Get-ChildItem release -File | Where-Object { $_.Extension -in ".exe", ".zip" -and -not $_.Name.Contains($ver) } |
+  ForEach-Object { Move-Item $_.FullName (Join-Path "release\old" $_.Name) -Force; Write-Host "old: release\old\$($_.Name)" }
+$out = "release\$name-$ver.exe"
+Copy-Item "dist\$name.exe" $out -Force
+Write-Host "Готово: $out — один файл, сам устанавливается при первом запуске"

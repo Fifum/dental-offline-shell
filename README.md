@@ -169,7 +169,7 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python app\main.py          # desktop window, demo data
 .venv\Scripts\python app\devserver.py     # same UI in a browser at http://127.0.0.1:8765
-powershell -File build.ps1                # release\DentalDesk.exe
+powershell -File build.ps1                # release\DentalDesk-<version>.exe, older builds move to release\old\
 ```
 
 The app starts in demo mode with an invented clinic.
