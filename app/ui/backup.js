@@ -88,3 +88,16 @@ async function openBackupList() {
     } catch (e) { b.disabled = false; toast(errText(e), true); }
   });
 }
+
+async function loadSecuritySettings(force) {
+  const box = $("#securityBody"); if (!box) return;
+  let st;
+  try { st = await api.security_status(!!force); } catch (e) { box.innerHTML = `<div class="warn-line bad">${esc(errText(e))}</div>`; return; }
+  const cls = st.ok ? "ok-t" : st.state === "unknown" ? "muted" : "bad-t";
+  box.innerHTML = `
+    <div class="bk-state"><b class="${cls}">${esc(st.text)}</b> <span class="muted">(диск ${esc(st.drive)})</span></div>
+    ${st.ok ? "" : `<div class="sec-how"><b>Как включить шифрование</b><ol>${st.how.map(x => `<li>${esc(x)}</li>`).join("")}</ol>
+      <p class="hint">Включать нужно на каждом ноутбуке клиники. Шифрование идёт в фоне, работать можно сразу.</p></div>`}
+    <div class="row"><button class="btn ghost small" id="secCheck">Проверить ещё раз</button></div>`;
+  $("#secCheck").onclick = () => loadSecuritySettings(true);
+}

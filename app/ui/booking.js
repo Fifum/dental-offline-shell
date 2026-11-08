@@ -38,6 +38,9 @@ async function openBooking(v = {}) {
       <label class="fl">Услуга / цель визита<input class="input" id="bkTitle" list="bkSvc" value="${esc(v.title || "")}" placeholder="Например: Лечение кариеса"></label>
       <datalist id="bkSvc"></datalist>
       <label class="fl">Комментарий<input class="input" id="bkCom" value="${esc(v.comment || "")}"></label>
+      ${editing ? "" : `<div class="grid3 bk-rep"><label class="fl">Повторять<select class="input" id="bkRep"><option value="">не повторять</option>
+        <option value="week">каждую неделю</option><option value="2weeks">каждые 2 недели</option><option value="4weeks">каждые 4 недели</option><option value="month">каждый месяц</option></select></label>
+        <label class="fl" id="bkRepNL" hidden>Сколько раз всего<input class="input" id="bkRepN" type="number" min="2" max="24" value="4"></label><span class="muted bk-rep-hint" id="bkRepHint"></span></div>`}
       <div class="warn-line" id="bkWarn" hidden></div>
     </div>
     <div class="m-f"><span class="muted">Запись появится в расписании с пометкой «перенести в Dentist Plus»</span>
@@ -73,6 +76,16 @@ async function openBooking(v = {}) {
   ["#bkDoc", "#bkDate", "#bkTime", "#bkDur"].forEach(s => $(s, box).onchange = checkOverlap);
   $("#bkDoc", box).addEventListener("change", () => { const b = docBranch($("#bkDoc", box).value); if (b && $("#bkBr", box)) $("#bkBr", box).value = b; });
   checkOverlap();
+  const rep = $("#bkRep", box);
+  const repHint = () => {
+    const on = !!rep.value; $("#bkRepNL", box).hidden = !on;
+    const n = Math.max(2, Math.min(24, +$("#bkRepN", box).value || 0)), d = $("#bkDate", box).value;
+    if (!on || !d) { $("#bkRepHint", box).textContent = ""; return; }
+    const last = new Date(`${d}T12:00`);
+    if (rep.value === "month") last.setMonth(last.getMonth() + n - 1); else last.setDate(last.getDate() + {week: 7, "2weeks": 14, "4weeks": 28}[rep.value] * (n - 1));
+    $("#bkRepHint", box).textContent = `${n} ${plural(n, "запись", "записи", "записей")}, последняя ${fmtDate(iso(last))}`;
+  };
+  if (rep) { rep.onchange = repHint; $("#bkRepN", box).oninput = repHint; $("#bkDate", box).addEventListener("change", repHint); }
 
   $("#bkSave", box).onclick = async () => {
     try {
@@ -90,12 +103,23 @@ async function openBooking(v = {}) {
       const s = new Date(`${d}T${tm}`); const e = new Date(s.getTime() + (+$("#bkDur", box).value) * 60000);
       const fmt = x => `${iso(x)} ${pad(x.getHours())}:${pad(x.getMinutes())}`;
       const moved = editing && (fmt(s) !== v.start || $("#bkDoc", box).value !== (v.doctor_id || ""));
-      await api.save_visit({id: v.id || null, patient_id: patientId, doctor_id: $("#bkDoc", box).value, branch_id: $("#bkBr", box) ? $("#bkBr", box).value : (v.branch_id || S.branch || ""),
+      const fv = {id: v.id || null, patient_id: patientId, doctor_id: $("#bkDoc", box).value, branch_id: $("#bkBr", box) ? $("#bkBr", box).value : (v.branch_id || S.branch || ""),
         start: fmt(s), end: fmt(e), title: $("#bkTitle", box).value.trim(), comment: $("#bkCom", box).value.trim(), chair: $("#bkChair", box).value.trim(),
         status: v.status && stClass(v.status) !== "st-cancel" ? v.status : "Запланирован",
-        action: editing ? (v.local && v.action === "create" ? "create" : moved ? "move" : "edit") : "create"});
-      closeModal();
-      toast(editing ? "Запись изменена" : "Пациент записан");
+        action: editing ? (v.local && v.action === "create" ? "create" : moved ? "move" : "edit") : "create"};
+      let newId;
+      if (rep && rep.value) {
+        const r = await api.save_visit_series(fv, rep.value, +$("#bkRepN", box).value);
+        newId = r.ids[0];
+        closeModal();
+        toast(`Записано ${r.ids.length} ${plural(r.ids.length, "визит", "визита", "визитов")} ${r.every}` +
+          (r.clashes.length ? `. У врача уже есть записи в это время: ${r.clashes.map(x => fmtDate(x)).join(", ")}` : ""), !!r.clashes.length);
+      } else {
+        newId = await api.save_visit(fv);
+        closeModal();
+        toast(editing ? "Запись изменена" : "Пациент записан");
+      }
+      if (v.onSaved) try { await v.onSaved(newId); } catch (e) { /* the visit itself is saved */ }
       if (d !== S.day && S.view === "schedule") S.day = d;
       afterChange();
     } catch (e) { toast(errText(e), true); }

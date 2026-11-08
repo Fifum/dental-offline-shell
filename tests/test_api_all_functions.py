@@ -39,19 +39,21 @@ d = dbm.DB(); demo.ensure_demo(d, force=True)
 api = Api(d, W())
 today = datetime.date.today().isoformat()
 tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+# the demo clinic does not work on Sundays: schedule checks use the nearest working day
+workday = today if datetime.date.today().weekday() != 6 else tomorrow
 
 # --- status / reference
 t("status", api.status, lambda r: r["counts"]["visits"] > 0 and "pending" in r and "transfer_mode" in r)
 t("reference", api.reference, lambda r: len(r["mkb"]) > 30 and len(r["doctors"]) == 5)
-t("day today", lambda: api.day(today), lambda r: len(r["visits"]) > 10)
-t("day branch", lambda: api.day(today, "1"), lambda r: all(v["branch_id"] in ("1", None) for v in r["visits"]))
+t("day today", lambda: api.day(workday), lambda r: len(r["visits"]) > 10)
+t("day branch", lambda: api.day(workday, "1"), lambda r: all(v["branch_id"] in ("1", None) for v in r["visits"]))
 t("day empty far", lambda: api.day("2030-01-01"), lambda r: r["visits"] == [])
 t("day sunday no crash", lambda: api.day((datetime.date.today() + datetime.timedelta(days=(6 - datetime.date.today().weekday()) % 7)).isoformat()))
 t("month_counts", lambda: api.month_counts(today), lambda r: len(r) > 20)
-v0 = api.day(today)["visits"][0]
+v0 = api.day(workday)["visits"][0]
 t("visit synced", lambda: api.visit(v0["id"]), lambda r: r and r["patient_name"] and "records" in r)
 t("visit missing", lambda: api.visit("nope"), lambda r: r is None)
-t("chair in day", lambda: api.day(today)["visits"][0]["chair"], lambda r: r and r.startswith("Кресло"))
+t("chair in day", lambda: api.day(workday)["visits"][0]["chair"], lambda r: r and r.startswith("Кресло"))
 
 # --- search
 t("search empty", lambda: api.search(""), lambda r: len(r) > 0)
@@ -76,17 +78,17 @@ t("search new patient by phone", lambda: api.search("9001234567"), lambda r: any
 t("local patient card", lambda: api.patient(np["id"]), lambda r: r["local"] == 1 and r["birth"] == "1990-02-03")
 
 # --- visits
-lv = t("save visit new", lambda: api.save_visit({"patient_id": np["id"], "doctor_id": "11", "branch_id": "1", "start": f"{today} 19:00", "end": f"{today} 19:30", "title": "Тест", "comment": "к", "chair": "Кресло 9"}),
+lv = t("save visit new", lambda: api.save_visit({"patient_id": np["id"], "doctor_id": "11", "branch_id": "1", "start": f"{workday} 19:00", "end": f"{workday} 19:30", "title": "Тест", "comment": "к", "chair": "Кресло 9"}),
        lambda r: r.startswith("L-"))
-t("visit appears in day", lambda: api.day(today), lambda r: any(x["id"] == lv and x["chair"] == "Кресло 9" for x in r["visits"]))
+t("visit appears in day", lambda: api.day(workday), lambda r: any(x["id"] == lv and x["chair"] == "Кресло 9" for x in r["visits"]))
 t("edit local visit keeps create", lambda: api.save_visit({"id": lv, "patient_id": np["id"], "doctor_id": "12", "branch_id": "1", "start": f"{tomorrow} 10:00", "end": f"{tomorrow} 10:45", "title": "Тест2", "action": "move"}))
 t("local still create action", lambda: api.visit(lv), lambda r: r["action"] == "create" and r["start"] == f"{tomorrow} 10:00")
-t("move synced visit", lambda: api.save_visit({"id": v0["id"], "patient_id": v0["patient_id"], "doctor_id": v0["doctor_id"], "branch_id": v0["branch_id"], "start": f"{today} 21:00", "end": f"{today} 21:30", "action": "move"}))
+t("move synced visit", lambda: api.save_visit({"id": v0["id"], "patient_id": v0["patient_id"], "doctor_id": v0["doctor_id"], "branch_id": v0["branch_id"], "start": f"{workday} 21:00", "end": f"{workday} 21:30", "action": "move"}))
 ov = api.visit(v0["id"])
 t("synced visit overridden", lambda: ov, lambda r: r["local"] == 1 and r["origin_id"] == v0["id"] and r["start"].endswith("21:00"))
-t("no duplicate synced", lambda: [x for x in api.day(today)["visits"] if x["id"] == v0["id"] or x["origin_id"] == v0["id"]], lambda r: len(r) == 1)
+t("no duplicate synced", lambda: [x for x in api.day(workday)["visits"] if x["id"] == v0["id"] or x["origin_id"] == v0["id"]], lambda r: len(r) == 1)
 t("status on override", lambda: api.set_visit_status(ov["id"], "Пришёл"), lambda r: r == ov["id"])
-t("status on synced (second visit)", lambda: api.set_visit_status(api.day(today)["visits"][3]["id"], "Отменён"), lambda r: r)
+t("status on synced (second visit)", lambda: api.set_visit_status(api.day(workday)["visits"][3]["id"], "Отменён"), lambda r: r)
 t("revert override", lambda: api.revert_visit(ov["id"]))
 t("revert restored", lambda: api.visit(v0["id"]), lambda r: r["local"] == 0)
 t("status of missing visit", lambda: api.set_visit_status("nope", "Пришёл"), lambda r: r is None)

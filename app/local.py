@@ -58,8 +58,8 @@ class Local:
             new = new_id()
             action = f.get("action") or ("edit" if vid else "create")
             c.execute("""INSERT INTO local_visits(id, origin_id, patient_id, doctor_id, branch_id, start, "end", status,
-                         title, comment, chair, action, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                      (new, vid, *fields, action, ts, ts))
+                         title, comment, chair, action, created_at, updated_at, series_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (new, vid, *fields, action, ts, ts, f.get("series_id") or None))
             return new
 
     def set_visit_status(self, vid: str, status: str):
@@ -77,6 +77,58 @@ class Local:
     def revert_visit(self, local_id: str):
         with self.db.tx() as c:
             c.execute("DELETE FROM local_visits WHERE id=?", (local_id,))
+
+    # ---------------------------------------------------- recurring visits
+    REPEAT = {"week": "каждую неделю", "2weeks": "каждые 2 недели", "4weeks": "каждые 4 недели", "month": "каждый месяц"}
+
+    @staticmethod
+    def series_dates(first: str, every: str, count: int) -> list[str]:
+        """'YYYY-MM-DD' dates of a series starting on `first` (the first one included)."""
+        import calendar
+        from datetime import date, timedelta
+        d0 = date.fromisoformat(first[:10])
+        out = []
+        for i in range(count):
+            if every == "month":
+                y, m = divmod(d0.month - 1 + i, 12)
+                y, m = d0.year + y, m + 1
+                out.append(date(y, m, min(d0.day, calendar.monthrange(y, m)[1])).isoformat())
+            else:
+                step = {"week": 7, "2weeks": 14, "4weeks": 28}[every]
+                out.append((d0 + timedelta(days=step * i)).isoformat())
+        return out
+
+    def save_series(self, f: dict, every: str, count) -> dict:
+        """Book the same visit `count` times (2–24). Returns the new ids and the dates."""
+        if every not in self.REPEAT:
+            raise ValueError("Выберите, как часто повторять визит")
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            raise ValueError("Укажите, сколько раз повторить") from None
+        if not 2 <= count <= 24:
+            raise ValueError("Повторить можно от 2 до 24 раз")
+        if f.get("id"):
+            raise ValueError("Повтор можно задать только для новой записи")
+        sid = "S-" + uuid.uuid4().hex[:10]
+        t0, t1 = f["start"][11:16], f["end"][11:16]
+        ids, dates = [], self.series_dates(f["start"], every, count)
+        for d in dates:
+            ids.append(self.save_visit({**f, "id": None, "start": f"{d} {t0}", "end": f"{d} {t1}", "series_id": sid,
+                                        "action": "create"}))
+        return {"series_id": sid, "ids": ids, "dates": dates, "every": self.REPEAT[every]}
+
+    def series(self, sid: str) -> list[dict]:
+        return self.db.q("""SELECT id, start, "end", status FROM local_visits WHERE series_id=? ORDER BY start""", (sid,))
+
+    def cancel_series(self, sid: str, from_start: str) -> int:
+        """Cancel the visits of a series from `from_start` on (that one included); finished ones stay."""
+        n = 0
+        for v in self.series(sid):
+            if v["start"] >= from_start and not str(v["status"] or "").lower().startswith(("отмен", "заверш", "пришёл", "пришел", "не приш")):
+                self.set_visit_status(v["id"], "Отменён")
+                n += 1
+        return n
 
     # ============================================================= records
     def save_record(self, f: dict):

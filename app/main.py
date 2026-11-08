@@ -41,6 +41,8 @@ class Api:
         self._shifts = Shifts(db)
         self._acc = Accounting(db)
         self._mk = Marketing(db)
+        from waitlist import Waitlist
+        self._wait = Waitlist(db)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -206,6 +208,55 @@ class Api:
 
     def set_visit_status(self, vid, status):
         return self._local.set_visit_status(vid, status)
+
+    # ---------------------------------------------- recurring visits, waiting list, reminders --
+    def save_visit_series(self, f, every, count):
+        """Book a visit several times; returns the dates and the ones that overlap another patient."""
+        import conflicts
+        r = self._local.save_series(f, every, count)
+        clashes = []
+        for vid in r["ids"]:
+            v = self._db.visit(vid)
+            if v and conflicts.find(v, self._db.day(v["start"][:10]), ignore=(v["id"],)):
+                clashes.append(v["start"])
+        return {**r, "clashes": clashes}
+
+    def visit_series(self, sid):
+        return self._local.series(sid)
+
+    def cancel_series(self, sid, from_start):
+        return self._local.cancel_series(sid, from_start)
+
+    def waitlist(self, status="wait", doctor_id=None, day=None):
+        return self._wait.list(status, doctor_id or None, day or None)
+
+    def waitlist_count(self, doctor_id=None, day=None):
+        return self._wait.count(doctor_id or None, day or None)
+
+    def waitlist_save(self, f):
+        return self._wait.save(f or {}, self._who())
+
+    def waitlist_done(self, wid, visit_id=None):
+        return self._wait.set_status(wid, "booked", visit_id)
+
+    def waitlist_remove(self, wid):
+        return self._wait.set_status(wid, "removed")
+
+    REMINDER_DEFAULT = ("Здравствуйте, {имя}! Напоминаем о записи в клинику {клиника} {дата} в {время}, врач {врач}. "
+                        "Если планы изменились, пожалуйста, сообщите нам{телефон клиники}.")
+
+    def reminder_template(self):
+        s = config.load_settings()
+        c = s.get("clinic") or {}
+        return {"text": s.get("reminder_template") or self.REMINDER_DEFAULT, "default": self.REMINDER_DEFAULT,
+                "clinic": {"name": c.get("name") or "", "phone": c.get("phone") or "", "address": c.get("address") or ""}}
+
+    def reminder_template_save(self, text):
+        text = str(text or "").strip()
+        if len(text) > 1000:
+            raise ValueError("Текст слишком длинный (до 1000 знаков)")
+        config.save_settings({"reminder_template": text})
+        return self.reminder_template()
 
     def revert_visit(self, local_id):
         self._local.revert_visit(local_id)
@@ -662,6 +713,10 @@ class Api:
         import backup
         return backup.save_settings(f or {})
 
+    def security_status(self, force=False):
+        import security
+        return security.disk_status(bool(force))
+
     def backup_restore(self, where, name):
         import backup
         from auth import _current
@@ -1096,6 +1151,15 @@ class Setup:
         kind = getattr(getattr(webview, "FileDialog", None), "FOLDER", None) or getattr(webview, "FOLDER_DIALOG", 20)
         res = self._window.create_file_dialog(kind)
         return str(res[0]) if res else ""
+
+    def open_url(self, url):
+        """Open a WhatsApp / Telegram chat or a phone link in the system (only these kinds of links)."""
+        import webbrowser
+        url = str(url or "")
+        if not url.startswith(("https://wa.me/", "https://t.me/", "tel:")):
+            return False
+        webbrowser.open(url)
+        return True
 
     def restart_app(self):
         """Start a fresh copy of the program (it waits for this one to close) and close this one."""

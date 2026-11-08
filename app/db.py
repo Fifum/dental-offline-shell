@@ -87,6 +87,8 @@ class DB:
         lv = {r[1] for r in self.conn.execute("PRAGMA table_info(local_visits)")}
         if "push_force" not in lv:  # «send anyway» despite a double booking in Dentist Plus
             self.conn.execute("ALTER TABLE local_visits ADD COLUMN push_force INTEGER DEFAULT 0")
+        if "series_id" not in lv:  # recurring visits: every visit of one series shares the id
+            self.conn.execute("ALTER TABLE local_visits ADD COLUMN series_id TEXT")
         self.conn.commit()
 
     @contextmanager
@@ -263,18 +265,20 @@ class DB:
                         AND COALESCE(lv.remote_id, lv.origin_id) IN (SELECT id FROM visits))"""
     ALL_VISITS = f"""
         SELECT v.id, NULL AS origin_id, v.patient_id, v.doctor_id, v.branch_id, v.start, v."end",
-               v.status, v.title, '' AS comment, 0 AS local, NULL AS action, v.data AS data, NULL AS chair_local
+               v.status, v.title, '' AS comment, 0 AS local, NULL AS action, v.data AS data, NULL AS chair_local,
+               NULL AS series_id
         FROM visits v WHERE v.id NOT IN (SELECT lv.origin_id FROM local_visits lv WHERE lv.origin_id IS NOT NULL AND {LV_ACTIVE})
         UNION ALL
         SELECT lv.id, lv.origin_id, lv.patient_id, lv.doctor_id, lv.branch_id, lv.start, lv."end",
                lv.status, lv.title, lv.comment, 1 AS local, lv.action,
-               (SELECT data FROM visits o WHERE o.id = lv.origin_id) AS data, lv.chair AS chair_local
+               (SELECT data FROM visits o WHERE o.id = lv.origin_id) AS data, lv.chair AS chair_local,
+               lv.series_id
         FROM local_visits lv WHERE {LV_ACTIVE}"""
     CHAIR = """COALESCE(NULLIF(a.chair_local,''), json_extract(a.data,'$.chair.title'), json_extract(a.data,'$.chair.name'),
                json_extract(a.data,'$.chair_name'), json_extract(a.data,'$.chair_title'), json_extract(a.data,'$.chair'),
                json_extract(a.data,'$.cabinet'), json_extract(a.data,'$.room'))"""
     VISIT_COLS = """a.id, a.origin_id, a.patient_id, a.doctor_id, a.branch_id, a.start, a."end", a.status, a.title,
-                    a.comment, a.local, a.action, """ + CHAIR + """ AS chair, p.name AS patient_name, p.phone AS patient_phone,
+                    a.comment, a.local, a.action, a.series_id, """ + CHAIR + """ AS chair, p.name AS patient_name, p.phone AS patient_phone,
                     p.birth AS patient_birth, d.name AS doctor_name, b.name AS branch_name"""
     VISIT_JOINS = """LEFT JOIN patients p ON p.id = a.patient_id LEFT JOIN doctors d ON d.id = a.doctor_id
                      LEFT JOIN branches b ON b.id = a.branch_id"""

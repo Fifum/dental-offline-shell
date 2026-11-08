@@ -34,7 +34,9 @@ working without it.
 
 | | |
 |---|---|
-| **Calendar** | Day / 2 days / week, by doctor or by chair, doctor filter, click an empty slot to book, overlap warnings, print the day |
+| **Calendar** | Day / 2 days / week, by doctor or by chair, doctor filter, click an empty slot to book, drag a visit to another time, doctor or day, recurring visits (weekly to monthly, cancel the rest of a series), overlap warnings, print the day |
+| **Waiting list** | Patients who want an earlier or a specific time, with a count above the calendar and a hint when a visit of that doctor is cancelled |
+| **Visit reminders** | One click opens WhatsApp with a ready reminder text (name, date, time, doctor, clinic) or copies it for Telegram; editable template; sent reminders are marked for the whole team |
 | **Patient card** | Visits, dental formula (permanent and milk teeth), treatments, payments, treatment plans, documents, notes, full history feed |
 | **Medical record** | Complaints, anamnesis, examination, treatment with one-click phrase templates, ICD-10 dental codes, interactive tooth chart |
 | **Documents** | 11 templates (consents, contract, plan, act, extract, form 043/u, receipt) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
@@ -48,6 +50,7 @@ working without it.
 | **Clinic network** | One computer is the server; reception, surgeries and the director's PC connect over the local network and find it automatically |
 | **Staff accounts** | Self-registration, director approval, password sign-in, roles (director, administrator, doctor, assistant) with per-person permission overrides, action journal |
 | **Backups** | A verified, compressed copy of the whole database at start, every 2 hours and on exit, made with SQLite's online backup while the app keeps working; rotation (everything for 2 days, one per day for 30); an optional second folder on a flash drive; one-click restore that first saves the current data and then restarts the app |
+| **Disk encryption check** | Settings show whether the drive with the database is protected by BitLocker / Device Encryption (read without admin rights) and how to turn it on |
 
 | Patient card | Dental formula |
 |---|---|
@@ -131,6 +134,8 @@ Dentist Plus partner API
 | `app/fiscal.py` | Fiscal receipts: receipt rules, test mode, ATOL web server and Shtrih-M drivers, shifts, returns |
 | `app/stock.py` | Materials as a ledger of moves, receipts, write-offs, stock counts, service norms, equipment register |
 | `app/backup.py` | Automatic backups: online copy, integrity check, rotation, second folder, restore with a safety copy |
+| `app/security.py` | Disk encryption state (BitLocker / Device Encryption) without admin rights |
+| `app/waitlist.py` | Waiting list: entries, filters by doctor and day, booked / removed |
 | `app/config.py` | Paths, settings, DPAPI password protection, clinic branding |
 | `app/sync.py` | Background worker: online check, pull, purge, push, offline mode |
 | `app/api_client.py` | Partner API client: auth, paging in any shape, retries, writes |
@@ -197,6 +202,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_double_booking.py        # 18 checks: overlap rules, calendar flags, blocked sending
 .venv\Scripts\python tests\test_dictation.py             # 25 checks: parsing rules, AI layer vs a fake server, real recognition if a model is present
 .venv\Scripts\python tests\test_backup.py               # 56 checks: copy and check, rotation, missing flash drive, restore round-trip
+.venv\Scripts\python tests\test_schedule_tools.py       # 64 checks: drag-move, recurring visits, waiting list, reminders, disk encryption
 ```
 
 Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,

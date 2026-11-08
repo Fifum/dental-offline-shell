@@ -3,19 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
-<script src="theme.js?v=2.1.0"></script>
+<script src="theme.js?v=2.2.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=2.1.0">
-<link rel="stylesheet" href="styles-v2.css?v=2.1.0">
-<link rel="stylesheet" href="styles-brand.css?v=2.1.0">
-<link rel="stylesheet" href="styles-auth.css?v=2.1.0">
-<link rel="stylesheet" href="styles-motion.css?v=2.1.0">
-<link rel="stylesheet" href="styles-stock.css?v=2.1.0">
-<link rel="stylesheet" href="styles-office.css?v=2.1.0">
-<link rel="stylesheet" href="styles-theme.css?v=2.1.0">
-<link rel="stylesheet" href="styles-teeth.css?v=2.1.0">
-<link rel="stylesheet" href="styles-voice.css?v=2.1.0">
-<link rel="stylesheet" href="styles-responsive.css?v=2.1.0">
+<link rel="stylesheet" href="styles.css?v=2.2.0">
+<link rel="stylesheet" href="styles-v2.css?v=2.2.0">
+<link rel="stylesheet" href="styles-brand.css?v=2.2.0">
+<link rel="stylesheet" href="styles-auth.css?v=2.2.0">
+<link rel="stylesheet" href="styles-motion.css?v=2.2.0">
+<link rel="stylesheet" href="styles-stock.css?v=2.2.0">
+<link rel="stylesheet" href="styles-office.css?v=2.2.0">
+<link rel="stylesheet" href="styles-theme.css?v=2.2.0">
+<link rel="stylesheet" href="styles-teeth.css?v=2.2.0">
+<link rel="stylesheet" href="styles-voice.css?v=2.2.0">
+<link rel="stylesheet" href="styles-responsive.css?v=2.2.0">
 </head>
 <body>
 <div class="app">
@@ -77,6 +77,7 @@
         </div>
         <button class="pill-btn" id="todayBtn">Сегодня</button>
         <button class="icon-btn" id="printBtn" title="Распечатать расписание"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button>
+        <button class="pill-btn wait-btn" id="waitBtn" data-perm-any="schedule_view,schedule_edit" title="Лист ожидания: кто хочет записаться, если освободится время"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span class="wb-l">Ожидание</span><i class="badge sm" id="waitBadge" hidden></i></button>
         <button class="btn" id="newVisitBtn" data-perm="schedule_edit"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M12 9.5v7M8.5 13h7"/></svg>Новый визит</button>
       </header>
       <div class="cal-sub"><h1 id="dayTitle">Расписание</h1><span class="muted" id="daySub"></span></div>
@@ -216,6 +217,12 @@
           <div id="backupBody">…</div>
         </div>
 
+        <div class="panel" id="securityPanel">
+          <h3>Защита данных</h3>
+          <p class="hint">В программе медицинские данные пациентов. Если ноутбук потеряют или украдут, без шифрования диска базу можно прочитать на другом компьютере.</p>
+          <div id="securityBody">…</div>
+        </div>
+
         <div class="panel">
           <h3>Сеть клиники</h3>
           <p class="hint">Этот компьютер — сервер: здесь хранится база. На других компьютерах установите программу, выберите «Подключиться к серверу» — она найдёт сервер сама. Если не нашла, введите один из адресов ниже.</p>
@@ -325,24 +332,26 @@
   <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
   <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=2.1.0"></script>
-<script src="booking.js?v=2.1.0"></script>
-<script src="record.js?v=2.1.0"></script>
-<script src="docs.js?v=2.1.0"></script>
-<script src="billing.js?v=2.1.0"></script>
-<script src="journal.js?v=2.1.0"></script>
-<script src="refs.js?v=2.1.0"></script>
-<script src="tpl-editor.js?v=2.1.0"></script>
-<script src="staff.js?v=2.1.0"></script>
-<script src="stock.js?v=2.1.0"></script>
-<script src="fiscal.js?v=2.1.0"></script>
-<script src="backup.js?v=2.1.0"></script>
-<script src="reports.js?v=2.1.0"></script>
-<script src="accounting.js?v=2.1.0"></script>
-<script src="marketing.js?v=2.1.0"></script>
-<script src="shifts.js?v=2.1.0"></script>
-<script src="dictate.js?v=2.1.0"></script>
-<script src="motion.js?v=2.1.0"></script>
-<script src="responsive.js?v=2.1.0"></script>
+<script src="app.js?v=2.2.0"></script>
+<script src="booking.js?v=2.2.0"></script>
+<script src="calendar-dnd.js?v=2.2.0"></script>
+<script src="waitlist.js?v=2.2.0"></script>
+<script src="record.js?v=2.2.0"></script>
+<script src="docs.js?v=2.2.0"></script>
+<script src="billing.js?v=2.2.0"></script>
+<script src="journal.js?v=2.2.0"></script>
+<script src="refs.js?v=2.2.0"></script>
+<script src="tpl-editor.js?v=2.2.0"></script>
+<script src="staff.js?v=2.2.0"></script>
+<script src="stock.js?v=2.2.0"></script>
+<script src="fiscal.js?v=2.2.0"></script>
+<script src="backup.js?v=2.2.0"></script>
+<script src="reports.js?v=2.2.0"></script>
+<script src="accounting.js?v=2.2.0"></script>
+<script src="marketing.js?v=2.2.0"></script>
+<script src="shifts.js?v=2.2.0"></script>
+<script src="dictate.js?v=2.2.0"></script>
+<script src="motion.js?v=2.2.0"></script>
+<script src="responsive.js?v=2.2.0"></script>
 </body>
 </html>

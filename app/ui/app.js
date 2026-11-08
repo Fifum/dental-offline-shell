@@ -255,6 +255,7 @@ async function loadDay() {
   $("#grid").hidden = empty || S.mode !== "grid";
   $("#list").hidden = empty || S.mode !== "list";
   if (!empty) S.mode === "grid" ? renderGrid(res) : renderList(v);
+  if (typeof refreshWaitBadge === "function") refreshWaitBadge();
 }
 function fillBranches(branches) {
   const sel = $("#branchSel");
@@ -365,6 +366,7 @@ function renderGrid(res) {
   }
   grid.innerHTML = html;
   $$(".ev", grid).forEach(el => el.onclick = e => { e.stopPropagation(); openVisit(el.dataset.id); });
+  if (typeof enableDragMove === "function") enableDragMove(grid);
   const slot = +S.settings.slot_min || 15;
   const minuteAt = (col, e) => { const y = e.clientY - col.getBoundingClientRect().top; return Math.floor((+col.dataset.top + y / PX) / slot) * slot; };
   if (can("schedule_edit")) $$(".g-col", grid).forEach(col => {
@@ -469,6 +471,7 @@ async function openVisit(id) {
       ${kvRow("Врач", v.doctor_name)}${kvRow("Филиал", v.branch_name)}${kvRow("Телефон пациента", v.patient_phone)}${kvRow("Услуга / комментарий", v.title)}${kvRow("Комментарий", v.comment)}
     </dl>${Object.keys(raw).length ? `<div class="raw">${rawTree(raw, 0, ["id", "patient_id", "doctor_id", "branch_id", "start", "end", "status", "title"])}</div>` : ""}</div>
     ${v.conflict_text ? `<div class="conflict-note"><b>Двойная запись.</b> ${esc(v.conflict_text[0].toUpperCase() + v.conflict_text.slice(1))}. Перенесите одну из записей или уточните у пациентов.</div>` : ""}
+    ${v.series_id ? `<div class="series-note" id="dwSeries">Повторяющийся визит…</div>` : ""}
     ${v.local ? `<div class="local-note">Изменено в этой программе: <b>${esc({create: "новая запись", edit: "изменение", move: "перенос", cancel: "отмена", status: "смена статуса"}[v.action] || "изменение")}</b>. Нужно перенести в Dentist Plus.
        ${v.origin_id ? `<button class="linkbtn" id="dwRevert">Вернуть как в Dentist Plus</button>` : ""}</div>` : ""}
     <div class="dw-f">
@@ -493,7 +496,22 @@ async function openVisit(id) {
   $$("[data-st]", dw).forEach(b => b.onclick = async () => {
     if (b.dataset.st === "Отменён" && !(await ask("Отменить запись?", {danger: true, ok: "Отменить запись", cancel: "Не отменять", text: `${v.patient_name || "Пациент"}, ${fmtDT(v.start)}`}))) return;
     await api.set_visit_status(v.id, b.dataset.st); toast(`Статус: ${b.dataset.st}`); closeDrawer(); afterChange();
+    if (["Отменён", "Не пришёл"].includes(b.dataset.st) && typeof waitlistHint === "function") waitlistHint(v);
   });
+  if (v.series_id) api.visit_series(v.series_id).then(list => {
+    const el = $("#dwSeries", dw); if (!el) return;
+    const i = list.findIndex(x => x.id === v.id), later = list.filter(x => x.start > v.start && stClass(x.status) !== "st-cancel");
+    el.innerHTML = `Повторяющийся визит: <b>${i + 1} из ${list.length}</b>${later.length ? ` · дальше: ${later.slice(0, 4).map(x => fmtDT(x.start).slice(0, 5)).join(", ")}${later.length > 4 ? "…" : ""}` : ""}
+      ${can("schedule_edit") && stClass(v.status) !== "st-cancel" ? `<button class="linkbtn" id="dwSerCancel">Отменить этот и следующие</button>` : ""}`;
+    const b = $("#dwSerCancel", dw);
+    if (b) b.onclick = async () => {
+      if (!(await ask("Отменить этот и все следующие визиты серии?", {danger: true, ok: "Отменить", cancel: "Не отменять",
+        text: `${v.patient_name || "Пациент"}: будет отменено ${later.length + 1} ${plural(later.length + 1, "визит", "визита", "визитов")}, начиная с ${fmtDT(v.start)}.`}))) return;
+      const n = await api.cancel_series(v.series_id, v.start);
+      toast(`Отменено визитов: ${n}`); closeDrawer(); afterChange();
+      if (typeof waitlistHint === "function") waitlistHint(v);
+    };
+  }).catch(() => {});
   const de = $("#dwEdit", dw); if (de) de.onclick = () => { closeDrawer(); openBooking(v); };
   const rv = $("#dwRevert", dw); if (rv) rv.onclick = async () => { if (await ask("Вернуть запись как в Dentist Plus?", {icon: "warn", ok: "Вернуть", text: "Изменения, сделанные в программе, будут убраны."})) { await api.revert_visit(v.id); closeDrawer(); afterChange(); } };
   if (v.patient_id) {
@@ -914,6 +932,7 @@ async function loadSettings() {
   loadFiscalSettings();
   loadVoiceSettings();
   if (typeof loadBackupSettings === "function") loadBackupSettings();
+  if (typeof loadSecuritySettings === "function") loadSecuritySettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
       : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.";

@@ -101,3 +101,29 @@
 /* backups (Settings → «Резервные копии») */
 .bk-state{line-height:1.7;margin:4px 0 10px}
 .bk-dir{display:flex;gap:8px;align-items:center}.bk-dir .input{flex:1;min-width:0}
+
+.sec-how{background:var(--panel2,transparent);border:1px solid var(--line);border-radius:9px;padding:10px 14px;margin:6px 0 10px}
+.sec-how ol{margin:6px 0 4px;padding-left:20px;line-height:1.55}.sec-how li+li{margin-top:4px}
+
+/* calendar: drag a visit to move it */
+.ev.can-drag{cursor:grab}
+body.dnd-on,body.dnd-on .ev{cursor:grabbing!important;user-select:none}
+body.dnd-on .slot-hover{display:none!important}
+.ev.drag-src{opacity:.35}
+.ev.drag-ghost{pointer-events:none;z-index:6;opacity:.96;transition:top .06s linear;box-shadow:0 10px 26px rgba(0,0,0,.28),inset 0 0 0 2px var(--dc,var(--accent))}
+@media (prefers-reduced-motion:reduce){.ev.drag-ghost{transition:none}}
+/* waiting list, recurring visits */
+.wait-btn{position:relative}
+.wait-btn .badge.sm{position:absolute;top:-6px;right:-6px;margin:0;font-style:normal;font-size:10px;padding:0 5px;min-width:17px;line-height:17px;border-radius:9px;color:#fff;text-align:center}
+.wl-list{margin:10px 0 6px}
+.wl-add{border:1px solid var(--line);border-radius:9px;padding:8px 12px;margin-top:10px}
+.wl-add summary{cursor:pointer;font-weight:600;padding:2px 0}
+.wl-add[open] summary{margin-bottom:8px}
+.wl-add .pat-pick{position:relative;margin-bottom:6px}
+.series-note{margin:0 20px 10px;padding:9px 12px;border-radius:9px;background:var(--accent-soft);color:var(--accent-ink);font-size:13px;line-height:1.5}
+.series-note .linkbtn{margin-left:6px}
+.bk-rep{align-items:end}
+.bk-rep-hint{align-self:center;font-size:12.5px}
+/* visit reminders via messengers */
+.rm-prev{margin-top:8px;padding:10px 12px;border-radius:9px;background:var(--ok-soft);color:var(--ink,inherit);line-height:1.5}
+.rm-prev small{display:block;margin-bottom:3px}

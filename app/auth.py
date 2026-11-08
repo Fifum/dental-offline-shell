@@ -93,6 +93,10 @@ METHOD_PERMS = {
     "invoice": ("billing", "payments"), "save_invoice": "billing", "delete_invoice": "billing",
     "plan_to_invoice": "billing", "set_plan_status": "billing",
     "add_payment": "payments", "delete_payment": "payments", "cash_day": "cash_report",
+    "save_visit_series": "schedule_edit", "visit_series": ("schedule_view", "schedule_edit"), "cancel_series": "schedule_edit",
+    "waitlist": ("schedule_view", "schedule_edit"), "waitlist_count": ("schedule_view", "schedule_edit"),
+    "waitlist_save": "schedule_edit", "waitlist_done": "schedule_edit", "waitlist_remove": "schedule_edit",
+    "reminder_template": ("marketing", "schedule_edit"), "reminder_template_save": "marketing",
     "journal": "transfer", "mark_transferred": "transfer", "retry_push": "transfer", "force_push": "transfer", "sync_now": ANY_USER,
     "write_map_default": "settings", "get_settings": "settings", "save_settings": "settings",
     "test_connection": "settings", "diagnostics": "settings", "open_data_dir": "settings",
@@ -100,7 +104,7 @@ METHOD_PERMS = {
     "network_info": "settings", "save_clinic": "refs",
     # backups (restore: directors only, checked again in Api.backup_restore)
     "backup_status": "settings", "backup_now": "settings", "backup_list": "settings",
-    "backup_settings_save": "settings", "backup_restore": "settings",
+    "backup_settings_save": "settings", "backup_restore": "settings", "security_status": "settings",
     # dictation and AI
     "speech_status": ("medcard_edit", "settings"), "dictate": "medcard_edit", "parse_dictation": "medcard_edit",
     "speech_download": "settings", "speech_use": "settings", "ai_settings_save": "settings", "ai_test": "settings",
@@ -139,6 +143,9 @@ METHOD_PERMS = {
 # Changes worth keeping in the action journal, with a human label.
 AUDITED = {
     "save_visit": "Запись на приём", "set_visit_status": "Статус приёма", "revert_visit": "Отмена изменения записи",
+    "save_visit_series": "Повторяющиеся записи", "cancel_series": "Отмена серии записей",
+    "waitlist_save": "Лист ожидания", "waitlist_done": "Запись из листа ожидания", "waitlist_remove": "Удаление из листа ожидания",
+    "reminder_template_save": "Текст напоминания о визите",
     "create_patient": "Новый пациент", "add_note": "Примечание", "delete_note": "Удаление примечания",
     "save_record": "Лечение в медкарте", "delete_record": "Удаление лечения",
     "save_template": "Шаблон", "delete_template": "Удаление шаблона", "reset_template": "Сброс шаблона",
