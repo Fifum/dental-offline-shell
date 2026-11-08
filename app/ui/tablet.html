@@ -91,6 +91,7 @@ function padInit(canvas) {
 
 function taskScreen(t) {
   shownTask = t.id;
+  if (t.kind === "qr") { const app = $("#app"); app.className = "center"; app.innerHTML = `<h1>${esc(t.title)}</h1>${t.patient ? `<p class="muted">${esc(t.patient)}</p>` : ""}<img alt="QR-код СБП" src="${t.qr}" style="width:min(70vw,420px);background:#fff;border-radius:16px;padding:12px"><div style="font-size:40px;font-weight:700">${Number(t.amount || 0).toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2})} ₽</div><p class="muted">${esc(t.label || "Наведите камеру телефона на QR-код и оплатите в приложении банка")}</p>`; return; }
   const app = $("#app"); app.className = "";
   const isSign = t.kind === "sign";
   app.innerHTML = `<div class="card"><h2>${esc(t.title)}</h2><p class="muted">Пациент: <b>${esc(t.patient)}</b></p>

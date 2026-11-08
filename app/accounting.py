@@ -53,6 +53,8 @@ class Accounting:
     def __init__(self, db):
         self.db = db
         db.conn.executescript(SCHEMA)
+        if "minus_lab" not in {r[1] for r in db.conn.execute("PRAGMA table_info(salary_schemes)")}:
+            db.conn.execute("ALTER TABLE salary_schemes ADD COLUMN minus_lab INTEGER DEFAULT 0")
         db.conn.commit()
 
     # ------------------------------------------------------------ expenses --
@@ -113,7 +115,8 @@ class Accounting:
         sch = {r["person"]: r for r in self.db.q("SELECT * FROM salary_schemes")}
         return [{**p, "percent": (sch.get(p["key"]) or {}).get("percent") or 0, "fixed": (sch.get(p["key"]) or {}).get("fixed") or 0,
                  "base": (sch.get(p["key"]) or {}).get("base") or "paid",
-                 "minus_materials": bool((sch.get(p["key"]) or {}).get("minus_materials"))} for p in people(self.db)]
+                 "minus_materials": bool((sch.get(p["key"]) or {}).get("minus_materials")),
+                 "minus_lab": bool((sch.get(p["key"]) or {}).get("minus_lab"))} for p in people(self.db)]
 
     def save_scheme(self, f):
         key = str(f.get("person") or "")
@@ -126,11 +129,19 @@ class Accounting:
             raise ValueError("Оклад не может быть отрицательным")
         base = f.get("base") if f.get("base") in BASES else "paid"
         with self.db.tx() as c:
-            c.execute("""INSERT INTO salary_schemes(person, percent, fixed, base, minus_materials, updated_at) VALUES(?,?,?,?,?,?)
+            c.execute("""INSERT INTO salary_schemes(person, percent, fixed, base, minus_materials, minus_lab, updated_at) VALUES(?,?,?,?,?,?,?)
                          ON CONFLICT(person) DO UPDATE SET percent=excluded.percent, fixed=excluded.fixed, base=excluded.base,
-                         minus_materials=excluded.minus_materials, updated_at=excluded.updated_at""",
-                      (key, pct, fixed, base, 1 if f.get("minus_materials") else 0, _now()))
+                         minus_materials=excluded.minus_materials, minus_lab=excluded.minus_lab, updated_at=excluded.updated_at""",
+                      (key, pct, fixed, base, 1 if f.get("minus_materials") else 0, 1 if f.get("minus_lab") else 0, _now()))
         return True
+
+    def _lab_cost(self, doctor_id, a, b):
+        """Lab orders of the doctor created in the month: their price is the clinic's cost."""
+        try:
+            return round(self.db.one("""SELECT COALESCE(SUM(price),0) AS s FROM lab_orders WHERE doctor_id=? AND status<>'cancelled'
+                                        AND created_at >= ? AND created_at < ?""", (str(doctor_id), a, b))["s"], 2)
+        except Exception:  # noqa: BLE001  (no lab table yet)
+            return 0.0
 
     def _materials_cost(self, invoice_ids):
         if not invoice_ids:
@@ -148,7 +159,7 @@ class Accounting:
         mon, a, b = _month_range(month)
         out = []
         for s in self.schemes():
-            billed = paid = materials = 0.0
+            billed = paid = materials = lab = 0.0
             if s["kind"] == "doctor":
                 inv = self.db.q("""SELECT id, total FROM invoices WHERE doctor_id=? AND COALESCE(kind,'invoice')='invoice'
                                    AND created_at >= ? AND created_at < ?""", (str(s["id"]), a, b))
@@ -158,14 +169,16 @@ class Accounting:
                                          (str(s["id"]), a, b))["s"], 2)
                 if s["minus_materials"]:
                     materials = self._materials_cost([i["id"] for i in inv])
-            base_sum = max(0.0, (paid if s["base"] == "paid" else billed) - materials)
+                if s.get("minus_lab"):
+                    lab = self._lab_cost(s["id"], a, b)
+            base_sum = max(0.0, (paid if s["base"] == "paid" else billed) - materials - lab)
             by_percent = round(base_sum * s["percent"] / 100, 2)
             earned = round(by_percent + s["fixed"], 2)
             paid_out = round(self.db.one("SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE category=? AND person=? AND period=?",
                                          (SALARY, s["key"], mon))["s"], 2)
             if not earned and not paid_out and not s["percent"] and not s["fixed"]:
                 continue
-            out.append({**s, "billed": billed, "paid": paid, "materials": materials, "base_sum": round(base_sum, 2),
+            out.append({**s, "billed": billed, "paid": paid, "materials": materials, "lab": lab, "base_sum": round(base_sum, 2),
                         "by_percent": by_percent, "earned": earned, "paid_out": paid_out, "due": round(earned - paid_out, 2)})
         unset = [s for s in self.schemes() if not s["percent"] and not s["fixed"]]
         return {"month": mon, "rows": out, "unset": unset,
@@ -183,7 +196,8 @@ class Accounting:
     def summary(self, date_from=None, date_to=None):
         """Income (patients' payments) minus expenses, by month inside the period."""
         a, b = _period(date_from, date_to)
-        pays = self.db.q("SELECT substr(created_at,1,7) AS m, SUM(amount) AS s FROM payments WHERE created_at >= ? AND created_at < ? GROUP BY m",
+        pays = self.db.q("""SELECT substr(created_at,1,7) AS m, SUM(amount) AS s FROM payments WHERE created_at >= ? AND created_at < ?
+                            AND method<>'Бонусы' GROUP BY m""",  # bonuses are a discount, not income
                          (a, b))
         exps = self.db.q("SELECT substr(date,1,7) AS m, SUM(amount) AS s FROM expenses WHERE date >= ? AND date < ? GROUP BY m", (a, b))
         billed = self.db.one("""SELECT COALESCE(SUM(total),0) AS s FROM invoices WHERE COALESCE(kind,'invoice')='invoice'

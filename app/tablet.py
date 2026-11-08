@@ -143,7 +143,7 @@ class Tablets:
             if not t or t["state"] not in ("waiting", "opened") or t["expires"] < time.time():
                 return None
             t["state"] = "opened"
-            return {k: t[k] for k in ("id", "kind", "title", "patient", "html", "questions", "signer") if k in t}
+            return {k: t[k] for k in ("id", "kind", "title", "patient", "html", "questions", "signer", "qr", "amount", "label") if k in t}
 
     def take(self, tid, task_id) -> dict:
         with self._lock:

@@ -53,7 +53,11 @@
 /* periodontal chart */
 .pr-modal{width:min(1320px,97vw)!important;max-width:none!important}
 .pr-wrap{overflow-x:auto}
-.pr-voice{display:flex;flex-direction:column;justify-content:flex-end;gap:4px}
+.pr-head{display:grid;grid-template-columns:minmax(150px,190px) minmax(200px,320px) auto 1fr;gap:12px;align-items:end;margin-bottom:6px}
+.pr-voice .btn{height:36px;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.pr-voice .btn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.pr-hint{min-height:36px;display:flex;align-items:center;line-height:1.35}
+@media (max-width:900px){.pr-head{grid-template-columns:1fr 1fr}.pr-hint{grid-column:1/-1;min-height:0}}
 .pr-voice .rec-on{box-shadow:inset 0 0 0 2px var(--danger);color:var(--danger)}
 .pr-tbl{border-collapse:collapse;margin:8px 0;min-width:1080px;width:100%}
 .pr-tbl.lower{margin-top:14px}
@@ -95,3 +99,21 @@
 .q-row .q-x{grid-column:1/-1}
 .q-row.q-miss .q-q{color:var(--danger);font-weight:600}
 .q-yn button.on[data-v="1"]{background:var(--danger-soft);color:var(--danger)}
+/* lab orders, certificates, bonuses, SBP */
+.pay-extra:empty{display:none}
+.pay-x{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:13px}
+.pay-x .input{flex:1;min-width:180px}
+.sbp-show{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+.sbp-show img{width:min(60vw,340px);background:#fff;border-radius:14px;padding:10px}
+.sbp-sum{font-size:32px;font-weight:700}
+.sbp-set{display:flex;gap:16px;align-items:flex-start;margin:6px 0}
+.sbp-set img{width:140px;background:#fff;border-radius:10px;padding:6px;border:1px solid var(--line)}
+.sbp-set>div{display:flex;flex-direction:column;gap:8px;flex:1}
+.cash-loyal{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0;font-size:13px}
+.ph-loyal{display:contents}
+.fam-disc{display:block;margin-top:4px;font-size:12px}
+.lab-pay{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:10px 16px;justify-content:flex-end;gap:12px}
+.lab-pat{font-size:15px;margin-bottom:10px}
+.plan-lab .pay.lnk{cursor:pointer}
+.plan-lab .pay.lnk:hover{background:var(--hover)}
+.fm-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}

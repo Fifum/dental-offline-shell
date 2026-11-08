@@ -49,6 +49,9 @@ working without it.
 | **Tax deduction certificate** | Certificate of paid medical services for the tax office: year totals from payments, payer other than the patient, numbering per year, saved to the card, yearly register |
 | **Excel export** | Report, accounting, call-list and sterilization tables saved as .xlsx with numbers kept as numbers (built without extra libraries) |
 | **Money** | Invoices from the price list with per-line discounts, partial payments, staged treatment plans billed step by step, daily cash report |
+| **Dental lab orders** | Work orders with teeth, shade, fitting and due dates, statuses and the lab's price; overdue highlighted, printable order form, paying a lab records an expense, lab cost can be subtracted from a doctor's pay, orders visible in treatment plans |
+| **Certificates, bonuses, families** | Gift certificates sold at the cash desk and redeemed by code with a remaining balance; bonus points as a percent of money payments with a cap per invoice; families share bonuses and get a discount offered in every invoice; deleting a payment gives everything back |
+| **SBP and terminal** | The clinic's static SBP QR code with the amount on screen or on the patient tablet; an optional terminal operation number on card payments; the day's cash counts real money only |
 | **Transfer to Dentist Plus** | A checklist of everything created offline — or automatic sending of new patients and appointments |
 | **Dictation** | The doctor dictates the visit; speech is recognized on the laptop (Whisper, no internet), split into record fields, ICD-10 codes and tooth states by offline rules, optionally tidied by any OpenAI-compatible model with the patient's name and phone removed |
 | **Double bookings** | Overlaps between laptops that worked offline are flagged in the calendar and the transfer list, and are not sent to Dentist Plus until resolved |
@@ -153,6 +156,8 @@ Dentist Plus partner API
 | `app/tablet.py` | Patient tablet: pairing codes, device keys, tasks, throttling |
 | `app/taxcert.py` | Tax deduction certificates and their register |
 | `app/xlsx.py` | Minimal .xlsx writer |
+| `app/lab.py` | Dental lab orders, labs, paying labs |
+| `app/loyalty.py` | Gift certificates, bonus points, families |
 | `app/config.py` | Paths, settings, DPAPI password protection, clinic branding |
 | `app/sync.py` | Background worker: online check, pull, purge, push, offline mode |
 | `app/api_client.py` | Partner API client: auth, paging in any shape, retries, writes |
@@ -222,6 +227,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_schedule_tools.py       # 64 checks: drag-move, recurring visits, waiting list, reminders, disk encryption
 .venv\Scripts\python tests\test_medcard_tools.py        # 105 checks: allergy rules, sterilization, periodontal chart and voice, files, DICOM, visiograph folder
 .venv\Scripts\python tests\test_documents_tools.py      # 92 checks: signatures, questionnaire, tablet over HTTP, tax certificate, Excel
+.venv\Scripts\python tests\test_money_tools.py          # 107 checks: lab orders and payroll, certificates, bonuses, families, SBP, fiscal rules
 ```
 
 Cover booking, moving and cancelling, medical records, documents, invoices and partial payments,

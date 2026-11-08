@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 
 # Clinic branding lives in app/brand.json (not in the public repo). Without it the app is
 # a neutral "Dental Desk"; the clinic's build ships its own name, mark and data folder.

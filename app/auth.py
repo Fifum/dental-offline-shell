@@ -49,6 +49,7 @@ PERMS = [
     ("stock_edit", "Склад: приход, списание, инвентаризация"),
     ("equipment", "Оборудование: учёт, обслуживание, списание"),
     ("sterilization", "Журнал стерилизации"),
+    ("lab", "Лаборатория: заказ-наряды"),
     ("settings", "Настройки и подключение к Dentist Plus"),
     ("staff", "Сотрудники, права и журнал действий"),
 ]
@@ -59,10 +60,10 @@ ROLES = {
     "admin": {"title": "Администратор", "perms": [
         "schedule_view", "schedule_edit", "patients_view", "patients_edit", "medcard_view", "docs",
         "billing", "payments", "cash_report", "fiscal", "transfer", "refs", "stock_view", "stock_edit",
-        "marketing", "shifts_edit", "sterilization"]},
+        "marketing", "shifts_edit", "sterilization", "lab"]},
     "doctor": {"title": "Врач", "perms": [
         "schedule_view", "patients_view", "patients_edit", "medcard_view", "medcard_edit", "docs", "billing", "stock_view",
-        "sterilization"]},
+        "sterilization", "lab"]},
     "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view", "sterilization"]},
     "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment"]},
 }
@@ -98,7 +99,13 @@ METHOD_PERMS = {
     "allergy_check": ("medcard_view", "medcard_edit", "billing", "patients_view"),
     "steril_options": ("sterilization", "equipment"), "steril_list": ("sterilization", "equipment"),
     "steril_save": "sterilization", "steril_delete": "sterilization",
-    "taxcert_data": ("payments", "cash_report", "docs"), "taxcert_issue": ("payments", "docs"), "taxcert_list": ("payments", "cash_report", "docs"),
+    "lab_options": ("lab", "billing", "accounting"), "lab_orders": ("lab", "billing", "accounting"), "lab_order": ("lab", "billing", "accounting"),
+    "lab_summary": ("lab", "billing", "accounting"), "lab_save": "lab", "lab_status": "lab", "labs_save": "lab", "lab_pay": "accounting",
+    "loyalty_settings": ("settings", "payments", "billing"), "loyalty_settings_save": "settings",
+    "cert_sell": "payments", "cert_info": ("payments", "billing"), "cert_list": ("payments", "cash_report", "accounting"), "cert_cancel": "accounting",
+    "bonus_info": ("payments", "billing", "patients_view"), "bonus_adjust": "settings",
+    "family_save": ("patients_edit", "payments"), "family_leave": ("patients_edit", "payments"),
+    "sbp_settings": ("payments", "settings"), "sbp_settings_save": "settings", "sbp_to_tablet": "payments",    "taxcert_data": ("payments", "cash_report", "docs"), "taxcert_issue": ("payments", "docs"), "taxcert_list": ("payments", "cash_report", "docs"),
     "export_xlsx": ANY_USER,
     "document_signatures": ("docs", "medcard_view", "patients_view"), "document_sign": "docs",
     "questionnaire_questions": ("patients_view", "docs", "patients_edit"), "questionnaire_save": ("patients_edit", "docs", "medcard_edit"),
@@ -162,7 +169,10 @@ METHOD_PERMS = {
 # Changes worth keeping in the action journal, with a human label.
 AUDITED = {
     "save_visit": "Запись на приём", "set_visit_status": "Статус приёма", "revert_visit": "Отмена изменения записи",
-    "taxcert_issue": "Справка для налогового вычета", "export_xlsx": "Выгрузка таблицы в Excel",
+    "lab_save": "Заказ-наряд в лабораторию", "lab_status": "Статус заказ-наряда", "labs_save": "Лаборатория в справочнике",
+    "lab_pay": "Оплата лаборатории", "loyalty_settings_save": "Настройки бонусов и сертификатов", "cert_sell": "Продажа сертификата",
+    "cert_cancel": "Аннулирование сертификата", "bonus_adjust": "Ручное изменение бонусов", "family_save": "Семья пациента",
+    "family_leave": "Выход из семьи", "sbp_settings_save": "QR-код СБП",    "taxcert_issue": "Справка для налогового вычета", "export_xlsx": "Выгрузка таблицы в Excel",
     "document_sign": "Подпись документа", "questionnaire_save": "Анкета о здоровье",
     "tablet_code": "Код подключения планшета", "tablet_revoke": "Отключение планшета", "tablet_send": "Задание на планшет",
     "file_add": "Файл в карте пациента", "file_update": "Описание файла пациента", "file_delete": "Удаление файла пациента",

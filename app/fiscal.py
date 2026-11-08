@@ -41,7 +41,8 @@ TAXATION = {"osn": "ОСН", "usnIncome": "УСН доход", "usnIncomeOutcome
 TAXES = {"none": "Без НДС", "vat0": "НДС 0%", "vat5": "НДС 5%", "vat7": "НДС 7%", "vat10": "НДС 10%", "vat22": "НДС 22%"}
 DRIVERS = {"emulator": "Тестовый режим (без кассы)", "atol": "АТОЛ (веб-сервер драйвера ДТО 10)", "shtrih": "Штрих-М (драйвер ККТ)"}
 # how the clinic's payment methods map to receipt payment types; None = no receipt needed
-PAY_TYPE = {"Наличные": "cash", "Карта": "electronically", "Перевод": "electronically", "Безнал (организация)": None}
+PAY_TYPE = {"Наличные": "cash", "Карта": "electronically", "Перевод": "electronically", "СБП": "electronically",
+            "Безнал (организация)": None, "Сертификат": "prepaid", "Бонусы": None}
 METHOD_TITLES = {"fullPayment": "Полный расчёт", "partialPayment": "Частичный расчёт", "creditPayment": "Оплата кредита",
                  "advance": "Аванс"}
 
@@ -279,6 +280,7 @@ class ShtrihDriver:
         d.Summ2 = sums.get("electronically", 0)
         for i in range(3, 17):
             setattr(d, f"Summ{i}", 0)
+        d.Summ14 = sums.get("prepaid", 0)  # offset of an advance (gift certificate)
         d.TaxType = self.TAXATION.get(r["taxation"], 2)
         d.StringForPrinting = ""
         self._run(d, "FNCloseCheckEx")
@@ -415,7 +417,8 @@ class Fiscal:
             raise FiscalError("Чек по этой оплате уже пробит")
         body = self.build_for_payment(payment_id)
         if body is None:
-            return {"status": "not_required", "message": "Оплата от организации по безналу — чек не нужен"}
+            m = (self.db.one("SELECT method FROM payments WHERE id=?", (payment_id,)) or {}).get("method")
+            return {"status": "not_required", "message": "Оплата бонусами — отдельный чек не нужен" if m == "Бонусы" else "Оплата от организации по безналу — чек не нужен"}
         rid = "C-" + uuid.uuid4().hex[:10]
         with self.db.tx() as c:
             c.execute("DELETE FROM receipts WHERE payment_id=? AND kind='sell' AND status='error'", (payment_id,))

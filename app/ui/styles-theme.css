@@ -3,6 +3,11 @@
    printing and «save as PDF» always use the light values, so documents stay black on white.
    theme.js sets <html data-theme="light|dark"> before the first paint. */
 
+/* native controls (checkboxes, sliders, selects, date pickers, scrollbars) follow color-scheme; without it the
+   light theme inherits Windows' dark mode through <meta name="color-scheme" content="light dark"> */
+:root[data-theme="light"]{color-scheme:light}
+input[type="checkbox"],input[type="radio"],input[type="range"],progress{accent-color:var(--accent)}
+
 @media screen{
   :root[data-theme="dark"]{
     color-scheme:dark;

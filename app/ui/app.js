@@ -151,9 +151,10 @@ const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", set
 /* ---------------------------------------------------------------- views */
 const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: "cash_report",
   journal: "transfer", refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment", "sterilization"],
-  reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"]};
+  reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"],
+  lab: ["lab", "accounting"]};
 const canView = v => { const p = VIEW_PERM[v]; return !p || (Array.isArray(p) ? canAny(...p) : can(p)); };
-function firstView() { return ["schedule", "patients", "cash", "reports", "accounting", "marketing", "shifts", "stock", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
+function firstView() { return ["schedule", "patients", "cash", "reports", "accounting", "marketing", "shifts", "lab", "stock", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
 function show(view) {
   if (!canView(view)) view = firstView();
   S.view = view;
@@ -172,6 +173,7 @@ function show(view) {
   if (view === "accounting") loadAccounting();
   if (view === "marketing") loadMarketing();
   if (view === "shifts") loadShifts();
+  if (view === "lab" && typeof loadLab === "function") loadLab();
 }
 $$(".nav").forEach(b => b.onclick = () => show(b.dataset.view));
 
@@ -205,6 +207,7 @@ async function refreshStatus() {
   } else { dot.classList.add("on"); title.textContent = "Онлайн"; sub.textContent = `Обновлено ${ago(st.last_ok)}`; }
   $("#syncBtn").disabled = !!st.running;
   const sb = $("#stockBadge"); if (sb) { sb.hidden = !st.stock_low; sb.textContent = st.stock_low || ""; }
+  const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
   if (st.backup_warn && st.backup_warn !== S.backupWarned) { S.backupWarned = st.backup_warn; toast(st.backup_warn + " Настройки → «Резервные копии».", true); }
   for (const id of ["#pendingBadge", "#pendingBadge2"]) { const pb = $(id); pb.hidden = !st.pending; pb.textContent = st.pending || ""; }
   // data changed -> refresh current screen
@@ -750,6 +753,7 @@ function renderPatient(tab) {
     else if (/chronic|хрон|disease|заболев/i.test(k)) alerts.push(`<span class="alert w">${esc(label(k))}: ${esc(s)}</span>`);
   }
   if (p.questionnaire) for (const a of p.questionnaire.alerts) alerts.push(`<span class="alert${/^Аллерг/.test(a) ? "" : " w"}">Анкета: ${esc(a)}</span>`);
+  if (p.local) alerts.push(`<span class="alert w">Пациент создан в программе — завести в Dentist Plus</span>`);
   let teeth = findTeeth(d);
   const tmap = {...(teeth ? teeth.map : {}), ...(p.teeth_local || {})};
   const extras = p.extras.filter(e => !isEmpty(e.data));
@@ -770,12 +774,13 @@ function renderPatient(tab) {
   const ctx = {patient_id: p.id, doctor_id: (p.visits.find(v => v.start.slice(0, 10) === iso(new Date())) || p.visits[0] || {}).doctor_id};
 
   const tabs = [["visits", "Визиты", p.visits.length], ["formula", "Формула"], ["records", "Лечения", p.records.length],
-    ["files", "Снимки и файлы", p.files_count || ""], ["perio", "Пародонтограмма", p.perio_count || ""], ["payments", "Оплаты", invs.length],
+    ["files", "Снимки и файлы", p.files_count || ""], ["perio", "Пародонтограмма", p.perio_count || ""], ["lab", "Лаборатория", p.lab_count || ""], ["payments", "Оплаты", invs.length],
     ["plans", "План лечения", plans.length], ["docs", "Документы", p.documents.length], ["notes", "Примечания", p.notes.length],
     ...extras.map(e => ["x:" + e.kind, label(e.kind), Array.isArray(e.data) ? e.data.length : ""]),
     ["personal", "Персональные данные"], ["feed", "Живая лента"]].filter(([k]) => {
     if (k === "formula" || k === "records" || k === "perio") return can("medcard_view");
     if (k === "files") return canAny("medcard_view", "patients_view");
+    if (k === "lab") return canAny("lab", "billing", "accounting");
     if (k === "payments" || k === "plans") return canAny("billing", "payments");
     if (k === "docs") return can("docs");
     return true;
@@ -849,8 +854,8 @@ function renderPatient(tab) {
     ev.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
     body = `<div class="feed">${ev.map(e => `<div class="fe"><div class="fe-at">${fmtDT(e.at)}</div><div class="fe-card fe-${e.icon}"><div class="fe-h"><b>${esc(e.title)}</b>${e.st ? `<span class="pill ${stClass(e.st)}">${esc(e.st)}</span>` : ""}</div>${
       e.lines.filter(Boolean).map(l => `<div>${esc(l)}</div>`).join("")}</div></div>`).join("") || `<div class="empty"><b>Событий нет</b></div>`}</div>`;
-  } else if (tab === "files" || tab === "perio") {
-    body = `<div id="${tab === "files" ? "pfBody" : "perioBody"}"><div class="scan"><i></i>Загрузка…</div></div>`;
+  } else if (tab === "files" || tab === "perio" || tab === "lab") {
+    body = `<div id="${{files: "pfBody", perio: "perioBody", lab: "labPBody"}[tab]}"><div class="scan"><i></i>Загрузка…</div></div>`;
   } else if (tab.startsWith("x:")) {
     const e = extras.find(x => "x:" + x.kind === tab);
     const arr = Array.isArray(e.data) ? e.data : [e.data];
@@ -889,6 +894,8 @@ function renderPatient(tab) {
 
   if (tab === "files" && typeof loadPatientFiles === "function") loadPatientFiles(p);
   if (tab === "perio" && typeof loadPerio === "function") loadPerio(p);
+  if (tab === "lab" && typeof loadPatientLab === "function") loadPatientLab(p);
+  if (typeof loyaltyHeader === "function") loyaltyHeader(p);
   // hide what this employee may not do
   const hideIf = (sel, cond) => $$(sel, $("#patientCard")).forEach(el => { if (cond) el.remove(); });
   hideIf("#aAnketa, #aContract, #ddPrint, #tAddDoc, [data-add=doc], .ia[data-act=doc], [data-receipt]", !can("docs"));
@@ -953,6 +960,7 @@ async function loadSettings() {
   if (typeof loadSecuritySettings === "function") loadSecuritySettings();
   if (typeof loadFilesSettings === "function") loadFilesSettings();
   if (typeof loadTabletSettings === "function") loadTabletSettings();
+  if (typeof loadMoneySettings === "function") loadMoneySettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
       : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.";

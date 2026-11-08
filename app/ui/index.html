@@ -3,20 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
-<script src="theme.js?v=2.4.0"></script>
+<script src="theme.js?v=2.5.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=2.4.0">
-<link rel="stylesheet" href="styles-v2.css?v=2.4.0">
-<link rel="stylesheet" href="styles-brand.css?v=2.4.0">
-<link rel="stylesheet" href="styles-auth.css?v=2.4.0">
-<link rel="stylesheet" href="styles-motion.css?v=2.4.0">
-<link rel="stylesheet" href="styles-stock.css?v=2.4.0">
-<link rel="stylesheet" href="styles-office.css?v=2.4.0">
-<link rel="stylesheet" href="styles-medcard.css?v=2.4.0">
-<link rel="stylesheet" href="styles-theme.css?v=2.4.0">
-<link rel="stylesheet" href="styles-teeth.css?v=2.4.0">
-<link rel="stylesheet" href="styles-voice.css?v=2.4.0">
-<link rel="stylesheet" href="styles-responsive.css?v=2.4.0">
+<link rel="stylesheet" href="styles.css?v=2.5.0">
+<link rel="stylesheet" href="styles-v2.css?v=2.5.0">
+<link rel="stylesheet" href="styles-brand.css?v=2.5.0">
+<link rel="stylesheet" href="styles-auth.css?v=2.5.0">
+<link rel="stylesheet" href="styles-motion.css?v=2.5.0">
+<link rel="stylesheet" href="styles-stock.css?v=2.5.0">
+<link rel="stylesheet" href="styles-office.css?v=2.5.0">
+<link rel="stylesheet" href="styles-medcard.css?v=2.5.0">
+<link rel="stylesheet" href="styles-theme.css?v=2.5.0">
+<link rel="stylesheet" href="styles-teeth.css?v=2.5.0">
+<link rel="stylesheet" href="styles-voice.css?v=2.5.0">
+<link rel="stylesheet" href="styles-responsive.css?v=2.5.0">
 </head>
 <body>
 <div class="app">
@@ -31,6 +31,7 @@
       <button data-view="accounting" data-perm="accounting" class="nav" title="Бухгалтерия: расходы, зарплата, прибыль"><svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15.5h.01M12 15.5h.01M15.5 15.5h.01"/></svg><span>Бухгалтерия</span></button>
       <button data-view="marketing" data-perm="marketing" class="nav" title="Маркетинг: обзвон, дни рождения, источники"><svg viewBox="0 0 24 24"><path d="M4 10v4h3l8 4.5v-13L7 10z"/><path d="M18.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M7 14l1.2 5h2.3l-1-4.6"/></svg><span>Маркетинг</span></button>
       <button data-view="journal" data-perm="transfer" class="nav" title="Перенос в Dentist Plus"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg><span>Перенос</span><i class="badge" id="pendingBadge" hidden></i></button>
+      <button data-view="lab" data-perm-any="lab,accounting" class="nav" title="Зуботехническая лаборатория: заказ-наряды"><svg viewBox="0 0 24 24"><path d="M8 3.5h8M10 3.5v5.2L5 18a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-5-9.3V3.5"/><path d="M7.5 14.5h9"/></svg><span>Лаборатория</span><i class="badge" id="labBadge" hidden></i></button>
       <button data-view="stock" data-perm-any="stock_view,stock_edit,equipment,sterilization" class="nav" title="Склад и оборудование"><svg viewBox="0 0 24 24"><path d="M3.5 8.5 12 4l8.5 4.5v11h-17z"/><path d="M7.5 19.5v-6h9v6M7.5 16.5h9"/></svg><span>Склад</span><i class="badge" id="stockBadge" hidden></i></button>
       <button data-view="refs" data-perm="refs" class="nav" title="Шаблоны, услуги, реквизиты"><svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5V8H19M9 12.5h7M9 16h5"/></svg><span>Шаблоны</span></button>
       <button data-view="staff" data-perm="staff" class="nav" title="Сотрудники и права"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.8-3.4 3.3-5.3 6.5-5.3s5.7 1.9 6.5 5.3"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 14.2c2.6.2 4.3 1.9 5 4.8"/></svg><span>Сотрудники</span><i class="badge" id="staffBadge" hidden></i></button>
@@ -161,6 +162,14 @@
       <div class="card-scroll" id="shBody"></div>
     </section>
 
+    <!-- ===================== LAB ===================== -->
+    <section class="view" id="view-lab" hidden>
+      <header class="top">
+        <div class="title-block"><h1>Лаборатория</h1><span class="muted">Заказ-наряды: работы, сроки, примерки, оплата лаборатории</span></div>
+      </header>
+      <div class="card-scroll" id="labBody"></div>
+    </section>
+
     <!-- ===================== JOURNAL ===================== -->
     <section class="view" id="view-journal" hidden>
       <header class="top">
@@ -228,6 +237,12 @@
           <h3>Снимки и файлы пациентов</h3>
           <p class="hint">Укажите папку, куда программа визиографа или датчика сохраняет снимки. Новые снимки появятся в карте пациента по кнопке «Из визиографа».</p>
           <div id="filesBody">…</div>
+        </div>
+
+        <div class="panel" id="loyalPanel">
+          <h3>Бонусы, сертификаты и СБП</h3>
+          <p class="hint">Бонусы пациентам с каждой оплаты, срок подарочных сертификатов и QR-код для оплаты по СБП.</p>
+          <div id="loyalBody">…</div>
         </div>
 
         <div class="panel" id="tabletPanel">
@@ -345,31 +360,33 @@
   <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
   <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=2.4.0"></script>
-<script src="booking.js?v=2.4.0"></script>
-<script src="calendar-dnd.js?v=2.4.0"></script>
-<script src="waitlist.js?v=2.4.0"></script>
-<script src="steril.js?v=2.4.0"></script>
-<script src="files.js?v=2.4.0"></script>
-<script src="perio.js?v=2.4.0"></script>
-<script src="sign.js?v=2.4.0"></script>
-<script src="taxcert.js?v=2.4.0"></script>
-<script src="record.js?v=2.4.0"></script>
-<script src="docs.js?v=2.4.0"></script>
-<script src="billing.js?v=2.4.0"></script>
-<script src="journal.js?v=2.4.0"></script>
-<script src="refs.js?v=2.4.0"></script>
-<script src="tpl-editor.js?v=2.4.0"></script>
-<script src="staff.js?v=2.4.0"></script>
-<script src="stock.js?v=2.4.0"></script>
-<script src="fiscal.js?v=2.4.0"></script>
-<script src="backup.js?v=2.4.0"></script>
-<script src="reports.js?v=2.4.0"></script>
-<script src="accounting.js?v=2.4.0"></script>
-<script src="marketing.js?v=2.4.0"></script>
-<script src="shifts.js?v=2.4.0"></script>
-<script src="dictate.js?v=2.4.0"></script>
-<script src="motion.js?v=2.4.0"></script>
-<script src="responsive.js?v=2.4.0"></script>
+<script src="app.js?v=2.5.0"></script>
+<script src="booking.js?v=2.5.0"></script>
+<script src="calendar-dnd.js?v=2.5.0"></script>
+<script src="waitlist.js?v=2.5.0"></script>
+<script src="steril.js?v=2.5.0"></script>
+<script src="files.js?v=2.5.0"></script>
+<script src="perio.js?v=2.5.0"></script>
+<script src="sign.js?v=2.5.0"></script>
+<script src="taxcert.js?v=2.5.0"></script>
+<script src="lab.js?v=2.5.0"></script>
+<script src="money.js?v=2.5.0"></script>
+<script src="record.js?v=2.5.0"></script>
+<script src="docs.js?v=2.5.0"></script>
+<script src="billing.js?v=2.5.0"></script>
+<script src="journal.js?v=2.5.0"></script>
+<script src="refs.js?v=2.5.0"></script>
+<script src="tpl-editor.js?v=2.5.0"></script>
+<script src="staff.js?v=2.5.0"></script>
+<script src="stock.js?v=2.5.0"></script>
+<script src="fiscal.js?v=2.5.0"></script>
+<script src="backup.js?v=2.5.0"></script>
+<script src="reports.js?v=2.5.0"></script>
+<script src="accounting.js?v=2.5.0"></script>
+<script src="marketing.js?v=2.5.0"></script>
+<script src="shifts.js?v=2.5.0"></script>
+<script src="dictate.js?v=2.5.0"></script>
+<script src="motion.js?v=2.5.0"></script>
+<script src="responsive.js?v=2.5.0"></script>
 </body>
 </html>

@@ -55,6 +55,10 @@ class Api:
         self._tablets = Tablets(db)
         from taxcert import TaxCerts
         self._tax = TaxCerts(db)
+        from lab import Lab
+        from loyalty import Loyalty
+        self._lab = Lab(db)
+        self._loyal = Loyalty(db)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -573,9 +577,28 @@ class Api:
         return True
 
     def add_payment(self, p):
+        import loyalty
+        method = p.get("method") or "Наличные"
         try:
+            amount = round(float(p.get("amount") or 0), 2)
+            inv = self._db.one("SELECT patient_id FROM invoices WHERE id=?", (p.get("invoice_id"),)) if p.get("invoice_id") else None
+            patient = inv["patient_id"] if inv else p.get("patient_id")
+            if method == loyalty.CERT:  # check before the payment exists: nothing to undo on a refusal
+                self._loyal.check_redeem(p.get("cert_code"), amount)
+            elif method == loyalty.BONUS:
+                self._loyal.check_spend(patient, p.get("invoice_id"), amount)
+            if method == loyalty.CERT:
+                p = {**p, "comment": (f"сертификат {loyalty.norm_code(p.get('cert_code'))} " + str(p.get("comment") or "")).strip()}
             pid = self._local.add_payment(p)
         except ValueError as e:
+            return {"ok": False, "message": str(e)}
+        pay = self._db.one("SELECT * FROM payments WHERE id=?", (pid,))
+        try:
+            if method == loyalty.CERT:
+                self._loyal.redeem(p.get("cert_code"), amount, pid)
+            self._loyal.on_payment(pay, self._who())
+        except ValueError as e:  # e.g. the certificate was used up a second ago on another computer
+            self._local.delete_payment(pid)
             return {"ok": False, "message": str(e)}
         out = {"ok": True, "id": pid}
         import fiscal
@@ -590,8 +613,92 @@ class Api:
     def delete_payment(self, pay_id):
         if self._fiscal.payment_has_receipt(pay_id):
             raise ValueError("По этой оплате пробит чек. Сначала оформите чек возврата (раздел «Касса»), затем удалите оплату.")
+        self._loyal.on_payment_deleted(pay_id)
         self._local.delete_payment(pay_id)
         return True
+
+    # ---------------------------------------------------------------- lab --
+    def lab_options(self):
+        import lab
+        return {"labs": self._lab.labs(), "works": lab.WORKS, "shades": lab.SHADES, "statuses": lab.STATUSES}
+
+    def lab_orders(self, status="open", lab_id=None, patient_id=None, doctor_id=None):
+        return self._lab.orders(status, lab_id or None, patient_id or None, doctor_id or None)
+
+    def lab_order(self, oid):
+        return self._lab.order(oid)
+
+    def lab_save(self, f):
+        return self._lab.save(f or {}, self._who())
+
+    def lab_status(self, oid, status):
+        return self._lab.set_status(oid, status)
+
+    def lab_pay(self, oids, method="Безналичный перевод"):
+        return self._lab.mark_paid(oids, self._acc, method, self._who())
+
+    def labs_save(self, f):
+        return self._lab.save_lab(f or {})
+
+    def lab_summary(self):
+        return self._lab.summary()
+
+    # ------------------------------------------------------------ loyalty --
+    def loyalty_settings(self):
+        import loyalty
+        return loyalty.settings()
+
+    def loyalty_settings_save(self, f):
+        import loyalty
+        return loyalty.save_settings(f or {})
+
+    def cert_sell(self, f):
+        return self._loyal.sell(f or {}, self._who())
+
+    def cert_info(self, code):
+        return self._loyal.certificate(code)
+
+    def cert_list(self, status="active"):
+        return self._loyal.certificates(status)
+
+    def cert_cancel(self, code):
+        return self._loyal.cancel_certificate(code)
+
+    def bonus_info(self, patient_id):
+        import loyalty
+        return {"balance": self._loyal.bonus_balance(patient_id), "history": self._loyal.bonus_history(patient_id)[:30],
+                "family": self._loyal.family_of(patient_id), "settings": loyalty.settings()}
+
+    def bonus_adjust(self, patient_id, amount, comment):
+        return self._loyal.adjust(patient_id, amount, comment, self._who())
+
+    def family_save(self, f):
+        return self._loyal.save_family(f or {})
+
+    def family_leave(self, patient_id):
+        return self._loyal.leave_family(patient_id)
+
+    # ---------------------------------------------------------------- SBP --
+    def sbp_settings(self):
+        s = config.load_settings().get("sbp") or {}
+        return {"qr": s.get("qr") or "", "label": s.get("label") or "", "clinic": self._clinic().get("name") or ""}
+
+    def sbp_settings_save(self, f):
+        f = f or {}
+        qr = str(f.get("qr") or "")
+        if qr and (not qr.startswith("data:image/") or len(qr) > 3_000_000):
+            raise ValueError("Загрузите картинку QR-кода (PNG или JPEG до 2 МБ)")
+        config.save_settings({"sbp": {"qr": qr, "label": str(f.get("label") or "")[:200]}})
+        return self.sbp_settings()
+
+    def sbp_to_tablet(self, tid, amount, patient_id=None):
+        """Show the clinic's SBP QR code and the sum on the patient tablet."""
+        s = self.sbp_settings()
+        if not s["qr"]:
+            raise ValueError("Загрузите QR-код СБП в Настройках → «Бонусы, сертификаты и СБП»")
+        p = self._db.patient(patient_id) if patient_id else None
+        return self._tablets.send(tid, {"kind": "qr", "title": "Оплата по СБП", "patient": (p or {}).get("name") or "",
+                                        "html": "", "qr": s["qr"], "amount": round(float(amount or 0), 2), "label": s["label"]}, self._who())
 
     # ------------------------------------------------------ fiscal receipts --
     def fiscal_status(self):
@@ -644,7 +751,16 @@ class Api:
         return self._fiscal.check()
 
     def cash_day(self, day):
-        return self._local.cash_day(day)
+        """The day's payments; «money» is what actually came in: without certificate and bonus payments,
+        plus certificates sold that day."""
+        import loyalty
+        out = self._local.cash_day(day)
+        out["cert_sales"] = self._loyal.sales_day(day)
+        sold = round(sum(x["amount"] for x in out["cert_sales"]), 2)
+        non_money = sum(v for k, v in out["by_method"].items() if k in (loyalty.CERT, loyalty.BONUS))
+        out["money_total"] = round(out["total"] - non_money + sold, 2)
+        out["cert_sold"] = sold
+        return out
 
     def journal(self, show_done=False):
         items = self._local.journal(show_done)
@@ -687,6 +803,14 @@ class Api:
             u = getattr(_current, "user", None)
             if u is None or {"stock_view", "stock_edit"} & set(Auth.effective_perms(u)):
                 st["stock_low"] = sum(1 for m in self._stock.materials() if m["low"] or m["balance"] < 0)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from auth import _current, Auth
+            u = getattr(_current, "user", None)
+            if u is None or "lab" in Auth.effective_perms(u):
+                ls = self._lab.summary()
+                st["lab_due"] = ls["overdue"] + ls["fitting_today"]
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -976,6 +1100,10 @@ class Api:
             p["marketing"] = self._mk.patient_info(pid)
             p["files_count"] = self._files.count(pid)
             p["questionnaire"] = self._forms.latest(pid)
+            p["lab_count"] = len(self._lab.orders("all", patient_id=pid))
+            p["bonus"] = self._loyal.bonus_balance(pid)
+            fam = self._loyal.family_of(pid)
+            p["family"] = {"id": fam["id"], "name": fam["name"], "discount": fam["discount"], "members": len(fam["members"])} if fam else None
             signed = self._forms.signed_ids([d["id"] for d in p["documents"]])
             for d in p["documents"]:
                 d["signed"] = d["id"] in signed

@@ -66,9 +66,10 @@ async function openPerio(p, chart) {
     </tbody></table>`;
   const box = modal(`<div class="m-h"><h3>Пародонтограмма · ${esc(p.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b pr-wrap">
-      <div class="grid3"><label class="fl">Дата<input class="input" type="date" id="prDate" value="${esc(chart.date)}" ${edit ? "" : "disabled"}></label>
+      <div class="pr-head"><label class="fl">Дата<input class="input" type="date" id="prDate" value="${esc(chart.date)}" ${edit ? "" : "disabled"}></label>
         <label class="fl">Врач<select class="input" id="prDoc" ${edit ? "" : "disabled"}><option value="">—</option>${R.doctors.map(d => `<option value="${esc(d.id)}" ${d.id === chart.doctor_id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></label>
-        ${edit ? `<div class="pr-voice"><button class="btn ghost" id="prMic">🎙 Диктовать</button><small class="muted" id="prMicSt">«зуб 16: три два четыре, кровь, нёбная два два три, следующий»</small></div>` : "<span></span>"}</div>
+        ${edit ? `<div class="fl pr-voice"><span>Голосовой ввод</span><button class="btn ghost" id="prMic" type="button"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>Диктовать</button></div>
+          <small class="muted pr-hint" id="prMicSt">Скажите: «зуб 16: три два четыре, кровь, нёбная два два три, следующий»</small>` : ""}</div>
       <div id="prChart">${draw()}</div>
       <div class="pr-stats" id="prStats"></div>
       <label class="fl">Заключение / примечание<input class="input" id="prNote" value="${esc(chart.note || "")}" ${edit ? "" : "disabled"}></label>
@@ -139,10 +140,10 @@ async function openPerio(p, chart) {
       const stEl = $("#prMicSt", box);
       if (!recr) {
         try { recr = await micRecorder(); } catch (e) { toast(errText(e), true); return; }
-        mic.textContent = "■ Готово"; mic.classList.add("rec-on"); stEl.textContent = cur.tooth ? `Говорите — начнём с зуба ${cur.tooth}` : "Говорите: «зуб восемнадцать, три два три…»";
+        mic.lastChild.textContent = "Готово"; mic.classList.add("rec-on"); stEl.textContent = cur.tooth ? `Говорите — начнём с зуба ${cur.tooth}` : "Говорите: «зуб восемнадцать, три два три…»";
         return;
       }
-      const blob = await recr.stop(); recr = null; mic.textContent = "🎙 Диктовать"; mic.classList.remove("rec-on"); stEl.textContent = "Распознаём…";
+      const blob = await recr.stop(); recr = null; mic.lastChild.textContent = "Диктовать"; mic.classList.remove("rec-on"); stEl.textContent = "Распознаём…";
       try { const r = await api.perio_voice(await blobB64(blob), blob.type); applyVoice(r.commands); stEl.textContent = `Распознано: «${r.text}»`; }
       catch (e) { stEl.textContent = ""; toast(errText(e), true); }
     };

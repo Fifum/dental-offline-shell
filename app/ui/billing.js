@@ -1,6 +1,7 @@
 "use strict";
 /* Invoices (services from price list), payments, daily cash report */
-const PAY_METHODS = ["Наличные", "Карта", "Перевод", "Безнал (организация)"];
+const PAY_METHODS = ["Наличные", "Карта", "СБП", "Перевод", "Безнал (организация)", "Сертификат", "Бонусы"];
+const PAY_CORE = ["Наличные", "Карта", "СБП", "Перевод", "Безнал (организация)"];
 
 async function openInvoice(o) {
   const R = await ref();
@@ -31,7 +32,7 @@ async function openInvoice(o) {
         ${inv && !isPlan ? `<div class="pays"><div class="pb-head"><b>Оплаты</b><span class="muted">Оплачено ${money(inv.paid)} из ${money(inv.total)}</span></div>
           ${inv.payments.map(p => `<div class="pay"><span>${fmtDT(p.created_at)}</span><span>${esc(p.method)}</span><b>${money(p.amount)}</b>${receiptPill(p)}${can("payments") ? `<button class="linkbtn" data-delpay="${esc(p.id)}">удалить</button>` : ""}</div>`).join("") || '<div class="muted">Оплат пока нет</div>'}
           ${inv.total - inv.paid > 0.009 ? (!can("payments") ? `<div class="muted">Оплату принимает администратор</div>` : `<div class="pay-add"><input class="input" id="payAmt" type="number" step="0.01" value="${Math.round((inv.total - inv.paid) * 100) / 100}">
-            <select class="input" id="payM">${PAY_METHODS.map(m => `<option>${m}</option>`).join("")}</select><button class="btn" id="payGo">Принять оплату</button></div>${S.settings.fiscal_enabled ? `<div class="pay-fiscal"><label class="switch-row" style="margin:0"><input type="checkbox" id="payRcpt" ${S.settings.fiscal_auto ? "checked" : ""}><span class="sw"></span>Пробить чек${S.settings.fiscal_test ? " (тестовый режим)" : ""}</label><input class="input" id="payContact" placeholder="телефон или e-mail для электронного чека (необязательно)"></div>` : ""}`) : '<div class="ok-t">Счёт оплачен полностью</div>'}
+            <select class="input" id="payM">${PAY_METHODS.map(m => `<option>${m}</option>`).join("")}</select><button class="btn" id="payGo">Принять оплату</button></div><div class="pay-extra" id="payExtra"></div>${S.settings.fiscal_enabled ? `<div class="pay-fiscal"><label class="switch-row" style="margin:0"><input type="checkbox" id="payRcpt" ${S.settings.fiscal_auto ? "checked" : ""}><span class="sw"></span>Пробить чек${S.settings.fiscal_test ? " (тестовый режим)" : ""}</label><input class="input" id="payContact" placeholder="телефон или e-mail для электронного чека (необязательно)"></div>` : ""}`) : '<div class="ok-t">Счёт оплачен полностью</div>'}
           ${S.settings.fiscal_enabled ? "" : `<div class="muted" style="font-size:12px">Касса не подключена: оплата в программе — не кассовый чек. Пробейте чек на кассе отдельно (подключить кассу — в Настройках).</div>`}</div>` : ""}
       </div>
     </div>
@@ -40,6 +41,8 @@ async function openInvoice(o) {
       ${isPlan ? "" : '<button class="btn ghost" id="ivAct">Сохранить и акт</button>'}
       <button class="btn" id="ivSave">${inv ? "Сохранить" : isPlan ? "Сохранить план" : "Выставить счёт"}</button></div>`, {wide: true});
 
+  if (typeof familyDiscountHint === "function") familyDiscountHint(box, pat);
+  if (isPlan && inv && typeof planLabOrders === "function") planLabOrders(box, inv, pat);
   const total = () => {
     let t = 0;
     st.items.forEach(it => { const s = (+it.price || 0) * (+it.qty || 1) * (1 - (+it.discount || 0) / 100); it.sum = Math.round(s * 100) / 100; t += s; });
@@ -99,11 +102,13 @@ async function openInvoice(o) {
     openDocFill({patient_id: o.patient_id, template_id: "doc_plan", invoice_id: id, doctor_id: doc}); };
   const act = $("#ivAct", box); if (act) act.onclick = async () => { const doc = $("#ivDoc", box).value; const id = await save(); if (!id) return; closeModal(); afterChange();
     openDocFill({patient_id: o.patient_id, template_id: "doc_act", invoice_id: id, doctor_id: doc, visit_id: o.visit_id}); };
+  if ($("#payM", box) && typeof payExtraInit === "function") payExtraInit(box, inv, pat);
   const pg = $("#payGo", box); if (pg) pg.onclick = async () => {
     const id = await save(); if (!id) return;
     const rc = $("#payRcpt", box), ct = $("#payContact", box);
+    const ex = typeof payExtraValues === "function" ? payExtraValues(box) : {};
     const r = await api.add_payment({invoice_id: id, amount: +$("#payAmt", box).value, method: $("#payM", box).value,
-      receipt: rc ? rc.checked : false, contact: ct ? ct.value.trim() : ""});
+      receipt: rc ? rc.checked : false, contact: ct ? ct.value.trim() : "", ...ex});
     if (!r.ok) return toast(r.message, true);
     receiptToast(r.receipt, "Оплата принята"); afterChange(); openInvoice({...o, id});
   };
@@ -121,9 +126,11 @@ async function loadCash() {
   S.cash = c;
   $("#cashBody").innerHTML = `
     <div class="stat-row">
-      <div class="stat"><span>Всего за день</span><b>${money(c.total)}</b></div>
-      ${PAY_METHODS.map(m => `<div class="stat"><span>${m}</span><b>${money(c.by_method[m] || 0)}</b></div>`).join("")}
+      <div class="stat"><span>Деньги за день</span><b>${money(c.money_total ?? c.total)}</b></div>
+      ${PAY_METHODS.filter(m => PAY_CORE.includes(m) || c.by_method[m]).map(m => `<div class="stat"><span>${m}</span><b>${money(c.by_method[m] || 0)}</b></div>`).join("")}
+      ${c.cert_sold ? `<div class="stat"><span>Продано сертификатов</span><b>${money(c.cert_sold)}</b></div>` : ""}
     </div>
+    <div class="cash-loyal">${can("payments") ? `<button class="btn ghost small" id="cashCert">Продать сертификат</button>` : ""}<button class="btn ghost small" id="cashCerts">Сертификаты</button>${c.cert_sales && c.cert_sales.length ? `<span class="muted">За день: ${c.cert_sales.map(x => `${esc(x.code)} — ${money(x.amount)} (${esc(x.method)})`).join("; ")}</span>` : ""}</div>
     <div id="fiscalPanel"></div>
     <div class="pbody" style="margin-top:12px"><div class="pb-head"><b>Оплаты</b></div>
       ${c.payments.length ? `<table class="tbl"><thead><tr><th>Время</th><th>Пациент</th><th>Способ</th><th>Сумма</th><th>В DP</th></tr></thead><tbody>${
@@ -138,6 +145,8 @@ async function loadCash() {
         : `<div class="empty"><b>Счетов за этот день нет</b></div>`}
     </div>`;
   renderFiscal(day);
+  const cs = $("#cashCert"); if (cs && typeof sellCertificate === "function") cs.onclick = () => sellCertificate(loadCash);
+  const cl = $("#cashCerts"); if (cl && typeof openCertificates === "function") cl.onclick = openCertificates;
   $$("#cashBody tr[data-inv]").forEach(tr => tr.onclick = () => openInvoice({patient_id: tr.dataset.p, id: tr.dataset.inv}));
   $$("#cashBody tr[data-p]:not([data-inv])").forEach(tr => tr.onclick = () => openPatient(tr.dataset.p, "patients", "billing"));
 }
@@ -145,7 +154,7 @@ $("#cashDay").onchange = loadCash;
 $("#cashPrint").onclick = () => {
   const c = S.cash; if (!c) return;
   $("#printArea").innerHTML = `<h2>Кассовый отчёт за ${fmtDate($("#cashDay").value)}</h2>
-    <p>${PAY_METHODS.map(m => `${m}: <b>${money(c.by_method[m] || 0)}</b>`).join(" · ")} · Итого: <b>${money(c.total)}</b></p>
+    <p>${PAY_METHODS.filter(m => PAY_CORE.includes(m) || c.by_method[m]).map(m => `${m}: <b>${money(c.by_method[m] || 0)}</b>`).join(" · ")}${c.cert_sold ? ` · Продано сертификатов: <b>${money(c.cert_sold)}</b>` : ""} · Деньги за день: <b>${money(c.money_total ?? c.total)}</b></p>
     <table><tr><th>Время</th><th>Пациент</th><th>Способ</th><th>Сумма</th></tr>${c.payments.map(p => `<tr><td>${hm(p.created_at)}</td><td>${esc(p.patient_name || "")}</td><td>${esc(p.method)}</td><td>${money(p.amount)}</td></tr>`).join("")}</table>
     <p style="margin-top:20px">Не является кассовым документом. Подпись ответственного: ______________</p>`;
   window.print();

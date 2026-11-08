@@ -271,7 +271,8 @@ def ensure_office(db):
                               (f"demo_e{back}_{day}", d.isoformat(), cat, amount, "Безналичный перевод", None, None, comment,
                                "Демо", utcnow()))
         for did, (pct, fixed) in DEMO_PAY.items():
-            c.execute("INSERT OR IGNORE INTO salary_schemes VALUES(?,?,?,?,?,?)", (f"d:{did}", pct, fixed, "paid", 0, utcnow()))
+            c.execute("INSERT OR IGNORE INTO salary_schemes(person, percent, fixed, base, minus_materials, updated_at) VALUES(?,?,?,?,?,?)",
+                      (f"d:{did}", pct, fixed, "paid", 0, utcnow()))
         for p in db.q("SELECT id FROM patients"):
             s = rnd.choice(DEMO_SOURCES)
             if s:

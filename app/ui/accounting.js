@@ -88,13 +88,13 @@ async function accPayroll(body) {
   if (!ACC.methods.length) ACC = await api.acc_summary(S.period.from, S.period.to);
   const r = await api.payroll(S.accMonth);
   S.payRows = r.rows;
-  const scheme = p => [p.percent ? `${(+p.percent).toLocaleString("ru-RU")}% ${ACC.bases[p.base] || ""}${p.minus_materials ? " минус материалы" : ""}` : "", p.fixed ? `оклад ${money(p.fixed)}` : ""].filter(Boolean).join(" + ") || "не задана";
+  const scheme = p => [p.percent ? `${(+p.percent).toLocaleString("ru-RU")}% ${ACC.bases[p.base] || ""}${p.minus_materials ? " минус материалы" : ""}${p.minus_lab ? " минус лаборатория" : ""}` : "", p.fixed ? `оклад ${money(p.fixed)}` : ""].filter(Boolean).join(" + ") || "не задана";
   body.innerHTML = accTools(`<div class="month-nav"><button class="icon-btn" id="pmPrev" title="Предыдущий месяц">‹</button><b>${monthName(r.month)}</b><button class="icon-btn" id="pmNext" title="Следующий месяц">›</button></div>`, false) +
     `<div class="stat-row"><div class="stat"><span>Начислено</span><b>${money(r.earned)}</b></div><div class="stat"><span>Выплачено</span><b>${money(r.paid_out)}</b></div>
       <div class="stat ${r.due > 0 ? "warn" : ""}"><span>К выплате</span><b>${money(r.due)}</b></div></div>
     <div class="pbody">${r.rows.length ? `<table class="tbl"><thead><tr><th>Сотрудник</th><th>Схема оплаты</th><th class="num">Оплачено пациентами</th><th class="num">Выставлено</th><th class="num">По проценту</th><th class="num">Начислено</th><th class="num">Выплачено</th><th class="num">К выплате</th><th></th></tr></thead><tbody>${
       r.rows.map(p => `<tr><td><b>${esc(p.name)}</b>${p.position ? `<br><small class="muted">${esc(p.position)}</small>` : ""}</td><td class="muted">${esc(scheme(p))}</td>
-        <td class="num">${p.kind === "doctor" ? money(p.paid) : "—"}</td><td class="num">${p.kind === "doctor" ? money(p.billed) : "—"}</td><td class="num">${p.percent ? money(p.by_percent) : "—"}${p.materials ? `<br><small class="muted">материалы −${money(p.materials)}</small>` : ""}</td>
+        <td class="num">${p.kind === "doctor" ? money(p.paid) : "—"}</td><td class="num">${p.kind === "doctor" ? money(p.billed) : "—"}</td><td class="num">${p.percent ? money(p.by_percent) : "—"}${p.lab ? `<br><small class="muted">лаборатория −${money(p.lab)}</small>` : ""}${p.materials ? `<br><small class="muted">материалы −${money(p.materials)}</small>` : ""}</td>
         <td class="num"><b>${money(p.earned)}</b></td><td class="num">${money(p.paid_out)}</td><td class="num ${p.due > 0 ? "bad-t" : ""}"><b>${money(p.due)}</b></td>
         <td class="row-acts"><button class="linkbtn" data-sch="${esc(p.key)}">схема</button>${p.due > 0 ? `<button class="btn small" data-pay="${esc(p.key)}">Выплатить</button>` : ""}</td></tr>`).join("")}</tbody>
       <tfoot><tr><td colspan="5">Итого</td><td class="num">${money(r.earned)}</td><td class="num">${money(r.paid_out)}</td><td class="num">${money(r.due)}</td><td></td></tr></tfoot></table>`
@@ -115,14 +115,15 @@ function editScheme(p) {
       <div class="grid2"><label class="fl">Процент от услуг, %<input class="input num" id="scP" type="number" step="any" min="0" max="100" value="${p.percent || ""}" autofocus ${p.kind === "doctor" ? "" : "disabled"}></label>
         <label class="fl">Оклад в месяц, ₽<input class="input num" id="scF" type="number" step="any" min="0" value="${p.fixed || ""}"></label></div>
       ${p.kind === "doctor" ? `<label class="fl">Процент считать<select class="input" id="scB">${Object.entries(ACC.bases).map(([k, t]) => `<option value="${k}" ${k === p.base ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
-      <label class="switch-row"><input type="checkbox" id="scM" ${p.minus_materials ? "checked" : ""}><span class="sw"></span>Вычитать стоимость материалов по нормам списания</label>`
+      <label class="switch-row"><input type="checkbox" id="scM" ${p.minus_materials ? "checked" : ""}><span class="sw"></span>Вычитать стоимость материалов по нормам списания</label>
+      <label class="switch-row"><input type="checkbox" id="scL" ${p.minus_lab ? "checked" : ""}><span class="sw"></span>Вычитать стоимость работ лаборатории (по заказ-нарядам врача)</label>`
       : `<p class="muted">Процент от услуг считается только для врачей из Dentist Plus. Для администраторов и ассистентов задайте оклад.</p>`}
       <div class="auth-err" id="scErr"></div></div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="scOk">Сохранить</button></div>`);
   $("#scOk", box).onclick = async () => {
     try {
       await api.save_salary_scheme({person: p.key, percent: p.kind === "doctor" ? $("#scP").value : 0, fixed: $("#scF").value,
-        base: $("#scB") ? $("#scB").value : "paid", minus_materials: $("#scM") ? $("#scM").checked : false});
+        base: $("#scB") ? $("#scB").value : "paid", minus_materials: $("#scM") ? $("#scM").checked : false, minus_lab: $("#scL") ? $("#scL").checked : false});
       closeModal(); toast("Схема сохранена"); loadAccounting();
     } catch (e) { $("#scErr").textContent = errText(e); }
   };
