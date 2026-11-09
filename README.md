@@ -83,7 +83,10 @@ working without it.
 | **Equipment** | Register with inventory numbers, location, warranty and service dates, service history, write-off with a commission and a printed act |
 | **Sterilization journal** | Autoclave and dry-heat cycles with mode, chemical and biological indicators, load and operator; cycle numbers per sterilizer and year, failed cycles flagged, printable for inspections |
 | **Clinic network** | One computer is the server; reception, surgeries and the director's PC connect over the local network and find it automatically |
-| **Staff accounts** | Self-registration, director approval, password sign-in, roles (director, administrator, doctor, assistant) with per-person permission overrides, action journal |
+| **Staff accounts** | Self-registration, director approval, password sign-in, positions with per-person permission overrides, action journal |
+| **Positions and rights** | The director makes positions («Senior administrator», «Accountant»…) and ticks what each may see and do, built-in positions included, in six groups of rights; a change works at once for everyone in the position on every laptop (the menu of a signed-in employee follows it), synced; rights added by later versions reach saved positions from the position's default; separate rights for the expenses of the day and for Excel export |
+| **Expenses of the day** | Administrators write down every expense of the day — with a receipt or without a document — and see only today's own entries (next morning the list is empty); cash «from the drawer» goes into the open cash shift; the history and every employee's entries only with the «Accounting» right |
+| **Day report by e-mail** | At the set time, when the cash shift is closed or by a button the owner gets an e-mail: payments by method, every expense of the day (with and without documents), the cash shift, and an Excel file; sent through an ordinary mailbox with an application password (stored with DPAPI); without internet the report waits and goes later; the sent day is synced so a second computer does not send it again |
 | **Backups** | A verified, compressed copy of the whole database at start, every 2 hours and on exit, made with SQLite's online backup while the app keeps working; rotation (everything for 2 days, one per day for 30); an optional second folder on a flash drive; one-click restore that first saves the current data and then restarts the app |
 | **Cloud sync** | Every laptop keeps working on its own; when there is internet, changes meet through a multi-clinic cloud server. Row-level replication with a three-way merge: edits of different fields both survive, a clash of one field keeps the later edit and saves the other value in a journal with a «bring back» button, a row deleted on one laptop and edited on another is kept. End-to-end encrypted (AES-256-GCM, clinic key never leaves the clinic), X-rays included |
 | **Subscriptions** | Clinics (tenants) with a 30-day trial, three plans by number of computers, grace period; an expired subscription pauses the sync, never the work on the laptops |
@@ -183,6 +186,9 @@ Dentist Plus partner API
 | `app/ai_docs.py` | Drafts from the record (memo, explanation, extract, insurer letter), plan option text, line-by-line translation; rules without the AI |
 | `app/medcheck.py` | Record and card check: what is missing for an inspection or an insurer |
 | `app/consents.py` | The patient's consent to a visit recording |
+| `app/daily.py` | 2.14: expenses of the day (own and today only, the cash drawer), the day report: text, Excel, SMTP sending, retry and the moment to send |
+| `app/ui/daily.js` | Expenses of the day in «Cash», the report preview and «send now», mail settings |
+| `app/ui/staff.js` | Staff: requests, positions and their rights by groups, per-person rights, action journal |
 | `app/llm_local.py` | AI on this computer: Ollama and models downloaded by the program, the clinic's own «dental-desk» model, the background quality check |
 | `app/ai_eval.py` | The program's test questions for a model: accuracy, Russian, speed (also `tools/ai_eval.py` to compare models) |
 | `app/ui/ai.js` | The assistant panel, drafts and translation, record check, voice chart and notes, consent dialog, weekly card, local model settings |
@@ -308,6 +314,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_crm.py                  # 109 checks: rule tasks and their ids, plan and score tasks, requests and funnel, segments, NPS and the tablet, ad payback, sync capture, rights
 .venv\Scripts\python tests\test_finance.py              # 115 checks: advance and its use, refunds and receipts, schedules and reminder tasks, memberships, cash shift, ДМС registries, sync capture, rights
 .venv\Scripts\python tests\test_ai_213.py               # 136 checks: dates and surnames in any case, assistant answers and proposals with rights over HTTP, drafts by rules and by a fake model with anonymous data, translation, record check, weekly summary, voice chart, consent, quality check
+.venv\Scripts\python tests\test_staff_214.py            # 75 checks: positions and their rights (built-in and own, later rights, voice labels), rights over HTTP at once, expenses of the day and the drawer, the day report with a fake SMTP server, retry and the moment to send
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 
@@ -317,7 +324,7 @@ settings, dedupe and validation errors on write, paging variants, timezones and 
 
 ## Status and privacy
 
-Version 2.13: AI — the assistant with the employee's rights, texts and translation in seconds, the record check, the director's weekly summary, the tooth chart and notes by voice, consent to record a visit, the clinic's own local model with a quality check; 2.12: money — advance, refunds, installments, memberships, cash shifts with reconciliation, ДМС registries, debt reminders; 2.11: CRM — tasks by hand and by rules, requests and funnel, segments with a WhatsApp mailing, visit scores with review QR codes, advertising payback; 2.10: visit templates by speciality, prescriptions, prescription form, referral and patient memo; 2.9: treatment plan options, the plan presentation (print, PDF, patient tablet), the tooth chart by surfaces. All screenshots use an invented demo clinic — no real patient
+Version 2.14: positions with rights the director changes, the administrators' expenses of the day and the day report by e-mail; 2.13: AI — the assistant with the employee's rights, texts and translation in seconds, the record check, the director's weekly summary, the tooth chart and notes by voice, consent to record a visit, the clinic's own local model with a quality check; 2.12: money — advance, refunds, installments, memberships, cash shifts with reconciliation, ДМС registries, debt reminders; 2.11: CRM — tasks by hand and by rules, requests and funnel, segments with a WhatsApp mailing, visit scores with review QR codes, advertising payback; 2.10: visit templates by speciality, prescriptions, prescription form, referral and patient memo; 2.9: treatment plan options, the plan presentation (print, PDF, patient tablet), the tooth chart by surfaces. All screenshots use an invented demo clinic — no real patient
 appears anywhere in this repository. The app stores medical data locally only; the clinic is advised
 to use Windows login and BitLocker.
 

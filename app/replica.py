@@ -90,6 +90,8 @@ TABLES = [
     T("insurance_docs", title="Полис или гарантийное письмо"),
     T("insurance_registries", title="Реестр для страховой"),
     T("patient_consents", title="Согласие пациента"),
+    T("staff_roles", key=("key",), title="Должность"),
+    T("day_reports", key=("day",), title="Отчёт за день"),
     T("audit", intpk=True, refs={"user_id": "users"}, title="Журнал действий"),
 ]
 BY_NAME = {t.name: t for t in TABLES}

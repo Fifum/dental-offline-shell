@@ -71,6 +71,8 @@ class Api:
         self._fin = Finance(db, self._local, self._loyal)
         from consents import Consents
         self._consents = Consents(db)
+        from daily import Daily
+        self._daily = Daily(db, self._acc, self._fin)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -941,7 +943,73 @@ class Api:
             raise
 
     def cash_shift_close(self, f):
-        return self._fin.shift_close(f, self._who())
+        out = self._fin.shift_close(f, self._who())
+        import daily
+        s = daily.settings()
+        if s["enabled"] and s["on_close"]:  # 2.14: the day report goes to the owner when the shift is closed
+            day = date.today().isoformat()
+            threading.Thread(target=self._send_day_quiet, args=(day,), name="day-report", daemon=True).start()
+            out["report_sending"] = True
+        return out
+
+    # --------------------------------------- 2.14: expenses of the day, the day report by e-mail --
+    @staticmethod
+    def _my_perms():
+        from auth import PERM_KEYS, Auth, _current
+        u = getattr(_current, "user", None)
+        return (set(Auth.effective_perms(u)) if u else set(PERM_KEYS)), u
+
+    def day_expenses(self):
+        """Today's expenses: one's own (an administrator starts every day with a clean list), all of them with «Бухгалтерия»."""
+        perms, u = self._my_perms()
+        return self._daily.today((u or {}).get("login") or "", "accounting" in perms)
+
+    def day_expense_save(self, f):
+        perms, u = self._my_perms()
+        eid = self._daily.save(f, self._who(), (u or {}).get("login") or "", "accounting" in perms)
+        return {"id": eid, **self.day_expenses()}
+
+    def day_expense_delete(self, eid):
+        perms, u = self._my_perms()
+        self._daily.delete(eid, (u or {}).get("login") or "", "accounting" in perms)
+        return self.day_expenses()
+
+    def _cash_for(self, day):
+        try:
+            return self.cash_day(day)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _send_day_quiet(self, day):
+        try:
+            self._daily.send(day, self._cash_for(day), self._who() or "Программа")
+        except ValueError as e:
+            log.info("day report: %s", e)
+
+    def day_report(self, day=None):
+        """The report of the day as it will go by mail. Without «Бухгалтерия» — today only."""
+        perms, u = self._my_perms()
+        day = str(day or date.today().isoformat())[:10]
+        if day != date.today().isoformat() and "accounting" not in perms:
+            raise ValueError("Отчёты прошлых дней видит только директор")
+        full = bool(perms & {"cash_report", "accounting"})  # without them: one's own expenses, no cash figures
+        rep = self._daily.report(day, self._cash_for(day) if full else {}, None if full else ((u or {}).get("login") or ""), shifts=full)
+        return {**rep, "text": self._daily.text(rep), "state": self._daily.report_state(day)}
+
+    def day_report_send(self, day=None, force=True):
+        perms, _ = self._my_perms()
+        day = str(day or date.today().isoformat())[:10]
+        if day != date.today().isoformat() and "accounting" not in perms:
+            raise ValueError("Отчёты прошлых дней отправляет только директор")
+        return self._daily.send(day, self._cash_for(day), self._who(), force=bool(force))
+
+    def day_report_settings(self):
+        import daily
+        return daily.public_settings()
+
+    def day_report_settings_save(self, f):
+        import daily
+        return daily.save_settings(f if isinstance(f, dict) else {})
 
     def cash_shifts(self, limit=40):
         return self._fin.shifts(limit)
@@ -1227,6 +1295,14 @@ class Api:
             st["update"] = {"available": us["available"], "latest": us["latest"]}
         except Exception:  # noqa: BLE001
             pass
+        try:  # 2.14: the employee's rights now (the director may change a position while the employee works)
+            from auth import _current, Auth
+            u = getattr(_current, "user", None)
+            if u is not None:
+                st["me_perms"] = Auth.effective_perms(u)
+            self._daily.tick(self._cash_for)  # the day report at the set time, at most every 5 minutes
+        except Exception:  # noqa: BLE001
+            log.exception("status 2.14")
         return st
 
     def sync_now(self):
@@ -1295,6 +1371,7 @@ class Api:
     # employees' voice prints (who is speaking in a visit recording)
     def voice_status(self):
         import voices
+        from auth import role_base
         vp = voices.prints(self._db)
         try:
             users = self._db.q("SELECT id, name, position, role, doctor_id FROM users WHERE status='active' ORDER BY name")
@@ -1302,7 +1379,7 @@ class Api:
             users = []
         staff = [{"id": u["id"], "name": u["name"], "position": u["position"] or "", "label": voices.role_label(dict(u)),
                   "role": u["role"], "voice": {k: vp[u["id"]][k] for k in ("seconds", "quality", "updated_at")} if u["id"] in vp else None}
-                 for u in users if u["role"] not in ("storekeeper",)]
+                 for u in users if role_base(u["role"]) not in ("storekeeper",)]
         return {"model": voices.status(), "staff": staff}
 
     def voice_download(self):

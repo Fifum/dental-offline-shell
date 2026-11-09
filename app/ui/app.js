@@ -150,7 +150,7 @@ function stClass(s) {
 const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", settings: {day_start: 8, day_end: 21}, status: {}, lastLoaded: null, prevView: "patients"};
 
 /* ---------------------------------------------------------------- views */
-const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: "cash_report",
+const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: ["cash_report", "expenses_day"],
   journal: "transfer", refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment", "sterilization"],
   reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"],
   lab: ["lab", "accounting"], director: "reports"};
@@ -213,6 +213,11 @@ async function refreshStatus() {
   const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
   if (typeof platformStatus === "function") platformStatus(st);
   if (typeof crmStatus === "function") crmStatus(st);
+  if (st.me_perms && ME && st.me_perms.join() !== ME.perms.join()) {  // 2.14: the director changed this person's position
+    ME.perms = st.me_perms; applyPerms();
+    toast("Директор изменил ваши права — меню обновлено");
+    if (!canView(S.view)) show(firstView());
+  }
   if (st.backup_warn && st.backup_warn !== S.backupWarned) { S.backupWarned = st.backup_warn; toast(st.backup_warn + " Настройки → «Резервные копии».", true); }
   for (const id of ["#pendingBadge", "#pendingBadge2"]) { const pb = $(id); pb.hidden = !st.pending; pb.textContent = st.pending || ""; }
   // data changed -> refresh current screen
@@ -1021,6 +1026,7 @@ async function loadSettings() {
   if (typeof loadTabletSettings === "function") loadTabletSettings();
   if (typeof loadMoneySettings === "function") loadMoneySettings();
   if (typeof loadPlatformSettings === "function") loadPlatformSettings();
+  if (typeof loadDaySettings === "function") loadDaySettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = (n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
       : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.") + (n.public ? `<div class="warn-line" style="margin-top:6px">${NET_PUBLIC_HINT}</div>` : "");
@@ -1115,8 +1121,7 @@ async function startApp(user) {
   $("#authScreen").hidden = true;
   $("#ucAv").textContent = initials(ME.name); $("#ucName").textContent = ME.name;
   $("#ucRole").textContent = ME.role_title || ME.position || "";
-  $$("[data-perm]").forEach(el => el.hidden = !can(el.dataset.perm));
-  $$("[data-perm-any]").forEach(el => el.hidden = !canAny(...el.dataset.permAny.split(",")));
+  applyPerms();
   $("#ucServer").hidden = !(window.pywebview && window.pywebview.api && window.pywebview.api.open_setup);
   try { Object.assign(S.settings, await api.ui_settings()); } catch (e) {}
   REF = null;
@@ -1131,6 +1136,11 @@ async function startApp(user) {
     setInterval(() => { if (ME && S.view === "schedule" && S.mode === "grid" && S.day === iso(new Date())) loadDay(); }, 60000);
     setInterval(() => { if (ME && can("staff")) refreshStaffBadge(); }, 30000);
   }
+}
+function applyPerms() {
+  $$("[data-perm]").forEach(el => el.hidden = !can(el.dataset.perm));
+  $$("[data-perm-any]").forEach(el => el.hidden = !canAny(...el.dataset.permAny.split(",")));
+  document.body.classList.toggle("no-export", !can("export"));  // 2.14: «Excel» buttons only with the right
 }
 function needLogin(message) {
   if (!ME && !$("#authScreen").hidden) return;

@@ -48,9 +48,9 @@ async function accExpenses(body) {
   body.innerHTML = accTools(`<select class="input sm-sel" id="exCat"><option value="">Все статьи</option>${ACC.categories.map(c => `<option ${c === S.accCat ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
       <button class="btn" id="exNew">+ Расход</button>`) +
     `<div class="pbody">${r.rows.length ? `<table class="tbl"><thead><tr><th>Дата</th><th>Статья</th><th>Комментарий</th><th>Сотрудник</th><th>Способ</th><th class="num">Сумма</th><th>Внёс</th></tr></thead><tbody>${
-      r.rows.map(x => `<tr data-e="${esc(x.id)}" class="lnk-row"><td>${fmtShort(x.date)}</td><td><b>${esc(x.category)}</b></td><td>${esc(x.comment)}</td><td>${esc(x.person_name || "")}${x.period ? ` <span class="muted">за ${esc(monthName(x.period).toLowerCase())}</span>` : ""}</td>
+      r.rows.map(x => `<tr data-e="${esc(x.id)}" class="lnk-row"><td>${fmtShort(x.date)}</td><td><b>${esc(x.category)}</b></td><td>${esc(x.comment)}${x.doc === 0 ? ' <span class="pill dx-nodoc">без документа</span>' : ""}</td><td>${esc(x.person_name || "")}${x.period ? ` <span class="muted">за ${esc(monthName(x.period).toLowerCase())}</span>` : ""}</td>
         <td class="muted">${esc(x.method)}</td><td class="num"><b>${money(x.amount)}</b></td><td class="muted">${esc(x.user_name || "")}</td></tr>`).join("")}</tbody>
-      <tfoot><tr><td colspan="5">Итого${S.accCat ? ": " + esc(S.accCat) : ""}</td><td class="num">${money(r.total)}</td><td></td></tr></tfoot></table>`
+      <tfoot><tr><td colspan="5">Итого${S.accCat ? ": " + esc(S.accCat) : ""}${(() => { const n = r.rows.filter(y => y.doc === 0).reduce((a, y) => a + y.amount, 0); return n ? ` · без документов ${money(n)}` : ""; })()}</td><td class="num">${money(r.total)}</td><td></td></tr></tfoot></table>`
       : `<div class="empty"><b>Расходов за период нет</b><span>Нажмите «+ Расход», чтобы внести аренду, закупку или другую трату</span></div>`}</div>`;
   $("#exCat").onchange = e => { S.accCat = e.target.value; loadAccounting(); };
   $("#exNew").onclick = () => editExpense({});

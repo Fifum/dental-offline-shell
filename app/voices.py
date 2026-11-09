@@ -347,7 +347,8 @@ def role_label(user: dict) -> str:
     """How a reply is signed. Whoever records a visit with their own voice and is not an assistant is
     treating the patient — a director who is also a dentist included — so it is «Врач»: the AI reads
     the conversation by these three words."""
-    return "Ассистент" if user.get("role") == "assistant" else "Врач"
+    from auth import role_base  # noqa: PLC0415  (2.14: the director's own positions stand on a built-in role)
+    return "Ассистент" if role_base(user.get("role")) == "assistant" else "Врач"
 
 
 def candidates(db, doctor_id=None, current_user_id=None):
@@ -360,8 +361,10 @@ def candidates(db, doctor_id=None, current_user_id=None):
     for u in db.q("SELECT id, name, role, doctor_id, status FROM users WHERE status='active'"):
         if u["id"] not in vp:
             continue
-        if (doctor_id and u["doctor_id"] == doctor_id) or u["role"] == "assistant" or u["id"] == current_user_id \
-                or (not doctor_id and u["role"] == "doctor"):
+        from auth import role_base  # noqa: PLC0415
+        base = role_base(u["role"])
+        if (doctor_id and u["doctor_id"] == doctor_id) or base == "assistant" or u["id"] == current_user_id \
+                or (not doctor_id and base == "doctor"):
             out.append((role_label(dict(u)), np.array(json.loads(vp[u["id"]]["emb"]), dtype=np.float32)))
     return out
 

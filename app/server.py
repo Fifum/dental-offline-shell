@@ -109,6 +109,14 @@ class ClinicServer:
             return a.staff_reset_password(user, args[0], args[1] if len(args) > 1 else "")
         if name == "audit_list":
             return a.audit_list(*args[:3])
+        if name == "roles_list":    # 2.14: positions and what each may see and do
+            return a.roles_list()
+        if name == "role_save":
+            return a.role_save(user, args[0] if args else {})
+        if name == "role_reset":
+            return a.role_reset(user, args[0] if args else "")
+        if name == "role_delete":
+            return a.role_delete(user, args[0] if args else "")
         raise AuthError("Неизвестное действие", 404)
 
     def call_api(self, name, args, token, ip):

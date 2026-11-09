@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS audit(
     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, user_id INTEGER, user_name TEXT, action TEXT,
     detail TEXT, ip TEXT);
 CREATE INDEX IF NOT EXISTS ix_audit_at ON audit(at);
+CREATE TABLE IF NOT EXISTS staff_roles(
+    key TEXT PRIMARY KEY, title TEXT, base TEXT, perms TEXT, known TEXT, sort INTEGER DEFAULT 0, updated_at TEXT);
 """
 
 # ------------------------------------------------------------------ permissions --
@@ -53,21 +55,79 @@ PERMS = [
     ("lab", "Лаборатория: заказ-наряды"),
     ("settings", "Настройки и подключение к Dentist Plus"),
     ("staff", "Сотрудники, права и журнал действий"),
+    # 2.14
+    ("expenses_day", "Расходы за день: вносить и видеть только сегодняшние"),
+    ("export", "Выгрузка таблиц в Excel"),
 ]
 PERM_KEYS = [k for k, _ in PERMS]
+PERM_KEYS_2_13 = PERM_KEYS[:PERM_KEYS.index("expenses_day")]   # what a permission list saved before 2.14 knew about
+# groups for the director's checkboxes («Должности» in «Сотрудники»)
+PERM_GROUPS = [
+    ("Расписание и пациенты", ["schedule_view", "schedule_edit", "patients_view", "patients_edit", "transfer"]),
+    ("Медкарта и документы", ["medcard_view", "medcard_edit", "docs", "lab", "sterilization"]),
+    ("Деньги", ["billing", "payments", "cash_report", "fiscal", "expenses_day"]),
+    ("Управление", ["reports", "accounting", "marketing", "shifts_edit", "export"]),
+    ("Склад", ["stock_view", "stock_edit", "equipment"]),
+    ("Настройки", ["refs", "settings", "staff"]),
+]
 
 ROLES = {
     "director": {"title": "Директор", "perms": PERM_KEYS},
     "admin": {"title": "Администратор", "perms": [
         "schedule_view", "schedule_edit", "patients_view", "patients_edit", "medcard_view", "docs",
         "billing", "payments", "cash_report", "fiscal", "transfer", "refs", "stock_view", "stock_edit",
-        "marketing", "shifts_edit", "sterilization", "lab"]},
+        "marketing", "shifts_edit", "sterilization", "lab", "expenses_day", "export"]},
     "doctor": {"title": "Врач", "perms": [
         "schedule_view", "patients_view", "patients_edit", "medcard_view", "medcard_edit", "docs", "billing", "stock_view",
-        "sterilization", "lab"]},
-    "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view", "sterilization"]},
-    "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment"]},
+        "sterilization", "lab", "export"]},
+    "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view", "sterilization", "export"]},
+    "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment", "export"]},
 }
+BASE_ROLES = [k for k in ROLES if k != "director"]   # a position the director makes is built on one of these
+_DB = {"db": None}   # the clinic database, for positions the director changed (set by Auth)
+
+
+def _loads(v, default):
+    try:
+        x = json.loads(v) if v else default
+        return x if isinstance(x, type(default)) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _merge(saved: list, known: list, default: list) -> list:
+    """Saved permissions + what appeared after they were saved (taken from the default of the role)."""
+    return [p for p in PERM_KEYS if p in saved or (p not in known and p in default)]
+
+
+def roles(db=None) -> dict:
+    """Every position: {key: {'title', 'base', 'perms', 'builtin', 'edited', 'sort'}}. Built-in ones come from the code
+    until the director changes them; the director's own positions come from `staff_roles` (synced between laptops)."""
+    db = db or _DB["db"]
+    out = {k: {"title": v["title"], "base": k, "perms": list(v["perms"]), "builtin": True, "edited": False, "sort": i}
+           for i, (k, v) in enumerate(ROLES.items())}
+    rows = []
+    if db is not None:
+        try:
+            rows = db.q("SELECT * FROM staff_roles ORDER BY sort, title")
+        except Exception:  # noqa: BLE001 — a database without the table (old tests)
+            rows = []
+    for r in rows:
+        key = r["key"]
+        if key == "director":
+            continue
+        base = key if key in ROLES else (r["base"] if r["base"] in BASE_ROLES else "assistant")
+        default = ROLES[base]["perms"]
+        perms = _merge(_loads(r["perms"], []), _loads(r["known"], PERM_KEYS_2_13), default)
+        out[key] = {"title": (r["title"] or "").strip() or ROLES.get(key, {}).get("title", key), "base": base, "perms": perms,
+                    "builtin": key in ROLES, "edited": True, "sort": (r["sort"] or 0) + (0 if key in ROLES else 100)}
+    return dict(sorted(out.items(), key=lambda kv: (kv[1]["sort"], kv[1]["title"])))
+
+
+def role_base(key) -> str:
+    """The built-in role a position stands on (voices, «doctor» in the schedule): 'admin', 'doctor', …"""
+    r = roles().get(str(key or ""))
+    return r["base"] if r else str(key or "")
 
 # who is calling the data API right now (set by the server for each request)
 _current = threading.local()
@@ -107,7 +167,7 @@ METHOD_PERMS = {
     "bonus_info": ("payments", "billing", "patients_view"), "bonus_adjust": "settings",
     "family_save": ("patients_edit", "payments"), "family_leave": ("patients_edit", "payments"),
     "sbp_settings": ("payments", "settings"), "sbp_settings_save": "settings", "sbp_to_tablet": "payments",    "taxcert_data": ("payments", "cash_report", "docs"), "taxcert_issue": ("payments", "docs"), "taxcert_list": ("payments", "cash_report", "docs"),
-    "export_xlsx": ANY_USER,
+    "export_xlsx": "export",  # 2.14: a right of its own (was open to everyone)
     "document_signatures": ("docs", "medcard_view", "patients_view"), "document_sign": "docs",
     "questionnaire_questions": ("patients_view", "docs", "patients_edit"), "questionnaire_save": ("patients_edit", "docs", "medcard_edit"),
     "questionnaire_latest": ("patients_view", "medcard_view"),
@@ -148,6 +208,11 @@ METHOD_PERMS = {
     "voice_note": ("patients_edit", "marketing"), "note_parse": ("patients_edit", "marketing"),
     "consent_get": ("patients_view", "medcard_view", "medcard_edit"), "consent_give": ("medcard_edit", "patients_edit"),
     "consent_revoke": ("medcard_edit", "patients_edit"),
+    # 2.14: expenses of the day and the day report by e-mail
+    "day_expenses": ("expenses_day", "accounting"), "day_expense_save": ("expenses_day", "accounting"),
+    "day_expense_delete": ("expenses_day", "accounting"), "day_report": ("expenses_day", "accounting", "cash_report"),
+    "day_report_send": ("expenses_day", "accounting", "cash_report"), "day_report_settings": "settings",
+    "day_report_settings_save": "settings",
     # stock and equipment
     "stock_summary": ("stock_view", "equipment"), "materials": ("stock_view", "stock_edit"),
     "material": ("stock_view", "stock_edit"), "stock_moves": ("stock_view", "stock_edit"),
@@ -274,6 +339,8 @@ AUDITED = {
     "registry_delete": "Удаление реестра", "registry_xlsx": "Реестр для страховой в Excel",
     "local_ai_custom": "Модель клиники для ИИ на компьютере", "consent_give": "Согласие пациента на запись приёма",
     "consent_revoke": "Отзыв согласия на запись приёма", "teeth_voice": "Зубная формула голосом",
+    "day_expense_save": "Расход за день", "day_expense_delete": "Удаление расхода за день",
+    "day_report_send": "Отчёт за день отправлен на почту", "day_report_settings_save": "Настройки отчёта за день на почту",
 }
 
 SESSION_IDLE = timedelta(hours=12)
@@ -327,6 +394,7 @@ def _check_new_password(pw):
 class Auth:
     def __init__(self, db):
         self.db = db
+        _DB["db"] = db
         db.conn.executescript(SCHEMA)
         have = {r[1] for r in db.conn.execute("PRAGMA table_info(users)")}
         for col in ("pin_hash TEXT", "pin_fails INTEGER DEFAULT 0"):  # quick sign-in on a shared computer
@@ -344,17 +412,21 @@ class Auth:
     def effective_perms(user: dict) -> list[str]:
         if user.get("role") == "director":
             return list(PERM_KEYS)
+        role = roles().get(user.get("role") or "") or {"perms": []}
         if user.get("perms"):
             try:
-                custom = json.loads(user["perms"])
-                return [p for p in custom if p in PERM_KEYS]
+                v = json.loads(user["perms"]) if isinstance(user["perms"], str) else None
             except ValueError:
-                pass
-        return list(ROLES.get(user.get("role"), {}).get("perms", []))
+                v = None
+            if isinstance(v, list):           # saved before 2.14: a plain list
+                return _merge(v, PERM_KEYS_2_13, role["perms"])
+            if isinstance(v, dict):
+                return _merge(v.get("perms") or [], v.get("known") or PERM_KEYS_2_13, role["perms"])
+        return list(role["perms"])
 
     def public_user(self, u: dict) -> dict:
         return {"id": u["id"], "login": u["login"], "name": u["name"], "position": u.get("position") or "",
-                "role": u.get("role") or "", "role_title": ROLES.get(u.get("role") or "", {}).get("title", ""),
+                "role": u.get("role") or "", "role_title": (roles().get(u.get("role") or "") or {}).get("title", ""),
                 "status": u["status"], "doctor_id": u.get("doctor_id"), "custom_perms": bool(u.get("perms")),
                 "has_pin": bool(u.get("pin_hash")),
                 "perms": self.effective_perms(u), "created_at": u.get("created_at"), "last_login": u.get("last_login")}
@@ -395,8 +467,10 @@ class Auth:
                 "has_users": self.has_users(), "can_bootstrap": not self.has_users() and is_local,
                 "has_pins": bool(self.db.one("SELECT 1 AS x FROM users WHERE status='active' AND pin_hash IS NOT NULL LIMIT 1")),
                 "user": self.public_user(user) if user else None,
-                "roles": [{"key": k, "title": v["title"], "perms": v["perms"]} for k, v in ROLES.items()],
-                "perm_list": [{"key": k, "title": t} for k, t in PERMS]}
+                "roles": [{"key": k, "title": v["title"], "perms": v["perms"], "base": v["base"], "builtin": v["builtin"]}
+                          for k, v in roles().items()],
+                "perm_list": [{"key": k, "title": t} for k, t in PERMS],
+                "perm_groups": [{"title": t, "keys": keys} for t, keys in PERM_GROUPS]}
 
     def bootstrap(self, f, ip, agent, is_local):
         """First start: the person at the server computer creates the director account."""
@@ -429,7 +503,7 @@ class Auth:
         if self.db.one("SELECT 1 AS x FROM users WHERE login=?", (login,)):
             self._fail("reg:" + ip)
             raise AuthError("Такой логин уже занят", 409)
-        wanted = f.get("role") if f.get("role") in ROLES and f.get("role") != "director" else ""
+        wanted = f.get("role") if f.get("role") in roles() and f.get("role") != "director" else ""
         with self.db.tx() as c:
             c.execute("INSERT INTO users(login, name, position, role, pass_hash, status, created_at) VALUES(?,?,?,?,?,?,?)",
                       (login, name, str(f.get("position") or "").strip(), wanted, hash_password(pw), "pending", _now()))
@@ -459,7 +533,7 @@ class Auth:
     # ------------------------------------------------------------ PIN code --
     def pin_users(self):
         """Who can sign in with a PIN on this computer: names only, for the tiles of the sign-in screen."""
-        return [{"id": u["id"], "name": u["name"], "position": u.get("position") or ROLES.get(u.get("role") or "", {}).get("title", ""),
+        return [{"id": u["id"], "name": u["name"], "position": u.get("position") or (roles().get(u.get("role") or "") or {}).get("title", ""),
                  "locked": (u.get("pin_fails") or 0) >= PIN_MAX_FAILS}
                 for u in self.db.q("SELECT * FROM users WHERE status='active' AND pin_hash IS NOT NULL ORDER BY name")]
 
@@ -573,15 +647,17 @@ class Auth:
         if not u:
             raise AuthError("Сотрудник не найден", 404)
         role = f.get("role", u["role"])
-        if role not in ROLES:
-            raise AuthError("Выберите роль", 400)
+        all_roles = roles()
+        if role not in all_roles:
+            raise AuthError("Выберите должность", 400)
         status = f.get("status", u["status"])
         if status not in ("active", "blocked", "pending"):
             raise AuthError("Неизвестный статус", 400)
         if u["role"] == "director" and (role != "director" or status != "active") and not self._directors_left(uid):
             raise AuthError("В программе должен остаться хотя бы один директор", 400)
         perms = f.get("perms")
-        perms_json = json.dumps([p for p in perms if p in PERM_KEYS]) if isinstance(perms, list) and role != "director" else None
+        perms_json = (json.dumps({"perms": [p for p in perms if p in PERM_KEYS], "known": PERM_KEYS})
+                      if isinstance(perms, list) and role != "director" else None)
         approved = u["status"] == "pending" and status == "active"
         with self.db.tx() as c:
             c.execute("UPDATE users SET name=?, position=?, role=?, perms=?, status=?, doctor_id=?, "
@@ -592,8 +668,71 @@ class Auth:
             if status != "active":
                 c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
         what = "Заявка одобрена" if approved else "Блокировка" if status == "blocked" else "Изменены права сотрудника"
-        self.log(actor, what, f"{u['name']} → {ROLES[role]['title']}", "")
+        self.log(actor, what, f"{u['name']} → {all_roles[role]['title']}", "")
         return self.public_user(self.db.one("SELECT * FROM users WHERE id=?", (uid,)))
+
+    # ----------------------------------------------- 2.14: positions and their rights --
+    def roles_list(self):
+        rs = roles(self.db)
+        n = {r["role"]: r["n"] for r in self.db.q("SELECT role, COUNT(*) AS n FROM users WHERE status<>'blocked' GROUP BY role")}
+        return {"roles": [{"key": k, **v, "people": n.get(k, 0), "default": ROLES.get(v["base"], {}).get("perms", []),
+                           "locked": k == "director"} for k, v in rs.items()],
+                "perm_list": [{"key": k, "title": t} for k, t in PERMS],
+                "perm_groups": [{"title": t, "keys": keys} for t, keys in PERM_GROUPS], "bases": BASE_ROLES}
+
+    def role_save(self, actor, f):
+        """The director changes what a position may see and do, or makes a new one («Старший администратор»)."""
+        f = f or {}
+        key = str(f.get("key") or "").strip()
+        if key == "director":
+            raise AuthError("У директора все права — их нельзя изменить", 400)
+        rs = roles(self.db)
+        title = str(f.get("title") or "").strip()[:60]
+        if key and key not in rs:
+            raise AuthError("Должность не найдена", 404)
+        if not title:
+            raise AuthError("Напишите название должности", 400)
+        if any(v["title"].lower() == title.lower() and k != key for k, v in rs.items()):
+            raise AuthError("Такая должность уже есть", 400)
+        base = key if key in ROLES else (f.get("base") if f.get("base") in BASE_ROLES else (rs.get(key) or {}).get("base") or "")
+        if base not in BASE_ROLES:
+            raise AuthError("Выберите, на какую роль похожа должность", 400)
+        perms = [p for p in (f.get("perms") or []) if p in PERM_KEYS]
+        if key and key == (actor or {}).get("role") and "staff" not in perms:
+            raise AuthError("Нельзя убрать у своей должности право «Сотрудники» — иначе вы не сможете вернуть его", 400)
+        new = not key
+        key = key or "p_" + secrets.token_hex(4)
+        sort = int(f.get("sort") or 0) if str(f.get("sort") or "0").lstrip("-").isdigit() else 0
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO staff_roles(key, title, base, perms, known, sort, updated_at) VALUES(?,?,?,?,?,?,?)
+                         ON CONFLICT(key) DO UPDATE SET title=excluded.title, base=excluded.base, perms=excluded.perms,
+                         known=excluded.known, sort=excluded.sort, updated_at=excluded.updated_at""",
+                      (key, title, base, json.dumps(perms), json.dumps(PERM_KEYS), sort, _now()))
+        self.log(actor, "Новая должность" if new else "Изменены права должности", f"{title}: {len(perms)} прав")
+        return {"key": key, **roles(self.db)[key]}
+
+    def role_reset(self, actor, key):
+        """A built-in position back to what the program gives it by default."""
+        key = str(key or "")
+        if key not in ROLES or key == "director":
+            raise AuthError("Вернуть можно только встроенную должность", 400)
+        with self.db.tx() as c:
+            c.execute("DELETE FROM staff_roles WHERE key=?", (key,))
+        self.log(actor, "Права должности как в программе", ROLES[key]["title"])
+        return {"key": key, **roles(self.db)[key]}
+
+    def role_delete(self, actor, key):
+        key = str(key or "")
+        rs = roles(self.db)
+        if key not in rs or key in ROLES:
+            raise AuthError("Удалить можно только свою должность", 400)
+        n = self.db.one("SELECT COUNT(*) AS n FROM users WHERE role=?", (key,))["n"]
+        if n:
+            raise AuthError(f"На этой должности {n} сотр. — сначала переведите их на другую", 400)
+        with self.db.tx() as c:
+            c.execute("DELETE FROM staff_roles WHERE key=?", (key,))
+        self.log(actor, "Удалена должность", rs[key]["title"])
+        return True
 
     def staff_reject(self, actor, uid):
         u = self.db.one("SELECT * FROM users WHERE id=?", (int(uid),))

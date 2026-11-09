@@ -193,6 +193,13 @@ async function openInvoice(o) {
 async function loadCash() {
   const day = $("#cashDay").value || iso(new Date());
   $("#cashDay").value = day;
+  // 2.14: without «Касса: отчёт за день» the screen is only the expenses of today (an administrator's clean list)
+  $("#cashDay").hidden = $("#cashPrint").hidden = !can("cash_report");
+  if (!can("cash_report")) {
+    $("#cashBody").innerHTML = `<div id="dxHost"></div>`;
+    if (typeof dayExpensesPanel === "function") dayExpensesPanel($("#dxHost"));
+    return;
+  }
   const c = await api.cash_day(day);
   S.cash = c;
   $("#cashBody").innerHTML = `
@@ -203,6 +210,7 @@ async function loadCash() {
       ${c.refunds ? `<div class="stat warn"><span>Возвраты</span><b>${money(c.refunds)}</b></div>` : ""}
     </div>
     <div id="cashShift"></div>
+    ${day === iso(new Date()) ? `<div id="dxHost"></div>` : ""}
     <div class="cash-loyal">${can("payments") ? `<button class="btn ghost small" id="cashCert">Продать сертификат</button>` : ""}<button class="btn ghost small" id="cashCerts">Сертификаты</button><button class="btn ghost small" id="cashMs">Абонементы</button>${c.cert_sales && c.cert_sales.length ? `<span class="muted">За день: ${c.cert_sales.map(x => `${esc(x.code)} — ${money(x.amount)} (${esc(x.method)})`).join("; ")}</span>` : ""}</div>
     <div id="fiscalPanel"></div>
     <div class="pbody" style="margin-top:12px"><div class="pb-head"><b>Оплаты</b></div>
@@ -219,6 +227,7 @@ async function loadCash() {
     </div>`;
   renderFiscal(day);
   if (typeof finCashPanel === "function") finCashPanel(c);
+  if (typeof dayExpensesPanel === "function" && $("#dxHost")) dayExpensesPanel($("#dxHost"));
   const ms = $("#cashMs"); if (ms && typeof openMembershipTypes === "function") ms.onclick = openMembershipTypes;
   const cs = $("#cashCert"); if (cs && typeof sellCertificate === "function") cs.onclick = () => sellCertificate(loadCash);
   const cl = $("#cashCerts"); if (cl && typeof openCertificates === "function") cl.onclick = openCertificates;

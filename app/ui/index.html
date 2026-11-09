@@ -3,27 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
-<script src="theme.js?v=2.13.0"></script>
+<script src="theme.js?v=2.14.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=2.13.0">
-<link rel="stylesheet" href="styles-v2.css?v=2.13.0">
-<link rel="stylesheet" href="styles-brand.css?v=2.13.0">
-<link rel="stylesheet" href="styles-auth.css?v=2.13.0">
-<link rel="stylesheet" href="styles-motion.css?v=2.13.0">
-<link rel="stylesheet" href="styles-stock.css?v=2.13.0">
-<link rel="stylesheet" href="styles-office.css?v=2.13.0">
-<link rel="stylesheet" href="styles-medcard.css?v=2.13.0">
-<link rel="stylesheet" href="styles-theme.css?v=2.13.0">
-<link rel="stylesheet" href="styles-teeth.css?v=2.13.0">
-<link rel="stylesheet" href="styles-voice.css?v=2.13.0">
-<link rel="stylesheet" href="styles-platform.css?v=2.13.0">
-<link rel="stylesheet" href="styles-director.css?v=2.13.0">
-<link rel="stylesheet" href="styles-plans.css?v=2.13.0">
-<link rel="stylesheet" href="styles-crm.css?v=2.13.0">
-<link rel="stylesheet" href="styles-finance.css?v=2.13.0">
-<link rel="stylesheet" href="styles-ai.css?v=2.13.0">
-<link rel="stylesheet" href="styles-settings.css?v=2.13.0">
-<link rel="stylesheet" href="styles-responsive.css?v=2.13.0">
+<link rel="stylesheet" href="styles.css?v=2.14.0">
+<link rel="stylesheet" href="styles-v2.css?v=2.14.0">
+<link rel="stylesheet" href="styles-brand.css?v=2.14.0">
+<link rel="stylesheet" href="styles-auth.css?v=2.14.0">
+<link rel="stylesheet" href="styles-motion.css?v=2.14.0">
+<link rel="stylesheet" href="styles-stock.css?v=2.14.0">
+<link rel="stylesheet" href="styles-office.css?v=2.14.0">
+<link rel="stylesheet" href="styles-medcard.css?v=2.14.0">
+<link rel="stylesheet" href="styles-theme.css?v=2.14.0">
+<link rel="stylesheet" href="styles-teeth.css?v=2.14.0">
+<link rel="stylesheet" href="styles-voice.css?v=2.14.0">
+<link rel="stylesheet" href="styles-platform.css?v=2.14.0">
+<link rel="stylesheet" href="styles-director.css?v=2.14.0">
+<link rel="stylesheet" href="styles-plans.css?v=2.14.0">
+<link rel="stylesheet" href="styles-crm.css?v=2.14.0">
+<link rel="stylesheet" href="styles-finance.css?v=2.14.0">
+<link rel="stylesheet" href="styles-ai.css?v=2.14.0">
+<link rel="stylesheet" href="styles-settings.css?v=2.14.0">
+<link rel="stylesheet" href="styles-staff.css?v=2.14.0">
+<link rel="stylesheet" href="styles-responsive.css?v=2.14.0">
 </head>
 <body>
 <div class="app">
@@ -34,7 +35,7 @@
       <button data-view="schedule" data-perm="schedule_view" class="nav active" title="Календарь"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span>Календарь</span></button>
       <button data-view="patients" data-perm="patients_view" class="nav" title="Пациенты (Ctrl+K)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1-4 4-6 7.5-6s6.5 2 7.5 6"/></svg><span>Пациенты</span></button>
       <button data-view="shifts" data-perm-any="schedule_view,shifts_edit,staff" class="nav" title="Графики работы персонала"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M8 3v4M16 3v4M3.5 10h17"/><path d="M12 12.5v3l2 1.2"/></svg><span>Графики</span></button>
-      <button data-view="cash" data-perm="cash_report" class="nav" title="Касса"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18M7 15h3"/></svg><span>Касса</span></button>
+      <button data-view="cash" data-perm-any="cash_report,expenses_day" class="nav" title="Касса и расходы за день"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18M7 15h3"/></svg><span>Касса</span></button>
       <button data-view="reports" data-perm="reports" class="nav" title="Отчёты: выручка, врачи, услуги, визиты, долги"><svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M7 16.5v-5M12 16.5V7M17 16.5v-8"/></svg><span>Отчёты</span></button>
       <button data-view="accounting" data-perm="accounting" class="nav" title="Бухгалтерия: расходы, зарплата, прибыль"><svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 7.5h7M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15.5h.01M12 15.5h.01M15.5 15.5h.01"/></svg><span>Бухгалтерия</span></button>
       <button data-view="marketing" data-perm="marketing" class="nav" title="CRM: задачи, заявки, обзвон, рассылки, отзывы"><svg viewBox="0 0 24 24"><path d="M4 10v4h3l8 4.5v-13L7 10z"/><path d="M18.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M7 14l1.2 5h2.3l-1-4.6"/></svg><span>CRM</span><i class="badge" id="crmBadge" hidden></i></button>
@@ -222,8 +223,8 @@
 
     <!-- ===================== STAFF ===================== -->    <section class="view" id="view-staff" hidden>
       <header class="top">
-        <div class="title-block"><h1>Сотрудники</h1><span class="muted">Заявки, роли, права и журнал действий</span></div>
-        <div class="seg" id="staffTabs"><button data-s="people" class="on">Сотрудники</button><button data-s="audit">Журнал действий</button></div>
+        <div class="title-block"><h1>Сотрудники</h1><span class="muted">Заявки, должности, права и журнал действий</span></div>
+        <div class="seg" id="staffTabs"><button data-s="people" class="on">Сотрудники</button><button data-s="roles">Должности и права</button><button data-s="audit">Журнал действий</button></div>
       </header>
       <div class="card-scroll" id="staffBody"></div>
     </section>
@@ -316,6 +317,12 @@
           <div id="voiceSettings"></div>
         </div>
 
+        <div class="panel" data-sec="money" id="dayRepPanel">
+          <h3>Отчёт за день на почту</h3>
+          <p class="hint">В конце дня владелец получает письмо: поступления, все расходы администраторов (с документами и без), кассовая смена и файл Excel.</p>
+          <div id="dayRepBody">…</div>
+        </div>
+
         <div class="panel" data-sec="money">
           <h3>Касса (ККТ)</h3>
           <p class="hint">Фискальные чеки по 54-ФЗ: приход при оплате, возврат, смены, X- и Z-отчёты. Пока кассы нет — включите тестовый режим.</p>
@@ -397,41 +404,42 @@
   <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
   <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=2.13.0"></script>
-<script src="booking.js?v=2.13.0"></script>
-<script src="calendar-dnd.js?v=2.13.0"></script>
-<script src="waitlist.js?v=2.13.0"></script>
-<script src="steril.js?v=2.13.0"></script>
-<script src="files.js?v=2.13.0"></script>
-<script src="perio.js?v=2.13.0"></script>
-<script src="sign.js?v=2.13.0"></script>
-<script src="taxcert.js?v=2.13.0"></script>
-<script src="lab.js?v=2.13.0"></script>
-<script src="money.js?v=2.13.0"></script>
-<script src="finance.js?v=2.13.0"></script>
-<script src="record.js?v=2.13.0"></script>
-<script src="docs.js?v=2.13.0"></script>
-<script src="billing.js?v=2.13.0"></script>
-<script src="plans.js?v=2.13.0"></script>
-<script src="journal.js?v=2.13.0"></script>
-<script src="refs.js?v=2.13.0"></script>
-<script src="tpl-editor.js?v=2.13.0"></script>
-<script src="staff.js?v=2.13.0"></script>
-<script src="stock.js?v=2.13.0"></script>
-<script src="stock-lots.js?v=2.13.0"></script>
-<script src="fiscal.js?v=2.13.0"></script>
-<script src="backup.js?v=2.13.0"></script>
-<script src="reports.js?v=2.13.0"></script>
-<script src="director.js?v=2.13.0"></script>
-<script src="accounting.js?v=2.13.0"></script>
-<script src="marketing.js?v=2.13.0"></script>
-<script src="crm.js?v=2.13.0"></script>
-<script src="shifts.js?v=2.13.0"></script>
-<script src="dictate.js?v=2.13.0"></script>
-<script src="ai.js?v=2.13.0"></script>
-<script src="settings-nav.js?v=2.13.0"></script>
-<script src="platform.js?v=2.13.0"></script>
-<script src="motion.js?v=2.13.0"></script>
-<script src="responsive.js?v=2.13.0"></script>
+<script src="app.js?v=2.14.0"></script>
+<script src="booking.js?v=2.14.0"></script>
+<script src="calendar-dnd.js?v=2.14.0"></script>
+<script src="waitlist.js?v=2.14.0"></script>
+<script src="steril.js?v=2.14.0"></script>
+<script src="files.js?v=2.14.0"></script>
+<script src="perio.js?v=2.14.0"></script>
+<script src="sign.js?v=2.14.0"></script>
+<script src="taxcert.js?v=2.14.0"></script>
+<script src="lab.js?v=2.14.0"></script>
+<script src="money.js?v=2.14.0"></script>
+<script src="finance.js?v=2.14.0"></script>
+<script src="record.js?v=2.14.0"></script>
+<script src="docs.js?v=2.14.0"></script>
+<script src="billing.js?v=2.14.0"></script>
+<script src="plans.js?v=2.14.0"></script>
+<script src="journal.js?v=2.14.0"></script>
+<script src="refs.js?v=2.14.0"></script>
+<script src="tpl-editor.js?v=2.14.0"></script>
+<script src="staff.js?v=2.14.0"></script>
+<script src="stock.js?v=2.14.0"></script>
+<script src="stock-lots.js?v=2.14.0"></script>
+<script src="fiscal.js?v=2.14.0"></script>
+<script src="backup.js?v=2.14.0"></script>
+<script src="reports.js?v=2.14.0"></script>
+<script src="director.js?v=2.14.0"></script>
+<script src="accounting.js?v=2.14.0"></script>
+<script src="marketing.js?v=2.14.0"></script>
+<script src="crm.js?v=2.14.0"></script>
+<script src="shifts.js?v=2.14.0"></script>
+<script src="dictate.js?v=2.14.0"></script>
+<script src="ai.js?v=2.14.0"></script>
+<script src="settings-nav.js?v=2.14.0"></script>
+<script src="daily.js?v=2.14.0"></script>
+<script src="platform.js?v=2.14.0"></script>
+<script src="motion.js?v=2.14.0"></script>
+<script src="responsive.js?v=2.14.0"></script>
 </body>
 </html>

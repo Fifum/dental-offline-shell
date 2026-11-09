@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS salary_schemes(
     minus_materials INTEGER DEFAULT 0, updated_at TEXT);
 """
 CATEGORIES = ["Аренда", "Зарплата", "Материалы и закупки", "Зуботехническая лаборатория", "Коммунальные услуги",
-              "Связь и интернет", "Реклама", "Налоги и взносы", "Банк и эквайринг", "Ремонт и обслуживание", "Прочее"]
+              "Связь и интернет", "Реклама", "Налоги и взносы", "Банк и эквайринг", "Ремонт и обслуживание",
+              "Хозяйственные расходы", "Транспорт и доставка", "Прочее"]  # 2.14: the last two — for the front desk's day
 SALARY = "Зарплата"
 AD = "Реклама"  # these expenses can name the patient source they paid for (CRM: payback of advertising)
 METHODS = ["Наличные", "Безналичный перевод", "Карта"]
