@@ -117,3 +117,28 @@
 .plan-lab .pay.lnk{cursor:pointer}
 .plan-lab .pay.lnk:hover{background:var(--hover)}
 .fm-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+/* ===== 2.10.0: visit templates by speciality, prescriptions, «save and document» menu ===== */
+.ex-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ex-bar .muted{font-size:12.5px}
+.ex-panel{border:1px solid var(--line);border-radius:var(--r);background:var(--panel2);padding:10px;display:flex;flex-direction:column;gap:8px}
+.ex-specs{flex-wrap:wrap;align-self:flex-start}
+.ex-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px}
+.ex-it{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--panel);color:var(--ink);font:inherit;cursor:pointer}
+.ex-it:hover{border-color:var(--accent-line);background:var(--hover)}
+.ex-it b{font-weight:600;font-size:13px}
+.ex-it small{color:var(--muted);font-size:11.5px}
+.ex-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px}
+.rx-t input{width:100%;min-width:0}
+.rx-t th:nth-child(1){width:34%}.rx-t th:nth-child(2){width:14%}.rx-t th:nth-child(4){width:12%}.rx-t th:nth-child(5){width:28px}
+.rec-dmenu{position:fixed;z-index:1000;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-pop,0 10px 30px rgba(16,32,42,.16));
+  padding:4px;display:flex;flex-direction:column;min-width:210px}
+.rec-dmenu button{border:0;background:none;text-align:left;padding:8px 12px;border-radius:4px;cursor:pointer;font:inherit;color:var(--ink)}
+.rec-dmenu button:hover{background:var(--accent-soft)}
+.ex-rx{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 12px;margin-top:4px;font-weight:400}
+.ex-rx .chk{display:flex;align-items:flex-start;gap:6px;font-size:12.5px;color:var(--ink2);cursor:pointer}
+.ex-rx .chk input{margin-top:2px}
+.ex-panel[hidden]{display:none}
+.ex-row{display:flex;align-items:center;gap:14px;padding:8px 16px;border-top:1px solid var(--line2)}
+.ex-row:first-of-type{border-top:0}
+.ex-row>span{flex:1;min-width:0}

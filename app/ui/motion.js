@@ -9,15 +9,28 @@
   const ind = document.createElement("i");
   ind.className = "rail-ind instant";
   rail.appendChild(ind);
+  const navBox = rail.querySelector("nav");
   function moveRail() {
     const a = rail.querySelector(".nav.active:not([hidden])");
     if (!a) { ind.style.opacity = "0"; return; }
     const r = a.getBoundingClientRect(), base = rail.getBoundingClientRect();
-    ind.style.opacity = "1";
-    ind.style.setProperty("--y", `${r.top - base.top + 6}px`);
-    ind.style.setProperty("--h", `${Math.max(0, r.height - 12)}px`);
-    if (ind.classList.contains("instant")) { void ind.offsetWidth; setTimeout(() => ind.classList.remove("instant"), 30); }
+    let top = r.top + 6, bottom = r.bottom - 6;
+    if (navBox && navBox.contains(a)) {  /* the menu scrolls: show only the part of the item that is in view */
+      const v = navBox.getBoundingClientRect();
+      top = Math.max(top, v.top); bottom = Math.min(bottom, v.bottom);
+    }
+    ind.style.opacity = bottom > top + 2 ? "1" : "0";
+    ind.style.setProperty("--y", `${top - base.top}px`);
+    ind.style.setProperty("--h", `${Math.max(0, bottom - top)}px`);
+    if (ind.classList.contains("instant") && !scrolling) { void ind.offsetWidth; setTimeout(() => ind.classList.remove("instant"), 30); }
   }
+  /* while the menu scrolls the bar follows the item without the travel animation */
+  let scrolling = null;
+  if (navBox) navBox.addEventListener("scroll", () => {
+    ind.classList.add("instant"); clearTimeout(scrolling);
+    scrolling = setTimeout(() => { scrolling = null; ind.classList.remove("instant"); }, 150);
+    moveRail();
+  }, {passive: true});
   const _show = window.show;
   window.show = function (view) { _show(view); moveRail(); };
   addEventListener("resize", () => { ind.classList.add("instant"); moveRail(); });

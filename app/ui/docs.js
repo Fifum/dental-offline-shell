@@ -27,11 +27,33 @@ function numWords(n) {
 
 function servicesTable(inv) {
   if (!inv || !inv.items || !inv.items.length) return `<p><i>Услуги не выбраны — выставьте счёт или план лечения.</i></p>`;
+  const vs = inv.variants || [], keys = vs.map(v => v.key);
+  if (vs.length) {  /* plan with options: the chosen one, or every option with its own total */
+    const common = inv.items.filter(it => !keys.includes(it.opt || ""));
+    const tot = (inv.totals && inv.totals.by_variant) || {};
+    if (inv.variant && keys.includes(inv.variant)) {
+      const v = vs.find(x => x.key === inv.variant);
+      return `<p>Выбранный вариант: <b>${esc(v.name)}</b></p>` + servicesTable({...inv, variants: [], items: common.concat(inv.items.filter(it => it.opt === inv.variant)), total: tot[inv.variant] ?? inv.total});
+    }
+    return vs.map(v => `<p style="margin-top:14px"><b>Вариант «${esc(v.name)}»</b>${v.warranty ? ` · гарантия ${esc(v.warranty)}` : ""}${v.term ? ` · срок ${esc(v.term)}` : ""}</p>`
+      + servicesTable({...inv, variants: [], items: common.concat(inv.items.filter(it => it.opt === v.key)), total: tot[v.key] ?? 0})).join("");
+  }
   return `<table class="dtab"><tr><th>№</th><th>Код</th><th>Услуга</th><th>Зуб</th><th>Кол-во</th><th>Цена, ₽</th><th>Скидка</th><th>Сумма, ₽</th></tr>${
     inv.items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.code || "")}</td><td>${esc(it.title)}</td><td>${esc(it.tooth || "")}</td><td>${esc(it.qty || 1)}</td>
       <td>${(+it.price).toLocaleString("ru-RU")}</td><td>${it.discount ? esc(it.discount) + "%" : ""}</td><td>${(+it.sum || 0).toLocaleString("ru-RU")}</td></tr>`).join("")}
     ${inv.discount ? `<tr><td colspan="7" style="text-align:right">Скидка на счёт</td><td>${esc(inv.discount)}%</td></tr>` : ""}
     <tr><td colspan="7" style="text-align:right"><b>Итого</b></td><td><b>${(+inv.total).toLocaleString("ru-RU")}</b></td></tr></table>`;
+}
+
+/* prescriptions of the visit (2.10.0): a table for the patient memo, Rp./D.S. lines for the prescription form */
+function rxTable(rx) {
+  if (!rx || !rx.length) return `<p><i>Лекарства не назначены.</i></p>`;
+  return `<table class="dtab"><tr><th>№</th><th>Лекарство</th><th>Доза</th><th>Как принимать</th><th>Сколько</th></tr>${
+    rx.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td>${esc(r.dose || "")}</td><td>${esc(r.how || "")}</td><td>${esc(r.days || "")}</td></tr>`).join("")}</table>`;
+}
+function rxRecipe(rx) {
+  if (!rx || !rx.length) return `<p>Rp.: <span class="blank">${"&nbsp;".repeat(40)}</span></p><p>D. S.: <span class="blank">${"&nbsp;".repeat(40)}</span></p>`;
+  return rx.map(r => `<p style="margin:10px 0 2px">Rp.: <b>${esc(r.name)}</b></p><p style="margin:0 0 8px">D. S.: ${esc([r.dose, r.how, r.days].filter(Boolean).join(", "))}</p>`).join("");
 }
 
 function renderDoc(body, ctx, inputs) {
@@ -57,6 +79,8 @@ function renderDoc(body, ctx, inputs) {
   return body
     .replace(/\{\{table:records\}\}/g, recTable)
     .replace(/\{\{table:services\}\}/g, () => servicesTable(ctx.invoice))
+    .replace(/\{\{table:rx\}\}/g, () => rxTable(rec.rx))
+    .replace(/\{\{rp:rx\}\}/g, () => rxRecipe(rec.rx))
     .replace(/\{\{input:([^|}]+)\|?([^}]*)\}\}/g, (_, label) => { const v = inputs[i++]; return v ? esc(v) : `<span class="blank">${"&nbsp;".repeat(18)}</span>`; })
     .replace(/\{\{([\w.]+)\}\}/g, (_, k) => { const v = vals[k]; return v ? esc(v) : `<span class="blank">${"&nbsp;".repeat(18)}</span>`; });
 }
@@ -78,7 +102,7 @@ async function openDocFill(o) {
   if (!tpl) return toast("Шаблон не найден", true);
   let ctx = await api.doc_context(o.patient_id, o.doctor_id || null, o.record_id || null, o.invoice_id || null, o.visit_id || null);
   const inputs = [...tpl.body.matchAll(/\{\{input:([^|}]+)\|?([^}]*)\}\}/g)].map(m => ({label: m[1].trim(), def: m[2]}));
-  const usesRec = /record\./.test(tpl.body), usesInv = /table:services|invoice\./.test(tpl.body);
+  const usesRec = /record\.|:rx\}/.test(tpl.body), usesInv = /table:services|invoice\./.test(tpl.body);
   const missingClinic = /clinic\./.test(tpl.body) && !(ctx.clinic && ctx.clinic.name);
   const box = modal(`<div class="m-h"><h3>${esc(tpl.title)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b doc-fill">

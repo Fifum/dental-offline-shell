@@ -6,6 +6,7 @@ faster-whisper==1.2.1  # offline speech recognition for dictation
 pillow==13.0.0      # X-ray and photo previews (also icon generation)
 pydicom==3.0.1      # DICOM X-rays in the patient card
 cryptography==50.0.2  # cloud sync encryption (AES-GCM) and signed updates (Ed25519)
+segno==1.6.6        # QR codes of the review pages on the patient tablet (CRM)
 
 # build and dev tools
 pyinstaller==6.22.3

@@ -58,7 +58,9 @@ $$("#repTabs button").forEach(b => b.onclick = () => { S.repTab = b.dataset.k; $
 
 async function loadReports() {
   const body = $("#repBody");
-  const fn = {revenue: repRevenue, doctors: repDoctors, services: repServices, visits: repVisits, debts: repDebts}[S.repTab] || repRevenue;
+  const fn = {revenue: repRevenue, doctors: repDoctors, services: repServices, visits: repVisits, debts: repDebts,
+    patients: typeof repPatients === "function" ? repPatients : null, load: typeof repLoad === "function" ? repLoad : null,
+    conversion: typeof repConversion === "function" ? repConversion : null}[S.repTab] || repRevenue;
   await fn(body);
   bindPeriod(body, loadReports);
   const pr = $("#repPrint", body); if (pr) pr.onclick = () => printTable($("#repTabs button.on").textContent, "#repBody table.tbl");
@@ -95,15 +97,23 @@ async function repDoctors(body) {
 }
 
 async function repServices(body) {
-  const r = await api.report_revenue(S.period.from, S.period.to);
+  const [r, mt] = await Promise.all([api.report_revenue(S.period.from, S.period.to),
+    can("reports") ? api.report_materials(S.period.from, S.period.to).catch(() => null) : null]);
   const q = (S.repSrvQ || "").toLowerCase();
   const rows = r.by_service.filter(s => !q || `${s.title} ${s.code}`.toLowerCase().includes(q));
   const max = Math.max(0, ...rows.map(s => s.sum)), total = r.by_service.reduce((a, s) => a + s.sum, 0);
+  const mat = mt && mt.has_norms ? mt.by_service : null;  // cost of materials by service, when norms are set
+  const share = s => { const c = mat[s.title] || 0;
+    return `<td class="num">${c ? money(c) : `<span class="muted">—</span>`}</td><td class="num ${s.sum && c * 100 / s.sum >= 25 ? "bad-t" : "muted"}">${c ? pct(c, s.sum) : ""}</td>`; };
   body.innerHTML = repTools(`<div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="rsQ" placeholder="Услуга или код" value="${esc(S.repSrvQ || "")}"></div>`) +
-    `<div class="pbody">${rows.length ? `<table class="tbl"><thead><tr><th>Код</th><th>Услуга</th><th class="num">Количество</th><th class="num">Сумма</th><th class="bar-h"></th><th class="num">Доля</th></tr></thead><tbody>${
-      rows.map(s => `<tr><td class="muted">${esc(s.code)}</td><td>${esc(s.title)}</td><td class="num">${(+s.qty).toLocaleString("ru-RU")}</td><td class="num"><b>${money(s.sum)}</b></td><td class="bar-cell">${hbar(s.sum, max)}</td><td class="num muted">${pct(s.sum, total)}</td></tr>`).join("")}
+    (mat ? `<div class="stat-row"><div class="stat"><span>Выставлено по счетам</span><b>${money(mt.billed)}</b></div>
+      <div class="stat"><span>Материалы по нормам</span><b>${money(mt.cost)}</b></div>
+      <div class="stat ${mt.share >= 20 ? "warn" : ""}"><span>Доля материалов в выручке</span><b>${pct(mt.cost, mt.billed)}</b></div>
+      <div class="stat"><span>Списано вручную</span><b>${money(mt.manual_writeoff)}</b><small class="muted">брак, просрочка, хозяйственные</small></div></div>` : "") +
+    `<div class="pbody">${rows.length ? `<table class="tbl"><thead><tr><th>Код</th><th>Услуга</th><th class="num">Количество</th><th class="num">Сумма</th><th class="bar-h"></th><th class="num">Доля</th>${mat ? `<th class="num">Материалы</th><th class="num">Доля материалов</th>` : ""}</tr></thead><tbody>${
+      rows.map(s => `<tr><td class="muted">${esc(s.code)}</td><td>${esc(s.title)}</td><td class="num">${(+s.qty).toLocaleString("ru-RU")}</td><td class="num"><b>${money(s.sum)}</b></td><td class="bar-cell">${hbar(s.sum, max)}</td><td class="num muted">${pct(s.sum, total)}</td>${mat ? share(s) : ""}</tr>`).join("")}
       </tbody></table>` : `<div class="empty"><b>${q ? "Ничего не найдено" : "За период услуг не было"}</b></div>`}</div>
-    <div class="muted note-line">Суммы по строкам счетов с учётом скидок.</div>`;
+    <div class="muted note-line">Суммы по строкам счетов с учётом скидок.${mat ? ` Материалы — списание по нормам услуг (Склад → «Нормы списания»).${mt.estimated ? ` Для ${mt.estimated} ${plural(mt.estimated, "счёта", "счетов", "счетов")} без автосписания стоимость посчитана по нормам и текущим ценам материалов.` : ""}` : ""}</div>`;
   let t; $("#rsQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { S.repSrvQ = e.target.value; repServices(body).then(() => { bindPeriod(body, loadReports); const i = $("#rsQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
 }
 

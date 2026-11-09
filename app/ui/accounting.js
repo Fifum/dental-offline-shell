@@ -66,16 +66,19 @@ async function editExpense(x) {
         <label class="fl">Способ<select class="input" id="exM">${ACC.methods.map(m => `<option ${m === x.method ? "selected" : ""}>${esc(m)}</option>`).join("")}</select></label></div>
       <label class="fl">Статья*<input class="input" id="exC" list="exCats" value="${esc(x.category || S.accCat || "")}" placeholder="Аренда, закупка, лаборатория…"></label>
       <datalist id="exCats">${ACC.categories.map(c => `<option value="${esc(c)}">`).join("")}</datalist>
+      <label class="fl" id="exSrcL">Какую рекламу оплатили (для окупаемости в CRM)<select class="input" id="exSrc"><option value="">— не указано —</option>${[...new Set([...(ACC.sources || []), ...(x.source ? [x.source] : [])])].map(s => `<option ${s === x.source ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
       <div class="grid2"><label class="fl">Сотрудник (для зарплаты)<select class="input" id="exP"><option value="">—</option>${people.map(p => `<option value="${esc(p.key)}" ${p.key === x.person ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
         <label class="fl">За месяц<input class="input" type="month" id="exPer" value="${esc(x.period || "")}"></label></div>
       <label class="fl">Комментарий<input class="input" id="exT" value="${esc(x.comment || "")}"></label>
       <div class="auth-err" id="exErr"></div></div>
     <div class="m-f">${x.id ? `<button class="btn ghost small danger" id="exDel">Удалить</button>` : ""}<span class="muted"></span>
       <button class="btn ghost" data-close>Отмена</button><button class="btn" id="exOk">Сохранить</button></div>`);
+  const srcShow = () => { $("#exSrcL", box).hidden = $("#exC", box).value.trim() !== (ACC.ad_category || "Реклама"); };
+  $("#exC", box).oninput = srcShow; srcShow();
   $("#exOk", box).onclick = async () => {
     try {
       await api.save_expense({id: x.id, date: $("#exD").value, amount: $("#exA").value, method: $("#exM").value, category: $("#exC").value,
-        person: $("#exP").value, period: $("#exPer").value, comment: $("#exT").value});
+        person: $("#exP").value, period: $("#exPer").value, comment: $("#exT").value, source: $("#exSrc").value});
       closeModal(); toast("Расход сохранён"); ACC.categories = []; loadAccounting();
     } catch (e) { $("#exErr").textContent = errText(e); }
   };

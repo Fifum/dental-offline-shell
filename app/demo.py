@@ -303,7 +303,8 @@ def ensure_office(db):
             for day, cat, amount, comment in DEMO_EXPENSES:
                 d = date(y, m, min(day, 28))
                 if d <= today:
-                    c.execute("INSERT INTO expenses VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    c.execute("INSERT INTO expenses(id, date, category, amount, method, person, period, comment, user_name, created_at) "
+                              "VALUES(?,?,?,?,?,?,?,?,?,?)",
                               (f"demo_e{back}_{day}", d.isoformat(), cat, amount, "Безналичный перевод", None, None, comment,
                                "Демо", utcnow()))
         for did, (pct, fixed) in DEMO_PAY.items():
@@ -322,3 +323,105 @@ def ensure_office(db):
                     c.execute('INSERT OR IGNORE INTO work_shifts(person, date, start, "end", note, user_name, updated_at) '
                               "VALUES(?,?,?,?,?,?,?)", (f"d:{did}", d.isoformat(), start, end, "", "Демо", utcnow()))
                 d += timedelta(days=1)
+
+
+def ensure_director(db):
+    """Plans for the month and treatment plans in every status, so the director's screen has something to show (once)."""
+    from director import Director
+    from reports import Reports
+    Director(db, Reports(db))  # table
+    if db.one("SELECT 1 AS x FROM kpi_targets WHERE user_name='Демо' LIMIT 1"):
+        return
+    inv = db.q("""SELECT id, patient_id, doctor_id, items, total, created_at FROM invoices WHERE id LIKE 'demo_i%'
+                  AND plan_id IS NULL ORDER BY created_at""")
+    if not inv:
+        return
+    rnd = random.Random(23)
+    today = date.today()
+    month = today.strftime("%Y-%m")
+    paid = db.q("""SELECT i.doctor_id, SUM(p.amount) AS s FROM payments p JOIN invoices i ON i.id=p.invoice_id
+                   WHERE p.created_at >= ? GROUP BY i.doctor_id""", ((today - timedelta(days=30)).isoformat(),))
+    now = utcnow()
+    days = db.one("SELECT COUNT(DISTINCT substr(created_at,1,10)) AS n FROM payments WHERE created_at >= ?",
+                  ((today - timedelta(days=30)).isoformat(),))["n"] or 1
+    first = today.replace(day=1)
+    workdays = sum(1 for k in range(31) if (first + timedelta(days=k)).month == first.month and (first + timedelta(days=k)).weekday() < 6)
+    k = workdays / days  # a month of work at the demo's usual pace
+    with db.tx() as c:
+        total = sum(r["s"] or 0 for r in paid)
+        rows = [("clinic", "revenue", round(total * k * 1.05, -4) or 300000), ("clinic", "new_patients", 40)]
+        rows += [(f"d:{r['doctor_id']}", "revenue", round((r["s"] or 0) * k * rnd.choice([0.9, 1.0, 1.15]), -3))
+                 for r in paid if r["doctor_id"]]
+        for scope, metric, v in rows:
+            c.execute("INSERT OR REPLACE INTO kpi_targets(id, month, scope, metric, value, user_name, updated_at) VALUES(?,?,?,?,?,?,?)",
+                      (f"{month}:{scope}:{metric}", month, scope, metric, v, "Демо", now))
+        # treatment plans: started (with invoices billed from them), finished, accepted and refused
+        for n, i in enumerate(inv[::3][:18]):
+            st = ["Активен", "Активен", "Лечение завершено", "Подтверждён", "Отказ", "Активен"][n % 6]
+            items = json.loads(i["items"] or "[]")
+            extra = round(i["total"] * rnd.choice([1.5, 2, 3]), -2)
+            items.append({"title": "Следующий этап лечения", "price": extra, "qty": 1, "sum": extra})
+            pid = f"demo_dpl{n}"
+            c.execute("""INSERT OR IGNORE INTO invoices(id, patient_id, doctor_id, items, total, discount, status, comment, created_at,
+                         transferred, kind, plan_status, title) VALUES(?,?,?,?,?,0,'План','',?,1,'plan',?,?)""",
+                      (pid, i["patient_id"], i["doctor_id"], json.dumps(items, ensure_ascii=False), i["total"] + extra,
+                       i["created_at"], st, "План лечения"))
+            if st in ("Активен", "Лечение завершено"):
+                c.execute("UPDATE invoices SET plan_id=? WHERE id=?", (pid, i["id"]))
+
+
+
+def ensure_crm(db):
+    """Requests in every stage, after-visit scores, a couple of tasks and advertising expenses (once)."""
+    from crm import CRM, _auto_id
+    CRM(db)  # tables
+    if db.one("SELECT 1 AS x FROM crm_leads WHERE created_by='Демо' LIMIT 1"):
+        return
+    pats = db.q("SELECT id, name, phone FROM patients WHERE COALESCE(local,0)=0 ORDER BY id LIMIT 40")
+    docs = [d["id"] for d in db.q("SELECT id FROM doctors ORDER BY id")]
+    if len(pats) < 16:
+        return
+    rnd = random.Random(11)
+    today = date.today()
+    now = utcnow()
+    first = ["Мария", "Ольга", "Ирина", "Сергей", "Андрей", "Наталья", "Дмитрий", "Елена", "Алексей", "Татьяна", "Павел", "Юлия"]
+    last = ["Смирнова", "Кузнецова", "Попова", "Соколов", "Лебедев", "Козлова", "Новиков", "Морозова", "Волков", "Зайцева", "Орлов", "Белова"]
+    wants = ["Болит зуб", "Профгигиена", "Имплантация, консультация", "Брекеты для ребёнка", "Отбеливание", "Коронка", "Удаление зуба мудрости"]
+    sources = ["Яндекс Карты", "2ГИС", "Сайт клиники", "Соцсети", "Рекомендация знакомых"]
+    with db.tx() as c:
+        for n in range(16):
+            stage = ["new", "new", "contact", "contact", "booked", "came", "came", "lost"][n % 8]
+            when = (datetime.now() - timedelta(days=rnd.randint(0, 25), hours=rnd.randint(0, 8))).strftime("%Y-%m-%d %H:%M:%S")
+            pid = pats[n]["id"] if stage in ("booked", "came") else None
+            c.execute("""INSERT INTO crm_leads(id, name, phone, source, channel, interest, comment, assignee, next_at, stage, lost_reason,
+                         patient_id, created_at, created_by, updated_at, closed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (f"demo_ld{n}", pats[n]["name"] if pid else f"{last[n % 12]} {first[n % 12]}",
+                       pats[n]["phone"] if pid else f"+7 9{rnd.randint(10, 99)} {rnd.randint(100, 999)}-{rnd.randint(10, 99)}-{rnd.randint(10, 99)}",
+                       sources[n % 5], ["Звонок", "WhatsApp", "Сайт", "Звонок", "Пришёл в клинику"][n % 5], wants[n % 7], "", "",
+                       (today + timedelta(days=rnd.randint(-2, 3))).isoformat() if stage in ("new", "contact") else None,
+                       stage, "Дорого" if stage == "lost" else None, pid, when, "Демо", now, when if stage in ("came", "lost") else None))
+        for n, p in enumerate(pats[16:36]):
+            score = [10, 9, 10, 8, 9, 10, 7, 10, 9, 4, 10, 9, 8, 10, 9, 10, 6, 10, 9, 10][n]
+            at = (datetime.now() - timedelta(days=rnd.randint(0, 20))).strftime("%Y-%m-%d %H:%M:%S")
+            c.execute("""INSERT INTO crm_reviews(id, patient_id, visit_id, doctor_id, score, comment, channel, created_at, user_name)
+                         VALUES(?,?,?,?,?,?,?,?,?)""",
+                      (f"demo_rv{n}", p["id"], None, docs[n % len(docs)] if docs else None, score,
+                       {4: "Долго ждал в коридоре", 6: "Дороговато", 0: "Всё понравилось, спасибо!"}.get(score, "") if n % 3 == 0 or score < 7 else "",
+                       ["tablet", "phone"][n % 2], at, "Демо"))
+            if score <= 6:
+                c.execute("""INSERT OR IGNORE INTO crm_tasks(id, title, kind, rule, patient_id, lead_id, plan_id, assignee, due, status, result,
+                             comment, created_at, created_by, done_at, done_by, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          (_auto_id("review", f"demo_rv{n}"), f"Пациент недоволен (оценка {score}) — позвонить и разобраться", "auto", "review",
+                           p["id"], None, None, "", today.isoformat(), "open", None, "", now, "Программа", None, None, now))
+        for n, (title, d) in enumerate([("Перезвонить по поводу рассрочки на имплантацию", 0), ("Отправить памятку после отбеливания", 1),
+                                        ("Уточнить время повторного приёма", -1)]):
+            c.execute("""INSERT INTO crm_tasks(id, title, kind, rule, patient_id, lead_id, plan_id, assignee, due, status, result, comment,
+                         created_at, created_by, done_at, done_by, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (f"demo_tk{n}", title, "task", None, pats[36 + n % 4]["id"] if len(pats) > 36 + n % 4 else None, None, None, "",
+                       (today + timedelta(days=d)).isoformat(), "open", None, "", now, "Демо", None, None, now))
+        has_src = {r[1] for r in c.execute("PRAGMA table_info(expenses)")}
+        if "source" in has_src and pats:
+            for n, (src, amount) in enumerate([("Яндекс Карты", 15000), ("2ГИС", 8000), ("Соцсети", 12000), ("Сайт клиники", 5000)]):
+                c.execute("""INSERT OR IGNORE INTO expenses(id, date, category, amount, method, person, period, comment, source, user_name, created_at)
+                             VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (f"demo_ad{n}", today.replace(day=1).isoformat(), "Реклама", amount,
+                                                                "Безналичный перевод", None, None, f"Реклама: {src}", src, "Демо", now))

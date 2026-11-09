@@ -6,7 +6,8 @@ const PAY_CORE = ["Наличные", "Карта", "СБП", "Перевод", 
 async function openInvoice(o) {
   const R = await ref();
   const inv = o.id ? await api.invoice(o.id) : null;
-  const st = {items: inv ? inv.items.map(x => ({...x})) : [], discount: inv ? inv.discount : 0};
+  const st = {items: inv ? inv.items.map(x => ({...x})) : [], discount: inv ? inv.discount : 0,
+    variants: inv && inv.variants ? inv.variants.map(v => ({...v})) : [], variant: (inv && inv.variant) || "", tab: ""};
   const pat = P && P.id === o.patient_id ? P : await api.patient(o.patient_id);
   const isPlan = inv ? inv.kind === "plan" : o.kind === "plan";
   const PLAN_ST = ["Предварительный", "Подтверждён", "Активен", "Лечение завершено", "Отказ"];
@@ -20,7 +21,8 @@ async function openInvoice(o) {
       <div class="inv-right">
         <div class="allergy-bar" id="ivAllergy" hidden></div>
         ${isPlan ? `<div class="grid2"><label class="fl">Название плана<input class="input" id="ivTitle" value="${esc((inv && inv.title) || "План лечения от " + fmtDate(iso(new Date())))}"></label>
-          <label class="fl">Статус плана<select class="input" id="ivPSt">${PLAN_ST.map(s => `<option ${s === ((inv && inv.plan_status) || "Предварительный") ? "selected" : ""}>${s}</option>`).join("")}</select></label></div>` : ""}
+          <label class="fl">Статус плана<select class="input" id="ivPSt">${PLAN_ST.map(s => `<option ${s === ((inv && inv.plan_status) || "Предварительный") ? "selected" : ""}>${s}</option>`).join("")}</select></label></div>
+          <div class="pv-bar" id="pvBar"></div>` : ""}
         <div class="grid2"><label class="fl">Врач<select class="input" id="ivDoc"><option value="">—</option>${R.doctors.map(d => `<option value="${esc(d.id)}" ${d.id === ((inv && inv.doctor_id) || o.doctor_id) ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></label>
           <label class="fl">Скидка на счёт, %<input class="input" id="ivDisc" type="number" min="0" max="100" value="${st.discount || 0}"></label></div>
         <table class="tbl compact inv-items"><thead><tr><th>Услуга</th>${isPlan ? "<th>Этап</th>" : ""}<th>Зуб</th><th>Кол.</th><th>Цена</th><th>Скидка %</th><th>Сумма</th><th></th></tr></thead><tbody id="ivItems"></tbody></table>
@@ -29,6 +31,7 @@ async function openInvoice(o) {
         ${isPlan && inv ? `<div class="pays"><div class="pb-head"><b>Лечение по плану</b></div>
           <div class="muted" style="font-size:12.5px">Отметьте, что сделано на этом приёме, и выставьте счёт — услуги перенесутся в счёт.</div>
           <div class="pay-add"><button class="btn" id="planBill">Выставить счёт по отмеченным</button><button class="btn ghost" id="planPrint">Печать плана</button></div></div>` : ""}
+        ${isPlan ? `<div class="pv-pres"><button class="btn ghost" id="planPres">Презентация для пациента</button><span class="muted">Формула, варианты и этапы — печать, PDF или на планшет</span></div>` : ""}
         ${inv && !isPlan ? `<div class="pays"><div class="pb-head"><b>Оплаты</b><span class="muted">Оплачено ${money(inv.paid)} из ${money(inv.total)}</span></div>
           ${inv.payments.map(p => `<div class="pay"><span>${fmtDT(p.created_at)}</span><span>${esc(p.method)}</span><b>${money(p.amount)}</b>${receiptPill(p)}${can("payments") ? `<button class="linkbtn" data-delpay="${esc(p.id)}">удалить</button>` : ""}</div>`).join("") || '<div class="muted">Оплат пока нет</div>'}
           ${inv.total - inv.paid > 0.009 ? (!can("payments") ? `<div class="muted">Оплату принимает администратор</div>` : `<div class="pay-add"><input class="input" id="payAmt" type="number" step="0.01" value="${Math.round((inv.total - inv.paid) * 100) / 100}">
@@ -47,19 +50,71 @@ async function openInvoice(o) {
     let t = 0;
     st.items.forEach(it => { const s = (+it.price || 0) * (+it.qty || 1) * (1 - (+it.discount || 0) / 100); it.sum = Math.round(s * 100) / 100; t += s; });
     t = t * (1 - (+$("#ivDisc", box).value || 0) / 100);
+    if (isPlan && st.variants.length) {
+      const by = pvTotals();
+      $("#ivTotal", box).innerHTML = st.variants.map(v => `<span class="pv-sum${v.key === st.variant ? " on" : ""}">${esc(v.name)} ${money(by[v.key])}</span>`).join("");
+      $$("#pvBar [data-tab]", box).forEach(b => { const s = b.querySelector("small"); if (s && b.dataset.tab) s.textContent = money(by[b.dataset.tab]); });
+      return t;
+    }
     $("#ivTotal", box).textContent = money(t);
     return t;
   };
+  /* sums of every option: common items + the option's own, after the plan discount */
+  const pvTotals = () => {
+    const k = 1 - (+$("#ivDisc", box).value || 0) / 100, keys = st.variants.map(v => v.key);
+    const ls = it => (+it.price || 0) * (+it.qty || 1) * (1 - (+it.discount || 0) / 100);
+    const common = st.items.filter(it => !keys.includes(it.opt || "")).reduce((a, it) => a + ls(it), 0);
+    return Object.fromEntries(keys.map(key => [key, Math.round((common + st.items.filter(it => it.opt === key).reduce((a, it) => a + ls(it), 0)) * k * 100) / 100]));
+  };
+  const billableRow = it => !st.variants.length || !st.variants.some(v => v.key === it.opt) || it.opt === st.variant;
+  /* «эконом / стандарт / премиум»: tabs, option details and the patient's choice */
+  const drawVariants = () => {
+    const bar = $("#pvBar", box); if (!bar) return;
+    if (!st.variants.length) {
+      bar.innerHTML = `<div class="pv-off"><button class="btn ghost small" id="pvOn">+ Несколько вариантов: эконом / стандарт / премиум</button><span class="muted">Пациент выберет один из них, счёт выставится по выбранному</span></div>`;
+      $("#pvOn", bar).onclick = () => { st.variants = [{key: "a", name: "Эконом"}, {key: "b", name: "Стандарт"}, {key: "c", name: "Премиум"}]; st.tab = "a"; drawVariants(); drawItems(); };
+      return;
+    }
+    const cur = st.variants.find(v => v.key === st.tab);
+    bar.innerHTML = `<div class="pv-tabs" role="tablist"><button data-tab="" class="${st.tab ? "" : "on"}">Общее для всех<small>осмотр, гигиена…</small></button>
+        ${st.variants.map(v => `<button data-tab="${esc(v.key)}" class="${st.tab === v.key ? "on" : ""}${st.variant === v.key ? " chosen" : ""}">${esc(v.name)}<small></small></button>`).join("")}
+        ${st.variants.length < 4 ? `<button class="pv-add" id="pvAdd" title="Добавить вариант">+</button>` : ""}</div>
+      ${cur ? `<div class="pv-det"><label class="fl">Название варианта<input class="input" data-v="name" value="${esc(cur.name)}" maxlength="40"></label>
+        <label class="fl">Гарантия<input class="input" data-v="warranty" value="${esc(cur.warranty || "")}" placeholder="например 3 года"></label>
+        <label class="fl">Срок лечения<input class="input" data-v="term" value="${esc(cur.term || "")}" placeholder="например 2 визита, 3 недели"></label>
+        <label class="fl pv-note">Для пациента: чем хорош вариант<input class="input" data-v="note" value="${esc(cur.note || "")}" placeholder="материалы, срок службы, эстетика"></label>
+        <button class="linkbtn danger" id="pvDel">Убрать вариант</button></div>` : `<div class="muted pv-hint">Услуги, выбранные слева, попадают во вкладку, открытую сейчас. Общие услуги входят во все варианты.</div>`}
+      <div class="pv-choice"><label class="fl">Пациент выбрал<select class="input" id="pvChosen"><option value="">— ещё не выбрал —</option>${st.variants.map(v => `<option value="${esc(v.key)}" ${v.key === st.variant ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>
+        <button class="linkbtn" id="pvOff">Один вариант</button></div>`;
+    $$("[data-tab]", bar).forEach(b => b.onclick = () => { st.tab = b.dataset.tab; drawVariants(); drawItems(); });
+    $$("[data-v]", bar).forEach(x => x.oninput = () => { cur[x.dataset.v] = x.value; if (x.dataset.v === "name") { const t = $(`[data-tab="${cur.key}"]`, bar); if (t) t.firstChild.textContent = x.value; } });
+    const add = $("#pvAdd", bar); if (add) add.onclick = () => { const key = "abcdefgh".split("").find(k => !st.variants.some(v => v.key === k)); st.variants.push({key, name: "Вариант " + (st.variants.length + 1)}); st.tab = key; drawVariants(); drawItems(); };
+    const del = $("#pvDel", bar); if (del) del.onclick = async () => {
+      const n = st.items.filter(it => it.opt === cur.key).length;
+      if (n && !await ask(`Убрать вариант «${cur.name}»?`, {danger: true, ok: "Убрать", text: `Его услуги (${n}) тоже удалятся из плана.`})) return;
+      st.items = st.items.filter(it => it.opt !== cur.key); st.variants = st.variants.filter(v => v !== cur);
+      if (st.variant === cur.key) st.variant = ""; st.tab = ""; drawVariants(); drawItems(); };
+    $("#pvOff", bar).onclick = async () => {
+      const extra = st.items.filter(it => st.variants.some(v => v.key === it.opt) && it.opt !== (st.variant || st.variants[0].key)).length;
+      const keep = st.variants.find(v => v.key === st.variant) || st.variants[0];
+      if (!await ask("Оставить один вариант?", {ok: "Оставить", text: `Останутся общие услуги и вариант «${keep.name}»${extra ? `, услуги других вариантов (${extra}) удалятся` : ""}.`})) return;
+      st.items = st.items.filter(it => !st.variants.some(v => v.key === it.opt) || it.opt === keep.key).map(it => ({...it, opt: ""}));
+      st.variants = []; st.variant = ""; st.tab = ""; drawVariants(); drawItems(); };
+    $("#pvChosen", bar).onchange = e => { st.variant = e.target.value; if (st.variant && $("#ivPSt", box).value === "Предварительный") $("#ivPSt", box).value = "Подтверждён"; drawVariants(); drawItems(); };
+  };
   const drawItems = () => {
-    $("#ivItems", box).innerHTML = st.items.map((it, i) => `<tr>
-      <td>${isPlan && inv ? `<input type="checkbox" class="pl-ch" data-i="${i}"> ` : ""}${esc(it.title)}<small class="muted" style="display:block">${esc(it.code || "")}</small></td>
+    const pv = isPlan && st.variants.length;
+    $("#ivItems", box).innerHTML = st.items.map((it, i) => `<tr class="${pv && st.tab && (it.opt || "") !== st.tab && st.variants.some(v => v.key === it.opt) ? "pv-dim" : ""}">
+      <td>${isPlan && inv ? (billableRow(it) ? `<input type="checkbox" class="pl-ch" data-i="${i}"> ` : `<span class="pl-no" title="Вариант не выбран пациентом">—</span> `) : ""}${esc(it.title)}<small class="muted" style="display:block">${esc(it.code || "")}</small>
+      ${pv ? `<select class="input sm pv-opt" data-i="${i}" title="В какой вариант входит услуга"><option value="">Во всех вариантах</option>${st.variants.map(v => `<option value="${esc(v.key)}" ${it.opt === v.key ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select>` : ""}</td>
       ${isPlan ? `<td><input class="input sm" data-i="${i}" data-k="stage" value="${esc(it.stage || "1")}" style="width:50px"></td>` : ""}
       <td><input class="input sm" data-i="${i}" data-k="tooth" value="${esc(it.tooth || "")}" style="width:56px"></td>
       <td><input class="input sm" data-i="${i}" data-k="qty" type="number" min="1" value="${esc(it.qty || 1)}" style="width:56px"></td>
       <td><input class="input sm" data-i="${i}" data-k="price" type="number" min="0" value="${esc(it.price)}" style="width:90px"></td>
       <td><input class="input sm" data-i="${i}" data-k="discount" type="number" min="0" max="100" value="${esc(it.discount || 0)}" style="width:60px"></td>
       <td class="sum">${money(it.sum || it.price)}</td><td><button class="linkbtn" data-del="${i}">×</button></td></tr>`).join("")
-      || `<tr><td colspan="7" class="muted" style="padding:16px">Выберите услуги слева</td></tr>`;
+      || `<tr><td colspan="9" class="muted" style="padding:16px">Выберите услуги слева</td></tr>`;
+    $$("#ivItems .pv-opt", box).forEach(x => x.onchange = () => { st.items[+x.dataset.i].opt = x.value; drawItems(); });
     $$("#ivItems input:not(.pl-ch)", box).forEach(x => x.oninput = () => { st.items[+x.dataset.i][x.dataset.k] = x.value; total();
       $$("#ivItems .sum", box).forEach((td, i) => td.textContent = money(st.items[i].sum)); });
     $$("#ivItems [data-del]", box).forEach(b => b.onclick = () => { st.items.splice(+b.dataset.del, 1); drawItems(); });
@@ -73,19 +128,20 @@ async function openInvoice(o) {
       return h + `<button class="svc" data-id="${esc(s.id)}"><span>${esc(s.title)}<small>${esc(s.code || "")}</small></span><b>${money(s.price)}</b></button>`; }).join("")
       || `<div class="muted" style="padding:10px">Прайс пуст. Добавьте услуги в разделе «Шаблоны и прайс» или импортируйте из Excel (CSV).</div>`;
     $$(".svc", box).forEach(b => b.onclick = () => { const s = rows.find(x => x.id === b.dataset.id);
-      st.items.push({service_id: s.id, code: s.code, title: s.title, price: s.price, qty: 1, discount: 0, tooth: ""}); drawItems(); });
+      st.items.push({service_id: s.id, code: s.code, title: s.title, price: s.price, qty: 1, discount: 0, tooth: "", ...(isPlan && st.tab ? {opt: st.tab} : {})}); drawItems(); });
   };
   let t; $("#ivQ", box).oninput = () => { clearTimeout(t); t = setTimeout(drawSvc, 120); };
   $("#ivDisc", box).oninput = total;
   $("#ivFree", box).onclick = async () => { const v = await askInput("Услуга не из прайса", [{label: "Название услуги"}, {label: "Цена, ₽", type: "number", value: "0"}], {ok: "Добавить"}); if (!v) return; const [title, priceS] = v; const price = +(priceS || 0);
-    st.items.push({title, price, qty: 1, discount: 0, code: ""}); drawItems(); };
-  drawSvc(); drawItems();
+    st.items.push({title, price, qty: 1, discount: 0, code: "", ...(isPlan && st.tab ? {opt: st.tab} : {})}); drawItems(); };
+  drawVariants(); drawSvc(); drawItems();
 
   const save = async () => {
     if (!st.items.length) { toast("Добавьте хотя бы одну услугу", true); return null; }
     return api.save_invoice({id: inv ? inv.id : null, patient_id: o.patient_id, visit_id: inv ? inv.visit_id : o.visit_id,
       doctor_id: $("#ivDoc", box).value, items: st.items, discount: +$("#ivDisc", box).value || 0, comment: $("#ivCom", box).value.trim(),
-      kind: isPlan ? "plan" : "invoice", title: isPlan ? $("#ivTitle", box).value.trim() : "", plan_status: isPlan ? $("#ivPSt", box).value : null});
+      kind: isPlan ? "plan" : "invoice", title: isPlan ? $("#ivTitle", box).value.trim() : "", plan_status: isPlan ? $("#ivPSt", box).value : null,
+      ...(isPlan ? {variants: st.variants, variant: st.variant} : {})});
   };
   $("#ivSave", box).onclick = async () => { const id = await save(); if (!id) return; toast(isPlan ? "План сохранён" : "Счёт сохранён");
     if (o.after) { closeModal(); o.after(id); return; }
@@ -93,10 +149,14 @@ async function openInvoice(o) {
   const pb = $("#planBill", box); if (pb) pb.onclick = async () => {
     const idx = $$(".pl-ch", box).filter(c => c.checked).map(c => +c.dataset.i);
     if (!idx.length) return toast("Отметьте выполненные услуги", true);
-    await save();
-    const nid = await api.plan_to_invoice(inv.id, idx, o.visit_id || null);
-    toast("Счёт выставлен по плану"); afterChange(); openInvoice({patient_id: o.patient_id, id: nid});
+    try {
+      await save();
+      const nid = await api.plan_to_invoice(inv.id, idx, o.visit_id || null);
+      toast("Счёт выставлен по плану"); afterChange(); openInvoice({patient_id: o.patient_id, id: nid});
+    } catch (e) { toast(errText(e), true); }
   };
+  const ps = $("#planPres", box); if (ps) ps.onclick = async () => { const id = await save(); if (!id) return; closeModal(); afterChange();
+    openPlanPresentation(id, () => openInvoice({...o, id})); };
   // read form values BEFORE closeModal() — it empties the dialog
   const pp = $("#planPrint", box); if (pp) pp.onclick = async () => { const doc = $("#ivDoc", box).value; const id = await save(); if (!id) return; closeModal();
     openDocFill({patient_id: o.patient_id, template_id: "doc_plan", invoice_id: id, doctor_id: doc}); };

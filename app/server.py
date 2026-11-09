@@ -56,7 +56,7 @@ def _strip_patient(p, perms):
     if not p:
         return p
     if "medcard_view" not in perms:
-        p["records"], p["teeth_local"] = [], {}
+        p["records"], p["teeth_local"], p["surf_local"] = [], {}, {}
     if not perms.intersection({"billing", "payments"}):
         p["invoices"], p["balance_local"] = [], 0
     if "docs" not in perms:

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS salary_schemes(
 CATEGORIES = ["Аренда", "Зарплата", "Материалы и закупки", "Зуботехническая лаборатория", "Коммунальные услуги",
               "Связь и интернет", "Реклама", "Налоги и взносы", "Банк и эквайринг", "Ремонт и обслуживание", "Прочее"]
 SALARY = "Зарплата"
+AD = "Реклама"  # these expenses can name the patient source they paid for (CRM: payback of advertising)
 METHODS = ["Наличные", "Безналичный перевод", "Карта"]
 BASES = {"paid": "от оплаченного", "billed": "от выставленных счетов"}
 
@@ -55,6 +56,8 @@ class Accounting:
         db.conn.executescript(SCHEMA)
         if "minus_lab" not in {r[1] for r in db.conn.execute("PRAGMA table_info(salary_schemes)")}:
             db.conn.execute("ALTER TABLE salary_schemes ADD COLUMN minus_lab INTEGER DEFAULT 0")
+        if "source" not in {r[1] for r in db.conn.execute("PRAGMA table_info(expenses)")}:  # 2.11: which ad channel was paid for
+            db.conn.execute("ALTER TABLE expenses ADD COLUMN source TEXT")
         db.conn.commit()
 
     # ------------------------------------------------------------ expenses --
@@ -93,16 +96,17 @@ class Accounting:
         if person and not any(p["key"] == person for p in people(self.db)):
             raise ValueError("Сотрудник не найден")
         period = str(f.get("period") or "")[:7] or None
+        source = (str(f.get("source") or "").strip()[:60] or None) if cat == AD else None
         eid = f.get("id") or f"E-{uuid.uuid4().hex[:10]}"
         vals = (day, cat, amount, str(f.get("method") or METHODS[0])[:40], person, period,
-                str(f.get("comment") or "").strip()[:300])
+                str(f.get("comment") or "").strip()[:300], source)
         with self.db.tx() as c:
             if c.execute("SELECT 1 FROM expenses WHERE id=?", (eid,)).fetchone():
-                c.execute("UPDATE expenses SET date=?, category=?, amount=?, method=?, person=?, period=?, comment=? WHERE id=?",
+                c.execute("UPDATE expenses SET date=?, category=?, amount=?, method=?, person=?, period=?, comment=?, source=? WHERE id=?",
                           (*vals, eid))
             else:
-                c.execute("""INSERT INTO expenses(id, date, category, amount, method, person, period, comment, user_name, created_at)
-                             VALUES(?,?,?,?,?,?,?,?,?,?)""", (eid, *vals, who, _now()))
+                c.execute("""INSERT INTO expenses(id, date, category, amount, method, person, period, comment, source, user_name, created_at)
+                             VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (eid, *vals, who, _now()))
         return eid
 
     def delete_expense(self, eid):

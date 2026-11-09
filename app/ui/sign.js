@@ -80,12 +80,12 @@ async function chooseTablet(tablets) {
 }
 
 /** Sends a task and waits on screen until the patient finishes it on the tablet. */
-async function sendToTablet(t, kind, patientId, documentId, after) {
+async function sendToTablet(t, kind, patientId, documentId, after, extra) {
   let r;
-  try { r = await api.tablet_send(t.id, kind, patientId, documentId || null); } catch (e) { return toast(errText(e), true); }
+  try { r = await api.tablet_send(t.id, kind, patientId, documentId || null, extra || null); } catch (e) { return toast(errText(e), true); }
   let stop = false;
   const box = modal(`<div class="m-h"><h3>Отправлено на «${esc(t.name)}»</h3><button class="x" data-close>×</button></div>
-    <div class="m-b tb-wait"><div class="scan"><i></i><span id="tbSt">Передайте планшет пациенту. Ждём, пока он ${kind === "sign" ? "подпишет документ" : "заполнит анкету"}…</span></div></div>
+    <div class="m-b tb-wait"><div class="scan"><i></i><span id="tbSt">Передайте планшет пациенту. Ждём, пока он ${kind === "sign" ? "подпишет документ" : kind === "plan" ? "выберет вариант и подпишет план" : kind === "nps" ? "оценит визит" : "заполнит анкету"}…</span></div></div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" id="tbCancel">Отменить задание</button></div>`, {onClose: () => { stop = true; }});
   $("#tbCancel", box).onclick = async () => { stop = true; await api.tablet_cancel(t.id, r.task_id); closeModal(); toast("Задание на планшете отменено"); };
   while (!stop) {
@@ -95,7 +95,7 @@ async function sendToTablet(t, kind, patientId, documentId, after) {
     if (s.state === "opened") $("#tbSt", box).textContent = "Пациент открыл задание на планшете…";
     if (s.state === "done") {
       stop = true; closeModal();
-      toast(kind === "sign" ? "Пациент подписал документ на планшете" : `Анкета заполнена${s.result && s.result.alerts && s.result.alerts.length ? ": " + s.result.alerts.join("; ") : ""}`);
+      toast(kind === "sign" ? "Пациент подписал документ на планшете" : kind === "plan" ? "Пациент подписал план на планшете" : kind === "nps" ? `Пациент оценил визит: ${s.result ? s.result.score : ""}` : `Анкета заполнена${s.result && s.result.alerts && s.result.alerts.length ? ": " + s.result.alerts.join("; ") : ""}`);
       if (after) after(s.result); break;
     }
     if (["expired", "cancelled", "gone"].includes(s.state)) { stop = true; closeModal(); toast("Задание на планшете закрыто, не выполнено", true); break; }

@@ -57,7 +57,19 @@ CREATE TABLE IF NOT EXISTS invoices(
 CREATE TABLE IF NOT EXISTS payments(
     id TEXT PRIMARY KEY, invoice_id TEXT, patient_id TEXT, amount REAL, method TEXT,
     comment TEXT, created_at TEXT, transferred INTEGER DEFAULT 0, transferred_at TEXT);
+-- ===== history of Dentist Plus visits for the director's analytics: like `visits`, but never purged
+CREATE TABLE IF NOT EXISTS visits_archive(
+    id TEXT PRIMARY KEY, patient_id TEXT, doctor_id TEXT, branch_id TEXT, start TEXT, "end" TEXT,
+    status TEXT, title TEXT, chair TEXT, updated_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_va_start ON visits_archive(start);
 """
+
+# chair of a synced visit, from the raw Dentist Plus record (same fields as DB.CHAIR)
+_RAW_CHAIR = """COALESCE(json_extract(data,'$.chair.title'), json_extract(data,'$.chair.name'), json_extract(data,'$.chair_name'),
+                json_extract(data,'$.chair_title'), json_extract(data,'$.chair'), json_extract(data,'$.cabinet'),
+                json_extract(data,'$.room'))"""
+_TO_ARCHIVE = f"""INSERT OR REPLACE INTO visits_archive(id, patient_id, doctor_id, branch_id, start, "end", status, title, chair, updated_at)
+                  SELECT id, patient_id, doctor_id, branch_id, start, "end", status, title, {_RAW_CHAIR}, synced_at FROM visits"""
 
 
 class DB:
@@ -89,6 +101,16 @@ class DB:
             self.conn.execute("ALTER TABLE local_visits ADD COLUMN push_force INTEGER DEFAULT 0")
         if "series_id" not in lv:  # recurring visits: every visit of one series shares the id
             self.conn.execute("ALTER TABLE local_visits ADD COLUMN series_id TEXT")
+        if "plan_id" not in {r[1] for r in self.conn.execute("PRAGMA table_info(invoices)")}:
+            self.conn.execute("ALTER TABLE invoices ADD COLUMN plan_id TEXT")  # invoice billed from a treatment plan
+        icols = {r[1] for r in self.conn.execute("PRAGMA table_info(invoices)")}
+        if "variants" not in icols:  # plan options «эконом / стандарт / премиум» (JSON) and the chosen one
+            self.conn.execute("ALTER TABLE invoices ADD COLUMN variants TEXT")
+        if "variant" not in icols:
+            self.conn.execute("ALTER TABLE invoices ADD COLUMN variant TEXT")
+        if self.conn.execute("SELECT value FROM meta WHERE key='visits_archive'").fetchone() is None:
+            self.conn.execute(_TO_ARCHIVE)  # first start: what is already in the mirror
+            self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('visits_archive','1')")
         self.conn.commit()
 
     @contextmanager
@@ -185,6 +207,10 @@ class DB:
                 c.execute('INSERT OR REPLACE INTO visits VALUES(?,?,?,?,?,?,?,?,?,?)',
                           (v["id"], v["patient_id"], v["doctor_id"], v["branch_id"], v["start"], v["end"],
                            v["status"], v["title"], json.dumps(v["raw"], ensure_ascii=False), now))
+            # the archive follows the same window (a visit deleted in Dentist Plus goes from it too), but keeps the past
+            end = (date.fromisoformat(date_to) + timedelta(days=1)).isoformat()
+            c.execute('DELETE FROM visits_archive WHERE start >= ? AND start < ?', (date_from, end))
+            c.execute(_TO_ARCHIVE + ' WHERE start >= ? AND start < ?', (date_from, end))
 
     def upsert_extra(self, patient_id, kind, data):
         with self.tx() as c:
@@ -217,7 +243,7 @@ class DB:
 
     def wipe(self, with_local=True):
         with self.tx() as c:
-            for t in ("branches", "doctors", "patients", "visits", "patient_extras", "sync_log", "meta"):
+            for t in ("branches", "doctors", "patients", "visits", "visits_archive", "patient_extras", "sync_log", "meta"):
                 c.execute(f"DELETE FROM {t}")
             if with_local:
                 for t in self.LOCAL_TABLES + ("notes",):
@@ -234,7 +260,12 @@ class DB:
                             "DELETE FROM expenses WHERE id LIKE 'demo_%'", "DELETE FROM work_shifts WHERE user_name='Демо'",
                             "DELETE FROM salary_schemes WHERE person IN ('d:11','d:12','d:13','d:14','d:15')",
                             "DELETE FROM patient_marketing WHERE patient_id NOT IN (SELECT id FROM patients)",
-                            "DELETE FROM marketing_calls WHERE patient_id NOT IN (SELECT id FROM patients)"):
+                            "DELETE FROM kpi_targets WHERE user_name='Демо'",
+                            "DELETE FROM marketing_calls WHERE patient_id NOT IN (SELECT id FROM patients)",
+                            # demo CRM: requests, scores and tasks of patients that are gone
+                            "DELETE FROM crm_leads WHERE created_by='Демо' OR patient_id NOT IN (SELECT id FROM patients)",
+                            "DELETE FROM crm_reviews WHERE patient_id NOT IN (SELECT id FROM patients)",
+                            "DELETE FROM crm_tasks WHERE created_by='Демо' OR patient_id NOT IN (SELECT id FROM patients)"):
                     try:
                         c.execute(sql)
                     except sqlite3.OperationalError:

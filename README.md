@@ -38,17 +38,26 @@ working without it.
 | **Waiting list** | Patients who want an earlier or a specific time, with a count above the calendar and a hint when a visit of that doctor is cancelled |
 | **Visit reminders** | One click opens WhatsApp with a ready reminder text (name, date, time, doctor, clinic) or copies it for Telegram; editable template; sent reminders are marked for the whole team |
 | **Patient card** | Visits, dental formula (permanent and milk teeth), treatments, payments, treatment plans, documents, notes, full history feed |
-| **Medical record** | Complaints, anamnesis, examination, treatment with one-click phrase templates, ICD-10 dental codes, interactive tooth chart |
+| **Medical record** | Complaints, anamnesis, examination, treatment with one-click phrase templates, ICD-10 dental codes, interactive tooth chart: several states per tooth, caries / filling / temporary filling on each of the five surfaces, filled canals and posts, implants with crowns, bridges joined across abutments and pontics |
 | **X-rays and files** | X-rays (DICOM included, windowing and MONOCHROME1 handled), photos, scans and PDFs in the patient card; add by button, drag & drop, Ctrl+V or from the visiograph's export folder; viewer with zoom, pan, brightness, contrast, invert, rotate and a before/after split comparison; files mirrored to the backup flash drive |
 | **Periodontal chart** | Pocket depth, recession, bleeding, mobility and furcation for 32 teeth; fast keyboard entry, voice entry ("tooth sixteen, three two four, bleeding, palatal…"), colour-coded depths, mean depth / CAL / % ≥ 4 mm / BOP and the change since the previous chart |
 | **Allergy check** | The patient's allergies (card and anamnesis) against the treatment, recommendations and billed services: same substance is a stop, same group (e.g. amide anaesthetics, penicillins) is a warning |
-| **Documents** | 11 templates (consents, contract, plan, act, extract, form 043/u, receipt) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
+| **Visit templates and prescriptions** | 17 visit templates (protocols) for therapy, surgery, prosthetics, orthodontics, periodontics and pediatrics fill the record fields with the chosen tooth, ICD-10 diagnoses, the tooth state and prescriptions in one click; any visit can be saved as a template; a medicines list with dose, how to take and duration; prescriptions are checked against the patient's allergies |
+| **Documents** | 14 templates (consents, contract, plan, act, extract, form 043/u, receipt, prescription form 107-1/u, referral, patient memo) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
 | **Signatures** | Documents signed with a mouse, pen or finger on this screen or on the patient tablet; signer, time, place and a hash of the text are kept, an edit after signing is flagged, signatures print under the document |
 | **Patient tablet** | Any tablet browser on the clinic Wi-Fi, paired once with a 6-digit code (no login); staff send a document or the questionnaire from the card and see "done" when the patient signs; the tablet key opens only its own task |
 | **Health questionnaire** | Yes/no questions with details, signed by the patient; saved as a signed document, key answers shown on the card, allergies fed into the allergy check |
 | **Tax deduction certificate** | Certificate of paid medical services for the tax office: year totals from payments, payer other than the patient, numbering per year, saved to the card, yearly register |
-| **Excel export** | Report, accounting, call-list and sterilization tables saved as .xlsx with numbers kept as numbers (built without extra libraries) |
+| **Excel export** | Report, accounting, CRM and sterilization tables saved as .xlsx with numbers kept as numbers (built without extra libraries) |
 | **Money** | Invoices from the price list with per-line discounts, partial payments, staged treatment plans billed step by step, daily cash report |
+| **Treatment plan options** | One plan with «economy / standard / premium» options: common items plus each option's own services, warranty, term and a note; the patient's choice confirms the plan and only the chosen option can be billed; analytics count an undecided plan once, at its cheapest option |
+| **Plan presentation** | A patient-facing page: clinic header, the tooth chart with plan teeth and stage numbers, options side by side, stages and prices, signatures; print, a real PDF (headless Edge, no extra software), save to the patient's documents, or send to the patient tablet where the patient picks an option and signs |
+| **Director's screen** | The director lands on it: today's and the month's payments against the same days of last month, a forecast from the pace of working days, plan completion, average check, new patients, cancellations and no-shows; doctors with plan, a «where we should be today» tick, forecast and load by the work schedule; plain-language hints (behind plan and by how much a day, free slots in the next days, the weekday and time of day with most no-shows, plans not started, debts) that open the right screen; the week ahead |
+| **Plan vs fact** | Monthly targets for payments, visits and new patients for the clinic and every doctor, fact, percent and forecast (visits count what is already booked), copy last month's plan; synced between laptops |
+| **CRM** | Front-desk tasks with due dates and assignees, a menu badge and one-click call results; tasks made by rules — a call the day after an extraction, an implant check-up, a hygiene recall in six months, an agreed or started plan with no visits, a low visit score for the director — with ids built from rule, patient and date so two offline laptops make the same task; requests on a board «new → contacted → booked → came / lost» that move on by themselves from the schedule, phone matching against existing cards, a funnel by source and channel; patient segments (lapsed, unfinished plan, service long ago, birthday, age, source, doctor, debt) with a WhatsApp mailing queue |
+| **Visit scores and reviews** | After-visit NPS 0–10 on the patient tablet, by WhatsApp or phone; a high score shows QR codes of the clinic's Yandex Maps and 2GIS pages on the tablet, a low one opens a task for the director; NPS by doctor |
+| **Advertising payback** | «Advertising» expenses name the source they paid for; the sources report shows requests, new patients, payments, spend, cost of a new patient and payback |
+| **Analytics** | New vs repeat patients and revenue from new ones, retention cohorts (returned within 3 and 6 months), patients who stopped coming; chair and doctor load, free and lost hours, a weekday × hour heat map; conversion consultation → plan → treatment per doctor with plan sums, refusals and amounts billed from plans; material cost and its share of revenue per service |
 | **Dental lab orders** | Work orders with teeth, shade, fitting and due dates, statuses and the lab's price; overdue highlighted, printable order form, paying a lab records an expense, lab cost can be subtracted from a doctor's pay, orders visible in treatment plans |
 | **Certificates, bonuses, families** | Gift certificates sold at the cash desk and redeemed by code with a remaining balance; bonus points as a percent of money payments with a cap per invoice; families share bonuses and get a discount offered in every invoice; deleting a payment gives everything back |
 | **SBP and terminal** | The clinic's static SBP QR code with the amount on screen or on the patient tablet; an optional terminal operation number on card payments; the day's cash counts real money only |
@@ -175,6 +184,10 @@ Dentist Plus partner API
 | `app/xlsx.py` | Minimal .xlsx writer |
 | `app/lab.py` | Dental lab orders, labs, paying labs |
 | `app/loyalty.py` | Gift certificates, bonus points, families |
+| `app/plans.py` | Treatment plan options: cleaning, sums per option, billable items, the patient's choice, signing on the tablet, PDF through headless Edge |
+| `app/crm.py` | CRM: tasks and the rules that make them, requests and the funnel, segments, visit scores (NPS) and review QR codes, advertising spend by source |
+| `app/ui/crm.js` | Tasks, the requests board and funnel, segments and the WhatsApp mailing, scores, CRM settings, the CRM tab of the patient card |
+| `app/director.py` | Director's analytics: visit history (schedule + archive of Dentist Plus visits), main screen and hints, patients and retention, load, conversion, materials share, plan vs fact |
 | `app/replica.py` | Replication: change capture by triggers, integer ids made stable (uid / login), three-way merge, conflict journal |
 | `app/cloud.py` | Cloud client: connection codes, clinic key, AES-GCM encryption, pull / merge / push loop, encrypted file transfer |
 | `cloud/cloud_server.py` | Multi-clinic sync server (standard library only): devices, plans and trials, versioned rows, files; admin commands |
@@ -221,7 +234,7 @@ Python 3.11 · pywebview (Edge WebView2) · SQLite · requests · faster-whisper
 PyInstaller (single-file exe) · Playwright for screenshots
 
 No web framework: the clinic server is the standard-library HTTP server on a clinic computer, and the
-cloud server is a single standard-library Python file. Encryption and signatures: `cryptography`.
+cloud server is a single standard-library Python file. Encryption and signatures: `cryptography`; QR codes: `segno`.
 
 ## Running it
 
@@ -268,6 +281,10 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_money_tools.py          # 107 checks: lab orders and payroll, certificates, bonuses, families, SBP, fiscal rules
 .venv\Scripts\python tests\test_stock_lots.py           # 55 checks: FEFO lots, expiry, expired write-off, purchase list, cheapest supplier, barcode scanner, rights
 .venv\Scripts\python tests\test_installer.py            # 15 checks: folder install, in-place update, broken installer, leftovers, data folder untouched
+.venv\Scripts\python tests\test_exams.py                # 40 checks: visit templates and medicines, hiding and restoring built-ins, prescriptions in the record, allergy check, documents
+.venv\Scripts\python tests\test_plans.py                # 78 checks: plan options and sums, choice and billing, tablet choice and signature, surfaces of the tooth chart, migration, PDF, rights
+.venv\Scripts\python tests\test_director.py             # 72 checks: visit history after the mirror is purged, new/repeat and retention, load by chairs and schedules, conversion, materials, plan vs fact, rights, change capture under UPSERT
+.venv\Scripts\python tests\test_crm.py                  # 109 checks: rule tasks and their ids, plan and score tasks, requests and funnel, segments, NPS and the tablet, ad payback, sync capture, rights
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 
@@ -277,7 +294,7 @@ settings, dedupe and validation errors on write, paging variants, timezones and 
 
 ## Status and privacy
 
-Version 2.7: cloud sync between laptops, subscriptions, signed updates, PIN sign-in, base import. All screenshots use an invented demo clinic — no real patient
+Version 2.11: CRM — tasks by hand and by rules, requests and funnel, segments with a WhatsApp mailing, visit scores with review QR codes, advertising payback; 2.10: visit templates by speciality, prescriptions, prescription form, referral and patient memo; 2.9: treatment plan options, the plan presentation (print, PDF, patient tablet), the tooth chart by surfaces. All screenshots use an invented demo clinic — no real patient
 appears anywhere in this repository. The app stores medical data locally only; the clinic is advised
 to use Windows login and BitLocker.
 

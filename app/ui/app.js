@@ -153,9 +153,9 @@ const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", set
 const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: "cash_report",
   journal: "transfer", refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment", "sterilization"],
   reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"],
-  lab: ["lab", "accounting"]};
+  lab: ["lab", "accounting"], director: "reports"};
 const canView = v => { const p = VIEW_PERM[v]; return !p || (Array.isArray(p) ? canAny(...p) : can(p)); };
-function firstView() { return ["schedule", "patients", "cash", "reports", "accounting", "marketing", "shifts", "lab", "stock", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
+function firstView() { return ["schedule", "patients", "cash", "director", "reports", "accounting", "marketing", "shifts", "lab", "stock", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
 function show(view) {
   if (!canView(view)) view = firstView();
   S.view = view;
@@ -171,6 +171,7 @@ function show(view) {
   if (view === "staff") loadStaff();
   if (view === "stock") loadStock();
   if (view === "reports") loadReports();
+  if (view === "director" && typeof loadDirector === "function") loadDirector();
   if (view === "accounting") loadAccounting();
   if (view === "marketing") loadMarketing();
   if (view === "shifts") loadShifts();
@@ -211,6 +212,7 @@ async function refreshStatus() {
     sb.title = [st.stock_low ? `Заканчиваются: ${st.stock_low}` : "", st.stock_exp ? `Истекает срок: ${st.stock_exp}` : ""].filter(Boolean).join(" · "); }
   const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
   if (typeof platformStatus === "function") platformStatus(st);
+  if (typeof crmStatus === "function") crmStatus(st);
   if (st.backup_warn && st.backup_warn !== S.backupWarned) { S.backupWarned = st.backup_warn; toast(st.backup_warn + " Настройки → «Резервные копии».", true); }
   for (const id of ["#pendingBadge", "#pendingBadge2"]) { const pb = $(id); pb.hidden = !st.pending; pb.textContent = st.pending || ""; }
   // data changed -> refresh current screen
@@ -664,14 +666,18 @@ const TOOTH_SURF = {
   o: "M16.01 16.01A8.5 8.5 0 0 1 3.99 16.01L7.45 12.55A3.6 3.6 0 0 0 12.55 12.55Z",
   m: "M3.99 16.01A8.5 8.5 0 0 1 3.99 3.99L7.45 7.45A3.6 3.6 0 0 0 7.45 12.55Z",
 };
-/* status text -> what to draw; several statuses in one string ("кариес, пломба") all show */
-function toothState(status) {
-  const s = String(status || "").toLowerCase();
+/* status text -> what to draw; several statuses in one string ("кариес, пломба") all show.
+   surf = {o|m|d|v|l: "Кариес" | "Пломба" | "Временная пломба"} — marks on single surfaces (2.9.0) */
+function toothState(status, surf) {
+  const s = String(status || "").toLowerCase(), sv = Object.values(surf || {});
+  const pontic = /промежуточн|pontic/.test(s), canalFill = /канал\S* запломб|запломбирован\S* канал|obtur/.test(s);
+  const openCanal = /эндо|депульп/.test(s) || (/канал/.test(s) && !canalFill);
   return {
-    miss: /отсут|удал(ён|ен)|missing/.test(s), extract: /удалить|extract/.test(s), impl: /имплант|implant/.test(s),
-    cap: /корон|мост|винир|crown|bridge/.test(s), fill: /пломб|вкладк|fill/.test(s), caries: /кари|caries|разруш/.test(s),
-    endo: /пульп|периодон|эндо|канал|депульп/.test(s), canal: /эндо|канал|депульп/.test(s), perio: /периодон/.test(s),
-    root: /корень|корни|root/.test(s), mobile: /подвиж/.test(s),
+    miss: /отсут|удал(ён|ен)|missing/.test(s) && !pontic, pontic, extract: /удалить|extract/.test(s), impl: /имплант|implant/.test(s),
+    cap: /корон|мост|винир|crown|bridge/.test(s), bridge: /мост|bridge/.test(s),
+    fill: /(^|[^а-яё])пломб|вкладк|fill/.test(s) || sv.some(x => /пломб/i.test(x)), caries: /кари|caries|разруш/.test(s) || sv.includes("Кариес"),
+    endo: /пульп|периодон|депульп/.test(s) || openCanal, canal: openCanal, canalFill, post: /штифт|post/.test(s),
+    perio: /периодон/.test(s), root: /корень|корни|root/.test(s), mobile: /подвиж/.test(s),
   };
 }
 function toothKind(n, upper) {
@@ -681,17 +687,20 @@ function toothKind(n, upper) {
   if (d >= 4) return upper && d === 4 ? "pre2" : "pre";
   return d === 3 ? "canine" : "front";
 }
-function toothSvg(n, status, upper) {
-  const k = toothKind(n, upper), sh = TOOTH_SHAPES[k], t = toothState(status);
+function toothSvg(n, status, upper, surf) {
+  const k = toothKind(n, upper), sh = TOOTH_SHAPES[k], t = toothState(status, surf);
   const wisdom = n % 10 === 8 && Math.floor(n / 10) < 5;
   const rootT = wisdom ? ` transform="translate(0 31) scale(1 .8) translate(0 -31)"` : "";
   let roots;
   if (t.impl) {
     const thr = []; for (let y = 38; y <= 68; y += 5) { const dx = (y - 32) / 38; thr.push(`M${(12.6 + dx).toFixed(1)} ${y}L${(23.4 - dx).toFixed(1)} ${y + 2}`); }
     roots = `<path class="t-imp" d="M12.5 31H23.5L22.5 70Q18 78 13.5 70Z"/><path class="t-imp-th" d="${thr.join("")}"/><rect class="t-imp" x="15" y="28" width="6" height="5" rx="1"/>`;
+  } else if (t.pontic) {  /* bridge over a gap: no roots, only the crown */
+    roots = (upper && k === "molar" ? `<path class="t-root t-lost" d="${TOOTH_PALATAL}"/>` : "") + sh.roots.map(d => `<path class="t-root t-lost" d="${d}"/>`).join("");
   } else {
     roots = (upper && k === "molar" ? `<path class="t-root t-pal" d="${TOOTH_PALATAL}"/>` : "") + sh.roots.map(d => `<path class="t-root" d="${d}"/>`).join("")
-      + (t.canal ? `<path class="t-canal" d="${sh.canals}"/>` : "")
+      + (t.canalFill ? `<path class="t-canal t-obt" d="${sh.canals}"/>` : t.canal ? `<path class="t-canal" d="${sh.canals}"/>` : "")
+      + (t.post ? `<path class="t-post" d="M18 27V${k === "molar" ? 46 : 52}"/>` : "")
       + (t.perio ? sh.apex.map(([x, y]) => `<circle class="t-apex" cx="${x}" cy="${y}" r="3.4"/>`).join("") : "");
   }
   const crown = t.root ? `<path class="t-crown t-lost" d="${sh.crown}"/>`
@@ -702,32 +711,69 @@ function toothSvg(n, status, upper) {
   return `<svg class="${cls}" viewBox="0 0 36 86" width="32" height="76" aria-hidden="true"><g${upper ? ` transform="translate(0 86) scale(1 -1)"` : ""}>`
     + `<g${rootT}>${roots}</g>${crown}${marks}</g></svg>`;
 }
-/* 5 surfaces: vestibular (lip side), oral, mesial, distal and the chewing/cutting centre */
-function surfSvg(status, upper) {
+/* surfaces of a tooth: o — chewing / cutting, m — mesial, d — distal, v — vestibular (lip, cheek), l — oral (tongue, palate) */
+const SURF_NAMES = {o: "Жевательная (режущий край)", m: "Медиальная", d: "Дистальная", v: "Вестибулярная", l: "Язычная / нёбная"};
+const SURF_SHORT = {o: "О", m: "М", d: "Д", v: "В", l: "Я"};
+const SURF_STATES = ["Кариес", "Пломба", "Временная пломба"];
+/* where each surface sits on the round scheme: the lip side faces up on upper teeth, down on lower;
+   the mesial side faces the middle line (right on the patient's right quadrants, left on the left ones) */
+function surfGeo(n, upper) {
+  const q = Math.floor(n / 10) % 4, right = q === 1 || q === 0; /* 1x, 4x, 5x, 8x — the patient's right, shown on the left */
+  return {v: upper ? "v" : "o", l: upper ? "o" : "v", m: right ? "d" : "m", d: right ? "m" : "d"};
+}
+const SURF_CLS = {"Кариес": "s-car", "Пломба": "s-fil", "Временная пломба": "s-tmp"};
+function surfSvg(status, upper, surf, n, big) {
   const t = toothState(status), on = t.cap ? "s-cap" : "";
+  const sz = big ? 64 : 15;
+  if (surf && Object.keys(surf).length && n) {
+    const g = surfGeo(n, upper), cls = k => SURF_CLS[surf[k]] || on;
+    return `<svg class="surf${t.miss ? " is-miss" : ""}${big ? " big" : ""}" viewBox="0 0 20 20" width="${sz}" height="${sz}" aria-hidden="true">`
+      + ["v", "d", "l", "m"].map(k => `<path class="s-p ${cls(k)}" data-s="${k}" d="${TOOTH_SURF[g[k]]}"/>`).join("")
+      + `<circle class="s-p ${cls("o")}" data-s="o" cx="10" cy="10" r="3.6"/></svg>`;
+  }
   const c = t.caries ? "s-car" : t.fill ? "s-fil" : on;
-  const sides = upper ? {v: "v", o: "o"} : {v: "o", o: "v"}; /* the lip side faces up on upper teeth, down on lower */
+  if (n) { /* same markup with data-s, so the editor can click a surface of an unmarked tooth */
+    const g = surfGeo(n, upper);
+    return `<svg class="surf${t.miss ? " is-miss" : ""}${big ? " big" : ""}" viewBox="0 0 20 20" width="${sz}" height="${sz}" aria-hidden="true">`
+      + ["v", "d", "l", "m"].map(k => `<path class="s-p ${on}" data-s="${k}" d="${TOOTH_SURF[g[k]]}"/>`).join("")
+      + `<circle class="s-p ${c}" data-s="o" cx="10" cy="10" r="3.6"/></svg>`;
+  }
+  const sides = upper ? {v: "v", o: "o"} : {v: "o", o: "v"};
   const p = k => `<path class="s-p ${on}" d="${TOOTH_SURF[k]}"/>`;
   return `<svg class="surf${t.miss ? " is-miss" : ""}" viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">`
     + `${p(sides.v)}${p("d")}${p(sides.o)}${p("m")}<circle class="s-p ${c}" cx="10" cy="10" r="3.6"/></svg>`;
 }
-function toothCol(n, status, upper, extra) {
-  const id = `<span class="ft-id"><b>${n}</b>${surfSvg(status, upper)}</span>`;
-  return `<button class="ft${status ? " has" : ""}${extra ? " " + extra : ""}" data-n="${n}" title="${esc(n + (status ? ": " + status : ": не указано"))}">`
-    + `${upper ? toothSvg(n, status, true) + id : id + toothSvg(n, status, false)}</button>`;
+/* "36: кариес (О, М)" — the surfaces in words for titles and documents */
+function surfText(surf) {
+  const by = {};
+  Object.entries(surf || {}).forEach(([k, v]) => { if (v) (by[v] ||= []).push(SURF_SHORT[k] || k); });
+  return Object.entries(by).map(([v, ks]) => `${v.toLowerCase()} (${ks.join(", ")})`).join(", ");
 }
-/* opt.plan: teeth in a treatment plan (Set of strings), opt.sel: the tooth being edited */
+function toothCol(n, status, upper, extra, surf, badge) {
+  const id = `<span class="ft-id"><b>${n}</b>${surfSvg(status, upper, surf, n)}</span>`;
+  const st = [status, surfText(surf)].filter(Boolean).join("; ");
+  return `<button class="ft${st ? " has" : ""}${extra ? " " + extra : ""}" data-n="${n}" title="${esc(n + (st ? ": " + st : ": не указано"))}">`
+    + (badge ? `<i class="ft-b">${esc(badge)}</i>` : "")
+    + `${upper ? toothSvg(n, status, true, surf) + id : id + toothSvg(n, status, false, surf)}</button>`;
+}
+/* opt.plan: teeth in a treatment plan (Set of strings), opt.sel: the tooth being edited,
+   opt.surf: {tooth: {surface: state}}, opt.badge: {tooth: "1"} — stage numbers on the presentation */
 function formulaHtml(map, milk, opt) {
   opt = opt || {};
   const U = milk ? [[55, 54, 53, 52, 51], [61, 62, 63, 64, 65]] : [[18, 17, 16, 15, 14, 13, 12, 11], [21, 22, 23, 24, 25, 26, 27, 28]];
   const L = milk ? [[85, 84, 83, 82, 81], [71, 72, 73, 74, 75]] : [[48, 47, 46, 45, 44, 43, 42, 41], [31, 32, 33, 34, 35, 36, 37, 38]];
-  const plan = opt.plan || new Set();
-  const cell = (n, upper) => toothCol(n, map[String(n)] || "", upper, [String(opt.sel) === String(n) ? "sel" : "", plan.has(String(n)) ? "plan" : ""].filter(Boolean).join(" "));
-  const row = (qs, upper) => `<div class="f-row ${upper ? "up" : "lo"}">${qs.map((q, i) => `<div class="f-q ${i ? "r" : "l"}">${q.map(n => cell(n, upper)).join("")}</div>`).join("")}</div>`;
+  const plan = opt.plan || new Set(), surf = opt.surf || {}, badge = opt.badge || {};
+  const br = n => toothState(map[String(n)] || "").bridge;
+  const cell = (n, upper, prev, next) => toothCol(n, map[String(n)] || "", upper, [String(opt.sel) === String(n) ? "sel" : "", plan.has(String(n)) ? "plan" : "",
+    br(n) && prev && br(prev) ? "br-l" : "", br(n) && next && br(next) ? "br-r" : ""].filter(Boolean).join(" "), surf[String(n)], badge[String(n)]);
+  const row = (qs, upper) => { const all = qs[0].concat(qs[1]);
+    return `<div class="f-row ${upper ? "up" : "lo"}">${qs.map((q, i) => `<div class="f-q ${i ? "r" : "l"}">${q.map(n => { const j = all.indexOf(n);
+      return cell(n, upper, all[j - 1], all[j + 1]); }).join("")}</div>`).join("")}</div>`; };
   return `<div class="formula">${row(U, true)}<div class="f-mid"></div>${row(L, false)}</div>`;
 }
 function formulaLegend(withPlan) {
-  const it = [["car", "Кариес"], ["fil", "Пломба"], ["cap", "Коронка / мост"], ["endo", "Пульпит / каналы"], ["imp", "Имплант"], ["miss", "Отсутствует"]];
+  const it = [["car", "Кариес"], ["fil", "Пломба"], ["tmp", "Временная пломба"], ["cap", "Коронка / мост"], ["endo", "Пульпит / каналы"], ["obt", "Каналы запломбированы"],
+    ["imp", "Имплант"], ["miss", "Отсутствует"]];
   if (withPlan) it.push(["plan", "В плане лечения"]);
   return `<div class="legend f-legend">${it.map(([k, t]) => `<span><i class="lg-${k}"></i>${t}</span>`).join("")}</div>`;
 }
@@ -777,13 +823,14 @@ function renderPatient(tab) {
   const ctx = {patient_id: p.id, doctor_id: (p.visits.find(v => v.start.slice(0, 10) === iso(new Date())) || p.visits[0] || {}).doctor_id};
 
   const tabs = [["visits", "Визиты", p.visits.length], ["formula", "Формула"], ["records", "Лечения", p.records.length],
-    ["files", "Снимки и файлы", p.files_count || ""], ["perio", "Пародонтограмма", p.perio_count || ""], ["lab", "Лаборатория", p.lab_count || ""], ["payments", "Оплаты", invs.length],
+    ["files", "Снимки и файлы", p.files_count || ""], ["perio", "Пародонтограмма", p.perio_count || ""], ["lab", "Лаборатория", p.lab_count || ""], ["crm", "CRM", p.crm_open || ""], ["payments", "Оплаты", invs.length],
     ["plans", "План лечения", plans.length], ["docs", "Документы", p.documents.length], ["notes", "Примечания", p.notes.length],
     ...extras.map(e => ["x:" + e.kind, label(e.kind), Array.isArray(e.data) ? e.data.length : ""]),
     ["personal", "Персональные данные"], ["feed", "Живая лента"]].filter(([k]) => {
     if (k === "formula" || k === "records" || k === "perio") return can("medcard_view");
     if (k === "files") return canAny("medcard_view", "patients_view");
     if (k === "lab") return canAny("lab", "billing", "accounting");
+    if (k === "crm") return can("marketing");
     if (k === "payments" || k === "plans") return canAny("billing", "payments");
     if (k === "docs") return can("docs");
     return true;
@@ -807,7 +854,7 @@ function renderPatient(tab) {
   } else if (tab === "formula") {
     S.milk = S.milk || false;
     body = `<div class="f-tools"><div class="seg"><button data-milk="0" class="${S.milk ? "" : "on"}">Постоянные зубы</button><button data-milk="1" class="${S.milk ? "on" : ""}">Молочные зубы</button></div>
-      <span class="muted">Формула собирается из лечений и данных Dentist Plus. Щёлкните по зубу, чтобы провести лечение.</span></div>${formulaHtml(tmap, S.milk, {plan: planTeeth(plans)})}
+      <span class="muted">Формула собирается из лечений и данных Dentist Plus. Щёлкните по зубу, чтобы провести лечение.</span></div>${formulaHtml(tmap, S.milk, {plan: planTeeth(plans), surf: p.surf_local || {}})}
       ${formulaLegend(true)}`;
   } else if (tab === "records") {
     body = addBtn("tAddRec", "Провести лечение") + (p.records.length ? p.records.map(r => {
@@ -829,7 +876,9 @@ function renderPatient(tab) {
   } else if (tab === "plans") {
     body = addBtn("tAddPlan", "Добавить") + `<div class="muted cnt-line">Записей: ${plans.length}</div>` + (plans.length ? `<table class="tbl"><thead><tr><th>Название</th><th>Этапы и зубы</th><th>Автор</th><th>Создан</th><th>Сумма</th><th>Статус</th></tr></thead><tbody>${
       plans.map(i => { const st = {}; i.items.forEach(x => (st[x.stage || "1"] ||= []).push(x.tooth));
-        return `<tr data-inv="${esc(i.id)}"><td class="lnk"><b>${esc(i.title || "План лечения")}</b></td><td>${Object.entries(st).map(([k, t]) => `<div>● Этап ${esc(k)} [ ${esc(t.filter(Boolean).join(", "))} ]</div>`).join("")}</td>
+        const vs = i.variants || [], ch = vs.find(v => v.key === i.variant);
+        const vline = vs.length ? `<small class="muted" style="display:block">${ch ? "Выбран вариант «" + esc(ch.name) + "»" : "Варианты: " + vs.map(v => esc(v.name)).join(" / ")}</small>` : "";
+        return `<tr data-inv="${esc(i.id)}"><td class="lnk"><b>${esc(i.title || "План лечения")}</b>${vline}</td><td>${Object.entries(st).map(([k, t]) => `<div>● Этап ${esc(k)} [ ${esc([...new Set(t.flatMap(x => String(x || "").split(/\s*,\s*/)).filter(Boolean))].join(", "))} ]</div>`).join("")}</td>
           <td>${esc(i.doctor_name || "")}</td><td>${fmtDate(i.created_at)}</td><td>${money(i.total)}</td><td><span class="pill ${/Актив/.test(i.plan_status) ? "st-cancel" : /заверш/.test(i.plan_status) ? "st-ok" : ""}">${esc(i.plan_status || "")}</span></td></tr>`; }).join("")}</tbody></table>`
       : `<div class="empty"><b>Планов лечения нет</b><span>Составьте план, распечатайте его пациенту и выставляйте счета по этапам</span></div>`);
   } else if (tab === "docs") {
@@ -857,8 +906,8 @@ function renderPatient(tab) {
     ev.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
     body = `<div class="feed">${ev.map(e => `<div class="fe"><div class="fe-at">${fmtDT(e.at)}</div><div class="fe-card fe-${e.icon}"><div class="fe-h"><b>${esc(e.title)}</b>${e.st ? `<span class="pill ${stClass(e.st)}">${esc(e.st)}</span>` : ""}</div>${
       e.lines.filter(Boolean).map(l => `<div>${esc(l)}</div>`).join("")}</div></div>`).join("") || `<div class="empty"><b>Событий нет</b></div>`}</div>`;
-  } else if (tab === "files" || tab === "perio" || tab === "lab") {
-    body = `<div id="${{files: "pfBody", perio: "perioBody", lab: "labPBody"}[tab]}"><div class="scan"><i></i>Загрузка…</div></div>`;
+  } else if (tab === "files" || tab === "perio" || tab === "lab" || tab === "crm") {
+    body = `<div id="${{files: "pfBody", perio: "perioBody", lab: "labPBody", crm: "crmPBody"}[tab]}"><div class="scan"><i></i>Загрузка…</div></div>`;
   } else if (tab.startsWith("x:")) {
     const e = extras.find(x => "x:" + x.kind === tab);
     const arr = Array.isArray(e.data) ? e.data : [e.data];
@@ -898,6 +947,7 @@ function renderPatient(tab) {
   if (tab === "files" && typeof loadPatientFiles === "function") loadPatientFiles(p);
   if (tab === "perio" && typeof loadPerio === "function") loadPerio(p);
   if (tab === "lab" && typeof loadPatientLab === "function") loadPatientLab(p);
+  if (tab === "crm" && typeof loadPatientCrm === "function") loadPatientCrm(p);
   if (typeof loyaltyHeader === "function") loyaltyHeader(p);
   // hide what this employee may not do
   const hideIf = (sel, cond) => $$(sel, $("#patientCard")).forEach(el => { if (cond) el.remove(); });
@@ -1065,7 +1115,7 @@ async function startApp(user) {
   try { Object.assign(S.settings, await api.ui_settings()); } catch (e) {}
   REF = null;
   await refreshStatus();
-  show(can("schedule_view") ? "schedule" : firstView());
+  show(ME.role === "director" && can("reports") ? "director" : can("schedule_view") ? "schedule" : firstView());
   if (can("staff")) refreshStaffBadge();
   startOfflineCopies();
   if (!started) {

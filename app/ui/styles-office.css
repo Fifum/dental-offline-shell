@@ -90,7 +90,9 @@
 .sh-presets{margin:-2px 0 10px}
 
 /* the rail gets longer with these sections: let it scroll on small screens instead of clipping */
-.rail nav{overflow-y:auto;scrollbar-width:none}
+.app{grid-template-rows:minmax(0,1fr)}            /* the row must not grow with the rail, or Settings drops below the window */
+.rail{min-height:0}
+.rail nav{overflow-y:auto;scrollbar-width:none;flex:0 1 auto;min-height:0}
 .rail nav::-webkit-scrollbar{display:none}
 
 @media print{

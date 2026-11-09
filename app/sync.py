@@ -60,8 +60,10 @@ class SyncWorker(threading.Thread):
         if s.get("demo"):
             from demo import ensure_demo
             ensure_demo(self.db)
-            from demo import ensure_office
+            from demo import ensure_office, ensure_director, ensure_crm
             ensure_office(self.db)
+            ensure_director(self.db)
+            ensure_crm(self.db)
             if s.get("transfer_mode") == "auto":
                 from pusher import simulate_demo
                 simulate_demo(self.db)

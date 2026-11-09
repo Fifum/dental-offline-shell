@@ -74,6 +74,12 @@ TABLES = [
     T("equipment", title="Оборудование"),
     T("equipment_events", intpk=True, title="Обслуживание оборудования"),
     T("work_shifts", intpk=True, title="Смена"),
+    T("kpi_targets", title="План клиники"),
+    T("crm_leads", title="Заявка"),
+    T("crm_tasks", title="Задача"),
+    T("crm_reviews", title="Оценка визита"),
+    T("crm_segments", title="Сегмент пациентов"),
+    T("crm_settings", key=("k",), title="Настройка CRM"),
     T("audit", intpk=True, refs={"user_id": "users"}, title="Журнал действий"),
 ]
 BY_NAME = {t.name: t for t in TABLES}
@@ -90,6 +96,10 @@ CREATE TABLE IF NOT EXISTS sync_conflicts(
 """
 
 NOW_MS = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)"
+# Version of the change-capture triggers. 2: the key is deleted and inserted again instead of INSERT OR REPLACE —
+# an UPSERT (INSERT … ON CONFLICT DO UPDATE) on a data table makes SQLite use its own ABORT policy for the
+# statements of the trigger, and the second edit of a row that was not synced yet failed on sync_dirty.
+TRIGGER_VER = "2"
 
 
 def _cols(conn, table):
@@ -106,6 +116,12 @@ def install(db):
     with db._lock:
         conn.executescript(SCHEMA)
         have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        ver = conn.execute("SELECT v FROM sync_state WHERE k='trigger_ver'").fetchone()
+        if not ver or ver[0] != TRIGGER_VER:  # older triggers are replaced once
+            for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'rp\\_%' ESCAPE '\\' "
+                                        "AND name NOT LIKE '%\\_uid' ESCAPE '\\'").fetchall():
+                conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+            conn.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES('trigger_ver', ?)", (TRIGGER_VER,))
         for t in TABLES:
             if t.name not in have:
                 continue
@@ -116,7 +132,8 @@ def install(db):
                 conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{t.name}_uid ON {t.name}(uid)")
             cond_new = f" AND NEW.{t.where}" if t.where else ""
             cond_old = f" AND OLD.{t.where}" if t.where else ""
-            ins = f"INSERT OR REPLACE INTO sync_dirty(tbl, k, at) VALUES('{t.name}', {{k}}, {NOW_MS})"
+            ins = (f"DELETE FROM sync_dirty WHERE tbl='{t.name}' AND k={{k}}; "
+                   f"INSERT INTO sync_dirty(tbl, k, at) VALUES('{t.name}', {{k}}, {NOW_MS})")
             if t.intpk and "uid" in t.key:
                 conn.execute(f"""CREATE TRIGGER IF NOT EXISTS rp_{t.name}_uid AFTER INSERT ON {t.name} WHEN NEW.uid IS NULL
                     BEGIN UPDATE {t.name} SET uid=lower(hex(randomblob(12))) WHERE rowid=NEW.rowid; END""")

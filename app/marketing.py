@@ -21,7 +21,8 @@ DEFAULT_SOURCES = ["Рекомендация знакомых", "Яндекс К
                    "Наружная реклама", "Проходили мимо", "Направил врач", "Другое"]
 RESULTS = ["Дозвонились", "Записался", "Перезвонить", "Не дозвонились", "Отказ", "Написали"]
 LISTS = {"remind": "Напомнить о визите", "lost": "Давно не были", "plans": "План лечения не начат",
-         "birthdays": "Дни рождения", "debts": "Долги"}
+         "unfinished": "План лечения не завершён", "birthdays": "Дни рождения", "debts": "Долги",
+         "tasks": "Задача", "segment": "Рассылка", "reviews": "Оценка визита"}  # the last three: only marks in the call log
 
 
 def _now():
@@ -93,9 +94,22 @@ class Marketing:
             r["paid"] += paid.get(pid) or 0
         for pid, k in src.items():
             rows[k]["patients"] += 1
+        # payback of advertising: «Реклама» expenses with the source chosen, and requests from the CRM
+        from crm import CRM
+        crm = CRM(self.db)
+        spent, leads = crm.ad_spend(a, b), crm.leads_by_source(a, b)
+        for k in {*spent, *leads}:
+            rows.setdefault(k, {"source": k, "patients": 0, "new": 0, "paid": 0.0})
+        for k, r in rows.items():
+            r["spent"] = spent.get(k, 0.0)
+            r["leads"] = (leads.get(k) or {}).get("leads", 0)
+            r["leads_came"] = (leads.get(k) or {}).get("came", 0)
+            r["cost_new"] = round(r["spent"] / r["new"]) if r["spent"] and r["new"] else None
+            r["roi"] = round(r["paid"] * 100 / r["spent"]) if r["spent"] else None
         out = sorted(({**r, "paid": round(r["paid"], 2)} for r in rows.values()), key=lambda x: (x["source"] == "", -x["new"], -x["paid"]))
         return {"from": a, "to": (date.fromisoformat(b) - timedelta(days=1)).isoformat(), "rows": out,
-                "with_source": len(src), "patients": self.db.one("SELECT COUNT(*) AS n FROM patients")["n"]}
+                "with_source": len(src), "patients": self.db.one("SELECT COUNT(*) AS n FROM patients")["n"],
+                "spent": round(sum(spent.values()), 2), "spent_no_source": spent.get("", 0.0)}
 
     # ---------------------------------------------------------- call lists --
     def _last_calls(self, pids, since):
@@ -170,6 +184,23 @@ class Marketing:
         elif kind == "birthdays":
             rows = self.birthdays(int(f.get("days") or 14))
             since = date(today.year, 1, 1).isoformat()
+        elif kind == "unfinished":  # 6.5: the plan was started (billed or «Активен») but is not finished, nothing is booked
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rows = self.db.q(f"""SELECT i.id AS plan_id, i.patient_id, i.title, i.total, i.created_at, p.name, p.phone, d.name AS doctor_name,
+                                        (SELECT COALESCE(SUM(j.total),0) FROM invoices j WHERE j.plan_id=i.id) AS billed,
+                                        (SELECT MAX(v.start) FROM ({DB.ALL_VISITS}) v WHERE v.patient_id=i.patient_id AND v.start < ?) AS start
+                FROM invoices i JOIN patients p ON p.id=i.patient_id LEFT JOIN doctors d ON d.id=i.doctor_id
+                WHERE i.kind='plan' AND (COALESCE(i.plan_status,'')='Активен'
+                       OR (COALESCE(i.plan_status,'') IN ('Предварительный','Подтверждён') AND EXISTS (SELECT 1 FROM invoices j WHERE j.plan_id=i.id)))
+                  AND NOT EXISTS (SELECT 1 FROM ({DB.ALL_VISITS}) v WHERE v.patient_id=i.patient_id AND v.start >= ?)
+                ORDER BY start""", (now, now))
+            for r in rows:
+                left = max(0.0, (r["total"] or 0) - (r["billed"] or 0))
+                r["start"] = r["start"] or r["created_at"]
+                r["info"] = f"{r['title'] or 'План лечения'}: осталось на {left:,.0f} ₽".replace(",", " ") + \
+                            (f" · {r['doctor_name']}" if r["doctor_name"] else "") + \
+                            (f" · последний визит {r['start'][8:10]}.{r['start'][5:7]}.{r['start'][:4]}" if r["start"] else "")
+            since = (today - timedelta(days=30)).isoformat()
         else:
             raise ValueError("Неизвестный список")
         skip = self._no_calls()

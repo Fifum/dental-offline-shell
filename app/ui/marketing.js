@@ -2,7 +2,7 @@
 /* Marketing: call lists (visit reminders, lapsed patients, unstarted plans, debts), birthdays and patient sources. */
 S.mkTab = "calls";
 S.mkList = "remind";
-const MK_LISTS = [["remind", "Напомнить о визите"], ["lost", "Давно не были"], ["plans", "План не начат"], ["debts", "Должники"]];
+const MK_LISTS = [["remind", "Напомнить о визите"], ["lost", "Давно не были"], ["plans", "План не начат"], ["unfinished", "План не завершён"], ["debts", "Должники"]];
 const CALL_CLS = {"Записался": "st-done", "Дозвонились": "st-ok", "Перезвонить": "st-come", "Не дозвонились": "", "Отказ": "st-cancel", "Написали": "st-ok"};
 
 /* ---- visit reminders by WhatsApp / Telegram: the chat opens with the text ready, the administrator presses «send» */
@@ -55,14 +55,15 @@ $$("#mkTabs button").forEach(b => b.onclick = () => { S.mkTab = b.dataset.k; $$(
 async function loadMarketing() {
   $$("#mkTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === S.mkTab));
   const body = $("#mkBody");
-  const fn = {calls: mkCalls, birthdays: mkBirthdays, sources: mkSources}[S.mkTab] || mkCalls;
+  const fn = {calls: mkCalls, birthdays: mkBirthdays, sources: mkSources, tasks: crmTasks, leads: crmLeads, segments: crmSegments,
+    reviews: crmReviews}[S.mkTab] || crmTasks;
   await fn(body);
   bindPeriod(body, loadMarketing);
   const pr = $("#mkPrint", body); if (pr) pr.onclick = () => printTable($("#mkTabs button.on").textContent, "#mkBody table.tbl");
 }
 
 function callTable(r) {
-  if (!r.rows.length) return `<div class="empty"><b>Список пуст</b><span>${{remind: "На этот день нет записей", lost: "Все пациенты приходили недавно или уже записаны", plans: "Все планы лечения начаты или пациенты записаны", debts: "Должников нет", birthdays: "В ближайшие дни дней рождения нет"}[r.kind] || ""}</span></div>`;
+  if (!r.rows.length) return `<div class="empty"><b>Список пуст</b><span>${{remind: "На этот день нет записей", lost: "Все пациенты приходили недавно или уже записаны", plans: "Все планы лечения начаты или пациенты записаны", unfinished: "Все начатые планы продолжаются: у пациентов есть запись", debts: "Должников нет", birthdays: "В ближайшие дни дней рождения нет"}[r.kind] || ""}</span></div>`;
   return `<table class="tbl"><thead><tr><th>Пациент</th><th>Телефон</th><th>${r.kind === "remind" ? "Запись" : "Почему в списке"}</th><th>Последний звонок</th><th></th></tr></thead><tbody>${
     r.rows.map((x, i) => `<tr class="${x.last_call ? "muted-row" : ""}"><td class="lnk" data-p="${esc(x.patient_id)}"><b>${esc(x.name || "—")}</b></td><td class="nowrap">${esc(x.phone || "—")}</td><td>${esc(x.info || "")}</td>
       <td>${x.last_call ? `<span class="pill ${CALL_CLS[x.last_call.result] || ""}">${esc(x.last_call.result)}</span> <small class="muted">${fmtDT(x.last_call.at)}${x.last_call.user_name ? " · " + esc(x.last_call.user_name) : ""}</small>${x.last_call.comment ? `<br><small class="muted">${esc(x.last_call.comment)}</small>` : ""}` : `<span class="muted">—</span>`}</td>
@@ -86,6 +87,7 @@ async function mkCalls(body) {
     <div class="muted note-line">${{remind: "Записи на выбранный день, кроме отменённых. Отметка звонка видна всем администраторам.",
       lost: "Пациенты, у которых последний визит был давно и нет будущих записей.",
       plans: "Предварительные и активные планы старше недели, по которым не было счетов и нет записи.",
+      unfinished: "Начатые планы лечения (уже был счёт по плану), которые не завершены, а пациент не записан.",
       debts: "Пациенты с долгом по программе или по данным Dentist Plus."}[S.mkList]} Пациенты с отметкой «не звонить» в списки не попадают.</div>`;
   $$("#mkLists button").forEach(b => b.onclick = () => { S.mkList = b.dataset.l; loadMarketing(); });
   const d = $("#mkDay"); if (d) d.onchange = () => { S.mkDay = d.value; loadMarketing(); };
@@ -107,15 +109,17 @@ async function mkBirthdays(body) {
 
 async function mkSources(body) {
   const r = await api.mk_sources_report(S.period.from, S.period.to);
-  const max = Math.max(0, ...r.rows.map(x => x.new)), pMax = Math.max(0, ...r.rows.map(x => x.paid));
+  const pMax = Math.max(0, ...r.rows.map(x => x.paid));
   body.innerHTML = `<div class="tab-tools rep-tools">${periodBar()}<span class="grow"></span><button class="btn ghost" id="mkSrcEdit">Список источников</button><button class="icon-btn" title="Скачать в Excel" data-xls="#mkBody table.tbl" data-xls-title="#mkTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="mkPrint" title="Печать">${PRINT_ICON}</button></div>
     <div class="stat-row"><div class="stat"><span>Источник указан</span><b>${r.with_source} <small class="muted">из ${r.patients}</small></b></div>
       <div class="stat"><span>Новых пациентов за период</span><b>${r.rows.reduce((a, x) => a + x.new, 0)}</b></div>
-      <div class="stat"><span>Оплатили за период</span><b>${money(r.rows.reduce((a, x) => a + x.paid, 0))}</b></div></div>
-    <div class="pbody">${r.rows.length ? `<table class="tbl"><thead><tr><th>Источник</th><th class="num">Пациентов всего</th><th class="num">Новых за период</th><th class="bar-h"></th><th class="num">Оплатили за период</th><th class="bar-h"></th></tr></thead><tbody>${
-      r.rows.map(x => `<tr class="${x.source ? "" : "muted-row"}"><td><b>${esc(x.source || "Не указан")}</b></td><td class="num">${x.patients || "—"}</td><td class="num">${x.new}</td><td class="bar-cell">${hbar(x.new, max)}</td><td class="num">${money(x.paid)}</td><td class="bar-cell">${hbar(x.paid, pMax)}</td></tr>`).join("")}</tbody></table>`
+      <div class="stat"><span>Оплатили за период</span><b>${money(r.rows.reduce((a, x) => a + x.paid, 0))}</b></div>
+      <div class="stat"><span>Потрачено на рекламу</span><b>${money(r.spent)}</b>${r.spent_no_source ? `<small class="muted">${money(r.spent_no_source)} — без источника</small>` : ""}</div></div>
+    <div class="pbody">${r.rows.length ? `<table class="tbl src-tbl"><thead><tr><th>Источник</th><th class="num" title="Пациентов с этим источником всего">Пациентов</th><th class="num" title="Заявок за период и сколько из них пришли">Заявок</th><th class="num" title="Новых пациентов за период">Новых</th><th class="num">Оплатили</th><th class="bar-h"></th><th class="num">Реклама</th><th class="num" title="Расходы на рекламу / новые пациенты">Цена нового</th><th class="num" title="Оплатили / расходы на рекламу">Окупаемость</th></tr></thead><tbody>${
+      r.rows.map(x => `<tr class="${x.source ? "" : "muted-row"}"><td><b>${esc(x.source || "Не указан")}</b></td><td class="num">${x.patients || "—"}</td><td class="num">${x.leads ? `${x.leads}${x.leads_came ? ` <small class="muted">пришли ${x.leads_came}</small>` : ""}` : "—"}</td><td class="num">${x.new || "—"}</td><td class="num">${money(x.paid)}</td><td class="bar-cell">${hbar(x.paid, pMax)}</td>
+        <td class="num">${x.spent ? money(x.spent) : "—"}</td><td class="num">${x.cost_new != null ? money(x.cost_new) : "—"}</td><td class="num ${x.roi != null && x.roi < 100 ? "bad-t" : ""}">${x.roi != null ? x.roi + " %" : "—"}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>Пока нет данных</b><span>Укажите источник в карточке пациента или при добавлении нового</span></div>`}</div>
-    <div class="muted note-line">Источник выбирается в карточке пациента и при добавлении нового. Если источник есть в Dentist Plus, он подхватывается сам.</div>`;
+    <div class="muted note-line">Источник выбирается в карточке пациента, при добавлении нового и в заявке. Если источник есть в Dentist Plus, он подхватывается сам. Расходы на рекламу — в «Бухгалтерии»: статья «Реклама» с выбранным источником. Окупаемость — сколько оплатили пациенты из источника на каждый рубль рекламы (100 % — реклама окупилась).</div>`;
   $("#mkSrcEdit").onclick = editSources;
 }
 

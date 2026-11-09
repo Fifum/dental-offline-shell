@@ -40,9 +40,13 @@ class Api:
         from reports import Reports
         from shifts import Shifts
         self._reports = Reports(db)
+        from director import Director
+        self._dir = Director(db, self._reports)
         self._shifts = Shifts(db)
         self._acc = Accounting(db)
         self._mk = Marketing(db)
+        from crm import CRM
+        self._crm = CRM(db, self._local, self._mk)
         from waitlist import Waitlist
         self._wait = Waitlist(db)
         from sterilization import Sterilization
@@ -55,6 +59,8 @@ class Api:
         from tablet import Tablets
         self._forms = Forms(db, self._local)
         self._tablets = Tablets(db)
+        from plans import Plans
+        self._plans = Plans(db, self._local, self._forms)
         from taxcert import TaxCerts
         self._tax = TaxCerts(db)
         from lab import Lab
@@ -160,12 +166,41 @@ class Api:
     def report_debts(self):
         return self._reports.debts()
 
+    # ----------------------------------------------- director's analytics --
+    def director_dashboard(self):
+        return self._dir.dashboard()
+
+    def report_patients(self, date_from=None, date_to=None):
+        return self._dir.patients(date_from, date_to)
+
+    def report_load(self, date_from=None, date_to=None):
+        return self._dir.load(date_from, date_to)
+
+    def report_conversion(self, date_from=None, date_to=None):
+        return self._dir.conversion(date_from, date_to)
+
+    def report_materials(self, date_from=None, date_to=None):
+        return self._dir.materials(date_from, date_to)
+
+    def kpi(self, month=None):
+        return self._dir.kpi(month)
+
+    def kpi_save(self, month, items=None, copy_prev=False):
+        return self._dir.kpi_save(month, items or [], self._who(), bool(copy_prev))
+
+    def director_settings(self):
+        return self._dir.settings()
+
+    def director_settings_save(self, f):
+        return self._dir.save_settings(f, self._who())
+
     # ---------------------------------------------------------- accounting --
     def acc_summary(self, date_from=None, date_to=None):
-        from accounting import BASES, METHODS
+        from accounting import AD, BASES, METHODS
         return {**self._acc.summary(date_from, date_to), "debts": {k: v for k, v in self._reports.debts().items()
                                                                      if k in ("total_debt", "total_advance")},
-                "categories": self._acc.categories(), "methods": METHODS, "bases": BASES}
+                "categories": self._acc.categories(), "methods": METHODS, "bases": BASES,
+                "ad_category": AD, "sources": self._mk.sources()}
 
     def expenses(self, date_from=None, date_to=None, category=None):
         return self._acc.expenses(date_from, date_to, category or None)
@@ -210,6 +245,89 @@ class Api:
     def set_patient_marketing(self, pid, f):
         return self._mk.set_patient(pid, f or {})
 
+    # ---------------------------------------------------------------- CRM --
+    @staticmethod
+    def _login():
+        from auth import _current
+        u = getattr(_current, "user", None)
+        return (u or {}).get("login") or ""
+
+    def crm_summary(self):
+        return self._crm.summary(self._login())
+
+    def crm_tasks(self, f=None):
+        return self._crm.tasks(f or {}, self._login())
+
+    def crm_task_save(self, f):
+        return self._crm.task_save(f or {}, self._who())
+
+    def crm_task_done(self, tid, result="", comment="", later=None):
+        return self._crm.task_done(tid, result, comment, self._who(), later)
+
+    def crm_task_reopen(self, tid):
+        return self._crm.task_reopen(tid)
+
+    def crm_task_delete(self, tid):
+        return self._crm.task_delete(tid)
+
+    def crm_leads(self, f=None):
+        return self._crm.leads(f or {})
+
+    def crm_lead(self, lid):
+        return self._crm.lead(lid)
+
+    def crm_lead_save(self, f):
+        return self._crm.lead_save(f or {}, self._who())
+
+    def crm_lead_stage(self, lid, stage, reason=""):
+        return self._crm.lead_stage(lid, stage, reason)
+
+    def crm_lead_link(self, lid, pid):
+        return self._crm.lead_link(lid, pid)
+
+    def crm_lead_patient(self, lid):
+        return self._crm.lead_patient(lid)
+
+    def crm_match(self, phone):
+        return self._crm.match(phone)
+
+    def crm_funnel(self, date_from=None, date_to=None):
+        return self._crm.funnel(date_from, date_to)
+
+    def crm_segments(self):
+        return self._crm.segments()
+
+    def crm_segment_run(self, filters):
+        return self._crm.segment_run(filters or {})
+
+    def crm_segment_save(self, f):
+        return self._crm.segment_save(f or {}, self._who())
+
+    def crm_segment_delete(self, sid):
+        return self._crm.segment_delete(sid)
+
+    def crm_settings(self):
+        return {**self._crm.settings(), "review_links": self._crm.review_links(), "staff": self._crm.staff()}
+
+    def crm_settings_save(self, f):
+        self._crm.settings_save(f or {})
+        return self.crm_settings()
+
+    def crm_review_save(self, f):
+        return self._crm.review_save(f or {}, self._who())
+
+    def crm_review_delete(self, rid):
+        return self._crm.review_delete(rid)
+
+    def crm_reviews(self, date_from=None, date_to=None):
+        return self._crm.reviews(date_from, date_to)
+
+    def crm_review_queue(self, day=None):
+        return self._crm.review_queue(day)
+
+    def crm_patient(self, pid):
+        return self._crm.patient(pid)
+
     # -------------------------------------------------------- work shifts --
     def shifts_month(self, month=None):
         return self._shifts.month(month)
@@ -229,7 +347,8 @@ class Api:
         s = config.load_settings()
         return {"mkb": catalog.MKB, "tooth_statuses": catalog.TOOTH_STATUSES,
                 "doctors": self._db.doctors(), "branches": self._db.branches(),
-                "clinic": s.get("clinic", {}), "phrases": self._local.templates("phrase")}
+                "clinic": s.get("clinic", {}), "phrases": self._local.templates("phrase"),
+                "exams": self._local.structured("exam"), "drugs": self._local.structured("drug")}
 
     def create_patient(self, f):
         return self._local.create_patient(f)
@@ -287,8 +406,8 @@ class Api:
     def tablet_revoke(self, tid):
         return self._tablets.revoke(tid)
 
-    def tablet_send(self, tid, kind, patient_id, document_id=None):
-        """Send «sign this document» or «fill in the questionnaire» to a paired tablet."""
+    def tablet_send(self, tid, kind, patient_id, document_id=None, extra=None):
+        """Send «sign this document», «fill in the questionnaire» or «choose and sign the plan» to a paired tablet."""
         p = self._db.patient(patient_id)
         if not p:
             raise ValueError("Пациент не найден")
@@ -301,6 +420,24 @@ class Api:
         elif kind == "anketa":
             task = {"kind": "anketa", "title": "Анкета о состоянии здоровья", "patient": p["name"],
                     "questions": self._forms.questions(), "patient_id": patient_id}
+        elif kind == "plan":
+            import plans
+            extra = extra or {}
+            plan = self._plans._plan(extra.get("plan_id"))
+            if plan["patient_id"] != patient_id:
+                raise ValueError("План не найден")
+            html = str(extra.get("html") or "")
+            if not html or len(html) > 4_000_000:
+                raise ValueError("Пустая презентация плана")
+            by = plans.totals(plan["items"], plan["variants"], plan.get("discount") or 0)["by_variant"]
+            task = {"kind": "plan", "title": plan.get("title") or "План лечения", "patient": p["name"], "html": html,
+                    "signer": p["name"], "plan_id": plan["id"], "patient_id": patient_id, "chosen": plan.get("variant") or "",
+                    "variants": [{"key": v["key"], "name": v["name"], "total": by.get(v["key"], 0),
+                                  "warranty": v.get("warranty", ""), "term": v.get("term", "")} for v in plan["variants"]]}
+        elif kind == "nps":  # the after-visit survey: a score 0–10 and a few words
+            s = self._crm.settings()
+            task = {"kind": "nps", "title": "Оцените, пожалуйста, визит", "patient": p["name"], "patient_id": patient_id,
+                    "question": s["nps_question"], "visit_id": (extra or {}).get("visit_id") or None}
         else:
             raise ValueError("Неизвестное задание для планшета")
         return self._tablets.send(tid, task, self._who())
@@ -326,6 +463,13 @@ class Api:
             if t["kind"] == "sign":
                 r = self._forms.sign_document(t["document_id"], t["signer"], data.get("image"), "patient", place, ip, "")
                 result = {"signature_id": r["id"]}
+            elif t["kind"] == "plan":
+                result = self._plans.sign_on_tablet(t, data.get("variant"), data.get("image"), place, ip)
+            elif t["kind"] == "nps":
+                r = self._crm.review_save({"patient_id": t["patient_id"], "visit_id": t.get("visit_id"), "score": data.get("score"),
+                                           "comment": data.get("comment"), "channel": "tablet"}, place)
+                self._tablets.done(tb["id"], task_id, {"review_id": r["id"], "score": r["score"]})
+                return {"ok": True, "links": [{"title": x["title"], "qr": x["qr"], "url": x["url"]} for x in r["links"]]}
             else:
                 r = self._forms.save_questionnaire(t["patient_id"], data.get("answers"), data.get("image"), self._clinic(), place, "")
                 result = {"document_id": r["document_id"], "alerts": r["alerts"]}
@@ -495,6 +639,12 @@ class Api:
         self._local.delete_template(tid)
         return True
 
+    def restore_templates(self, kind):
+        """«Вернуть встроенные»: hidden built-in exam templates, medicines or phrases come back."""
+        if kind not in ("exam", "drug", "phrase", "document"):
+            raise ValueError("Неизвестный вид шаблона")
+        return self._local.restore_templates(kind)
+
     def reset_template(self, tid):
         import catalog
         b = catalog.builtin_document(tid)
@@ -577,6 +727,17 @@ class Api:
         iid = self._local.plan_to_invoice(plan_id, item_indexes, visit_id)
         self._stock.on_invoice(iid, self._who())
         return iid
+
+    def plan_choose(self, plan_id, variant):
+        """The patient chose «эконом / стандарт / премиум» ('' cancels the choice)."""
+        return self._plans.choose(plan_id, variant)
+
+    def plan_pdf(self, html, name=""):
+        """The plan presentation as a real PDF (headless Edge). The UI saves it with «Сохранить как…»."""
+        import plans
+        if not isinstance(html, str) or len(html) > 8_000_000:
+            raise ValueError("Слишком большой документ")
+        return plans.pdf_payload(html, name)
 
     def set_plan_status(self, plan_id, status):
         with self._db.tx() as c:
@@ -831,6 +992,14 @@ class Api:
                 st["lab_due"] = ls["overdue"] + ls["fitting_today"]
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from auth import _current, Auth
+            u = getattr(_current, "user", None)
+            if u is None or "marketing" in Auth.effective_perms(u):
+                self._crm.auto()  # the rules run at most every 10 minutes
+                st["crm_due"] = self._crm.due_count((u or {}).get("login") or "")
+        except Exception:  # noqa: BLE001
+            log.exception("crm tasks")
         try:
             from auth import _current, Auth
             u = getattr(_current, "user", None)
@@ -1235,6 +1404,7 @@ class Api:
             p["invoices"] = self._local.invoices(pid)
             p["balance_local"] = self._local.balance(pid)
             p["teeth_local"] = self._local.teeth_state(pid)
+            p["surf_local"] = self._local.surf_state(pid)
             p["marketing"] = self._mk.patient_info(pid)
             p["files_count"] = self._files.count(pid)
             p["questionnaire"] = self._forms.latest(pid)
@@ -1246,6 +1416,7 @@ class Api:
             for d in p["documents"]:
                 d["signed"] = d["id"] in signed
             p["perio_count"] = len(self._perio.list(pid))
+            p["crm_open"] = self._db.one("SELECT COUNT(*) AS n FROM crm_tasks WHERE patient_id=? AND status='open'", (pid,))["n"]
         return p
 
     def add_note(self, pid, text):

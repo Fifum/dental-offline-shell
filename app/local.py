@@ -9,7 +9,36 @@ import json
 import uuid
 from datetime import datetime
 
+import plans
 from normalize import person_name
+
+SURFACES = ("o", "m", "d", "v", "l")  # occlusal/incisal, mesial, distal, vestibular, oral (lingual/palatal)
+SURF_STATES = ("Кариес", "Пломба", "Временная пломба")
+
+
+def clean_rx(raw) -> list:
+    """Prescriptions of a visit: [{name, dose, how, days}], empty names dropped, texts trimmed."""
+    out = []
+    for r in raw if isinstance(raw, list) else []:
+        if not isinstance(r, dict) or not str(r.get("name") or "").strip():
+            continue
+        out.append({k: str(r.get(k) or "").strip()[:300 if k == "how" else 160] for k in ("name", "dose", "how", "days")})
+    return out[:30]
+
+
+TEMPLATE_KINDS = ("document", "phrase", "exam", "drug")
+
+
+def clean_surf(raw) -> dict:
+    """{tooth: {surface: state}} from the UI; '' keeps «cleared» so a newer record can erase an older mark."""
+    out = {}
+    for t, ss in (raw or {}).items() if isinstance(raw, dict) else []:
+        if not (isinstance(t, str) and len(t) == 2 and t.isdigit() and isinstance(ss, dict)):
+            continue
+        row = {k: (v if v in SURF_STATES else "") for k, v in ss.items() if k in SURFACES and (v in SURF_STATES or v == "")}
+        if row:
+            out[t] = row
+    return out
 
 
 def now():
@@ -136,6 +165,12 @@ class Local:
         ts = now()
         data = {k: f.get(k) for k in ("complaints", "anamnesis", "objective", "diagnoses", "teeth",
                                       "treatment", "recommendations", "services_done", "next_visit")}
+        surf = clean_surf(f.get("surf"))
+        if surf:
+            data["surf"] = surf
+        rx = clean_rx(f.get("rx"))
+        if rx:
+            data["rx"] = rx
         with self.db.tx() as c:
             exists = c.execute("SELECT 1 FROM records WHERE id=?", (rid,)).fetchone()
             if exists:
@@ -174,6 +209,19 @@ class Local:
                     out[t] = s
         return out
 
+    def surf_state(self, pid):
+        """Latest state of every tooth surface from local records (newest record wins per surface; '' clears it)."""
+        out = {}
+        for r in reversed(self.records(pid)):
+            for t, ss in (r["data"].get("surf") or {}).items():
+                cur = out.setdefault(t, {})
+                for k, v in (ss or {}).items():
+                    if v:
+                        cur[k] = v
+                    else:
+                        cur.pop(k, None)
+        return {t: ss for t, ss in out.items() if ss}
+
     # =========================================================== templates
     def templates(self, kind=None):
         sql, args = "SELECT * FROM templates", []
@@ -184,6 +232,17 @@ class Local:
 
     def save_template(self, t: dict):
         tid = t.get("id") or new_id()
+        if t.get("kind") not in TEMPLATE_KINDS:
+            raise ValueError("Неизвестный вид шаблона")
+        if t["kind"] in ("exam", "drug"):  # structured: the body is JSON
+            try:
+                body = json.loads(t.get("body") or "")
+            except (TypeError, ValueError):
+                raise ValueError("Шаблон заполнен неверно")
+            if not isinstance(body, dict) or (t["kind"] == "drug" and not str(body.get("name") or "").strip()):
+                raise ValueError("Укажите название лекарства")
+            if not str(t.get("title") or "").strip():
+                raise ValueError("Укажите название шаблона")
         with self.db.tx() as c:
             c.execute("""INSERT INTO templates(id, kind, category, title, body, builtin, sort, updated_at)
                          VALUES(?,?,?,?,?,0,?,?) ON CONFLICT(id) DO UPDATE SET category=excluded.category,
@@ -192,8 +251,29 @@ class Local:
         return tid
 
     def delete_template(self, tid):
+        """Own templates are deleted; built-in ones are hidden (else they would come back on the next start)."""
         with self.db.tx() as c:
-            c.execute("DELETE FROM templates WHERE id=?", (tid,))
+            row = c.execute("SELECT builtin, kind FROM templates WHERE id=?", (tid,)).fetchone()
+            if row and row[0] and not str(row[1]).endswith(":off"):
+                c.execute("UPDATE templates SET kind=kind || ':off', updated_at=? WHERE id=?", (now(), tid))
+            else:
+                c.execute("DELETE FROM templates WHERE id=?", (tid,))
+
+    def restore_templates(self, kind):
+        """Bring back the hidden built-in templates of one kind."""
+        with self.db.tx() as c:
+            return c.execute("UPDATE templates SET kind=?, updated_at=? WHERE kind=?", (kind, now(), kind + ":off")).rowcount
+
+    def structured(self, kind):
+        """Exam templates / medicines with the JSON body parsed."""
+        out = []
+        for t in self.templates(kind):
+            try:
+                t["data"] = json.loads(t["body"] or "{}")
+            except ValueError:
+                continue
+            out.append(t)
+        return out
 
     # =========================================================== documents
     def save_document(self, d: dict):
@@ -287,18 +367,33 @@ class Local:
         disc = float(inv.get("discount") or 0)
         total = round(total - total * disc / 100, 2)
         kind = inv.get("kind") or "invoice"
+        variants, chosen = [], None
+        if kind == "plan":  # options «эконом / стандарт / премиум»: the total is what the patient will pay
+            variants = plans.norm_variants(inv.get("variants"))
+            keys = [v["key"] for v in variants]
+            for it in items:
+                it["opt"] = plans.item_opt(it, keys)
+            chosen = inv.get("variant") if inv.get("variant") in keys else None
+            total = plans.totals(items, variants, disc, chosen or "")["total"]
         with self.db.tx() as c:
             exists = c.execute("SELECT 1 FROM invoices WHERE id=?", (iid,)).fetchone()
+            pst = inv.get("plan_status") or ("Предварительный" if kind == "plan" else None)
+            if kind == "plan" and chosen:  # the choice was just made: the plan is agreed
+                was = c.execute("SELECT variant FROM invoices WHERE id=?", (iid,)).fetchone()
+                if pst == "Предварительный" and (not was or not was[0]):
+                    pst = "Подтверждён"
             vals = (inv.get("doctor_id"), json.dumps(items, ensure_ascii=False), total, disc, inv.get("comment", ""),
-                    inv.get("title") or "", inv.get("plan_status") or ("Предварительный" if kind == "plan" else None))
+                    inv.get("title") or "", pst,
+                    json.dumps(variants, ensure_ascii=False) if variants else None, chosen)
             if exists:
                 c.execute("""UPDATE invoices SET doctor_id=?, items=?, total=?, discount=?, comment=?, title=?, plan_status=?,
-                             transferred=0, transferred_at=NULL WHERE id=?""", (*vals, iid))
+                             variants=?, variant=?, transferred=0, transferred_at=NULL WHERE id=?""", (*vals, iid))
             else:
                 c.execute("""INSERT INTO invoices(id, patient_id, visit_id, doctor_id, items, total, discount, comment, title,
-                             plan_status, kind, status, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                             plan_status, variants, variant, kind, status, created_at, plan_id)
+                             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                           (iid, inv["patient_id"], inv.get("visit_id"), *vals, kind,
-                           "План" if kind == "plan" else "Не оплачен", now()))
+                           "План" if kind == "plan" else "Не оплачен", now(), inv.get("plan_id") if kind != "plan" else None))
         if kind != "plan":
             self._invoice_status(iid)
         return iid
@@ -308,10 +403,17 @@ class Local:
         plan = self.invoice(plan_id)
         if not plan:
             raise ValueError("План не найден")
-        items = plan["items"] if item_indexes is None else [plan["items"][i] for i in item_indexes if i < len(plan["items"])]
+        variants = plan.get("variants") or []
+        ok = set(plans.billable(plan["items"], variants, plan.get("variant") or ""))
+        want = range(len(plan["items"])) if item_indexes is None else [int(i) for i in item_indexes]
+        if variants and not plan.get("variant") and any(0 <= i < len(plan["items"]) and i not in ok for i in want):
+            raise ValueError("Сначала отметьте, какой вариант лечения выбрал пациент")
+        items = [plan["items"][i] for i in want if 0 <= i < len(plan["items"]) and i in ok]
+        if not items:
+            raise ValueError("Отметьте выполненные услуги")
         iid = self.save_invoice({"patient_id": plan["patient_id"], "visit_id": visit_id, "doctor_id": plan["doctor_id"],
-                                 "items": [{k: v for k, v in it.items() if k != "sum"} for it in items],
-                                 "comment": f"По плану лечения от {plan['created_at'][:10]}"})
+                                 "items": [{k: v for k, v in it.items() if k not in ("sum", "opt")} for it in items],
+                                 "comment": f"По плану лечения от {plan['created_at'][:10]}", "plan_id": plan_id})
         with self.db.tx() as c:
             c.execute("UPDATE invoices SET plan_status='Активен', transferred=0 WHERE id=? AND plan_status!='Лечение завершено'", (plan_id,))
         return iid
@@ -339,6 +441,10 @@ class Local:
         rows = self.db.q(sql + " ORDER BY i.created_at DESC", args)
         for r in rows:
             r["items"] = json.loads(r["items"] or "[]")
+            if r.get("kind") == "plan":
+                r["variants"] = plans.norm_variants(r.get("variants"))
+                r["variant"] = r.get("variant") or ""
+                r["totals"] = plans.totals(r["items"], r["variants"], r.get("discount") or 0, r["variant"])
             r["payments"] = self.db.q("SELECT * FROM payments WHERE invoice_id=? ORDER BY created_at", (r["id"],))
         return rows
 

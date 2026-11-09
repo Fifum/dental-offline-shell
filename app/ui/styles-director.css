@@ -1,0 +1,70 @@
+/* Director's screen, plan for the month and the analytics tabs (patients, load, conversion). Colours are theme tokens only. */
+.stat small{font-size:12px;margin-top:3px;line-height:1.35}
+.stat .linkbtn{align-self:flex-start;margin-top:4px;padding:0;font-size:12.5px}
+.dir-tiles{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.dir-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);gap:12px;align-items:start}
+.dir-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+@media (max-width:1100px){.dir-grid{grid-template-columns:1fr}}
+.dir-col .tbl-scroll,#repBody .tbl-scroll,.kpi-tbl-wrap{overflow-x:auto}
+#dirDocs td,#dirDocs th{white-space:nowrap;padding-left:9px;padding-right:9px}
+#dirDocs td.meter-cell{min-width:110px;width:auto}
+.dir-note{padding:0 16px 10px;margin-top:2px}
+
+/* progress toward a target; the tick shows where the month should be today */
+.meter{position:relative;display:block;height:8px;border-radius:4px;background:var(--line2);margin-top:6px;min-width:70px}
+.meter i{display:block;height:100%;border-radius:4px;background:var(--accent)}
+.meter u{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--ink2);border-radius:1px}
+.tbl td.meter-cell{min-width:120px;width:18%;white-space:nowrap}
+.meter-cell .meter{display:inline-block;width:calc(100% - 52px);vertical-align:middle;margin:0}
+.meter-cell .num-s{display:inline-block;width:48px;text-align:right;font-variant-numeric:tabular-nums;font-size:12.5px;color:var(--ink2)}
+
+/* what needs attention */
+.advice{list-style:none;margin:0;padding:0 8px 8px}
+.advice li{display:flex;gap:10px;align-items:flex-start;padding:9px 8px;border-radius:var(--r);cursor:pointer;line-height:1.45;font-size:13.5px;color:var(--ink)}
+.advice li+li{border-top:1px solid var(--line2)}
+.advice li:hover,.advice li:focus-visible{background:var(--hover)}
+.adv-ic{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center}
+.adv-ic svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.adv-warn .adv-ic{background:var(--warn-soft);color:var(--warn)}
+.adv-ok .adv-ic{background:var(--ok-soft);color:var(--ok)}
+.adv-info .adv-ic{background:var(--blue-soft);color:var(--blue)}
+.ahead td{white-space:nowrap}
+.ahead td.bar-cell{width:45%}
+
+/* plan for the month */
+.kpi-month{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.kpi-month b{font-size:15px;min-width:140px;text-align:center}
+.kpi-month .grow{flex:1}
+.kpi-tbl th{text-align:left;white-space:nowrap}
+.kpi-tbl tr.sub th{font-weight:500;color:var(--muted);font-size:12px}
+.kpi-tbl td{vertical-align:top}
+.kpi-in{width:110px}
+.kpi-in .input{width:100%;min-width:80px;padding:5px 8px}
+.kpi-fact{white-space:nowrap;line-height:1.3}
+.kpi-fact small{display:block;font-size:11.5px}
+.kpi-clinic td{background:var(--panel2)}
+.kpi-set{margin-top:14px;align-items:start}
+.kpi-set .note-line{margin-top:20px}
+
+/* a soft notice above a report */
+.note-box{background:var(--blue-soft);border:1px solid var(--blue-line);color:var(--ink2);border-radius:var(--r);padding:9px 14px;margin-bottom:12px;font-size:13px;line-height:1.45}
+
+/* weekday × hour: one hue, stronger = busier; the number stays in ink */
+.heat td.hm{padding:0;min-width:30px;height:28px;text-align:center;font-size:11.5px;font-variant-numeric:tabular-nums;
+  background:color-mix(in srgb,var(--accent) var(--a),var(--panel));border:2px solid var(--panel)}
+.heat td.hm span{display:inline-block;min-width:22px;padding:1px 3px;border-radius:3px;background:color-mix(in srgb,var(--panel) 78%,transparent);color:var(--ink)}
+.heat td.hm span:empty{display:none}
+.heat th{font-weight:500;color:var(--muted);font-size:12px}
+
+/* funnel */
+.funnel{padding:4px 16px 14px;display:flex;flex-direction:column;gap:10px}
+.fn-row{display:grid;grid-template-columns:150px minmax(0,1fr) 56px 56px;gap:12px;align-items:center;font-size:13.5px}
+.fn-row .hb{height:12px;border-radius:6px}
+.fn-row .hb i{border-radius:6px}
+.fn-row b{text-align:right;font-variant-numeric:tabular-nums}
+.fn-row small{text-align:right}
+@media (max-width:760px){.fn-row{grid-template-columns:110px minmax(0,1fr) 44px 44px;gap:8px}}
+
+@media print{.meter,.advice .adv-ic{display:none}}
+.rep-stack{display:flex;flex-direction:column;gap:12px}
+.heat th.num{text-align:center}

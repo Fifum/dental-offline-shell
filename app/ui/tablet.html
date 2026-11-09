@@ -36,6 +36,27 @@
   .q input{width:100%;margin-top:10px;font:inherit;padding:12px;border:2px solid var(--line);border-radius:10px}
   .q.miss p{color:var(--danger)}
   .err{color:var(--danger);min-height:1.4em}
+  .doc.plan{max-height:58vh;padding:6px;overflow-x:auto}
+  .doc.plan .pp{padding:14px 12px}
+  @media (max-width:900px){.doc.plan .pp .pp-f .formula{zoom:.7}}
+  .vars{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:14px 0 4px}
+  .vars button{font:inherit;text-align:left;padding:14px 16px;border-radius:12px;border:2px solid var(--line);background:#fff;color:var(--ink)}
+  .vars button b{display:block;font-size:19px}
+  .vars button span{display:block;font-size:22px;font-weight:700;margin:4px 0 2px}
+  .vars button small{display:block;color:var(--muted);font-size:14px}
+  .vars button.on{border-color:var(--accent);background:var(--accent-soft)}
+  .vars button.on span{color:var(--accent)}
+  .vars.miss button{border-color:var(--danger)}
+  .nps-q{font-size:19px;font-weight:600;margin:6px 0 14px}
+  .nps{display:grid;grid-template-columns:repeat(11,1fr);gap:6px}
+  .nps button{font:inherit;font-size:22px;font-weight:700;padding:16px 0;border-radius:10px;border:2px solid var(--line);background:#fff;color:var(--ink)}
+  .nps button.on{border-color:var(--accent);background:var(--accent);color:#fff}
+  .nps-l{display:flex;justify-content:space-between;font-size:14px;margin:6px 2px 16px}
+  @media (max-width:640px){.nps{grid-template-columns:repeat(6,1fr)}}
+  textarea{width:100%;font:inherit;padding:12px;border:2px solid var(--line);border-radius:10px;margin-bottom:14px;resize:vertical}
+  .qrs{display:flex;gap:22px;flex-wrap:wrap;justify-content:center}
+  .qrs figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:6px}
+  .qrs img{width:min(40vw,230px);background:#fff;border-radius:12px;padding:8px;border:1px solid var(--line)}
   .done{font-size:64px;color:var(--ok)}
   .dot{width:12px;height:12px;border-radius:50%;background:var(--ok);display:inline-block;animation:p 1.6s ease-in-out infinite}
   @keyframes p{50%{opacity:.25}}
@@ -75,7 +96,7 @@ function pairScreen(msg = "") {
 function waitScreen() {
   shownTask = null;
   $("#app").className = "center";
-  $("#app").innerHTML = `<span class="dot"></span><h1>Планшет готов</h1><p class="muted">Здесь появится документ на подпись или анкета, когда сотрудник клиники отправит её.</p>`;
+  $("#app").innerHTML = `<span class="dot"></span><h1>Планшет готов</h1><p class="muted">Здесь появится документ на подпись, анкета или опрос, когда сотрудник клиники отправит их.</p>`;
 }
 
 function padInit(canvas) {
@@ -92,13 +113,18 @@ function padInit(canvas) {
 function taskScreen(t) {
   shownTask = t.id;
   if (t.kind === "qr") { const app = $("#app"); app.className = "center"; app.innerHTML = `<h1>${esc(t.title)}</h1>${t.patient ? `<p class="muted">${esc(t.patient)}</p>` : ""}<img alt="QR-код СБП" src="${t.qr}" style="width:min(70vw,420px);background:#fff;border-radius:16px;padding:12px"><div style="font-size:40px;font-weight:700">${Number(t.amount || 0).toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2})} ₽</div><p class="muted">${esc(t.label || "Наведите камеру телефона на QR-код и оплатите в приложении банка")}</p>`; return; }
+  if (t.kind === "nps") return npsScreen(t);
   const app = $("#app"); app.className = "";
-  const isSign = t.kind === "sign";
+  const isPlan = t.kind === "plan", isSign = t.kind === "sign" || isPlan, vars = isPlan ? (t.variants || []) : [];
+  let pick = isPlan && vars.some(v => v.key === t.chosen) ? t.chosen : "";
+  const rub = v => Number(v || 0).toLocaleString("ru-RU", {maximumFractionDigits: 0}) + " ₽";
   app.innerHTML = `<div class="card"><h2>${esc(t.title)}</h2><p class="muted">Пациент: <b>${esc(t.patient)}</b></p>
-    ${isSign ? `<div class="doc">${t.html}</div><p>Прочитайте документ и распишитесь пальцем в поле ниже.</p>`
+    ${isPlan ? `<div class="doc plan">${t.html}</div>${vars.length ? `<p><b>Выберите вариант лечения</b></p><div class="vars" id="vars">${vars.map(v => `<button data-k="${esc(v.key)}" class="${v.key === pick ? "on" : ""}"><b>${esc(v.name)}</b><span>${rub(v.total)}</span>${v.warranty ? `<small>Гарантия: ${esc(v.warranty)}</small>` : ""}${v.term ? `<small>Срок: ${esc(v.term)}</small>` : ""}</button>`).join("")}</div>` : ""}<p>Если согласны с планом, распишитесь пальцем в поле ниже.</p>`
+    : isSign ? `<div class="doc">${t.html}</div><p>Прочитайте документ и распишитесь пальцем в поле ниже.</p>`
       : t.questions.map(q => `<div class="q" data-k="${esc(q.key)}"><p>${esc(q.q)}</p><div class="yn"><button data-v="1">Да</button><button data-v="0">Нет</button></div>${q.extra ? `<input placeholder="${esc(q.extra)}" hidden>` : ""}</div>`).join("") + `<p>Сведения сообщены мной лично и достоверны. Распишитесь пальцем:</p>`}
     <div class="pad"><canvas id="pad"></canvas><span>Подпись</span></div>
-    <div class="row"><button class="big ghost" id="clr">Стереть подпись</button><button class="big" id="ok">${isSign ? "Подписать" : "Отправить анкету"}</button></div><div class="err" id="err"></div></div>`;
+    <div class="row"><button class="big ghost" id="clr">Стереть подпись</button><button class="big" id="ok">${isPlan ? "Согласен, подписать" : isSign ? "Подписать" : "Отправить анкету"}</button></div><div class="err" id="err"></div></div>`;
+  app.querySelectorAll("#vars button").forEach(b => b.onclick = () => { pick = b.dataset.k; app.querySelectorAll("#vars button").forEach(x => x.classList.toggle("on", x === b)); $("#vars").classList.remove("miss"); });
   const pad = padInit($("#pad"));
   const ans = {};
   app.querySelectorAll(".q").forEach(r => r.querySelectorAll(".yn button").forEach(b => b.onclick = () => {
@@ -115,13 +141,41 @@ function taskScreen(t) {
       if (miss.length) { miss.forEach(r => r.classList.add("miss")); miss[0].scrollIntoView({block: "center", behavior: "smooth"}); err.textContent = "Ответьте на все вопросы"; return; }
       app.querySelectorAll(".q").forEach(r => { const i = r.querySelector("input"); if (i && ans[r.dataset.k].yes) ans[r.dataset.k].text = i.value; });
     }
+    if (vars.length && !pick) { $("#vars").classList.add("miss"); $("#vars").scrollIntoView({block: "center", behavior: "smooth"}); err.textContent = "Выберите вариант лечения"; return; }
     if (pad.empty()) { err.textContent = "Распишитесь в поле подписи"; return; }
     $("#ok").disabled = true; busy = true;
     try {
-      await call("submit", [t.id, {image: pad.png(), answers: isSign ? null : ans}]);
+      await call("submit", [t.id, {image: pad.png(), answers: isSign ? null : ans, variant: pick}]);
       app.className = "center"; app.innerHTML = `<div class="done">✓</div><h1>Спасибо!</h1><p class="muted">Верните, пожалуйста, планшет администратору.</p>`;
       setTimeout(() => { busy = false; waitScreen(); }, 6000);
     } catch (e) { err.textContent = e.message; $("#ok").disabled = false; busy = false; }
+  };
+}
+
+/* after-visit survey: a score 0–10; a high one shows the QR codes of the clinic's review pages */
+function npsScreen(t) {
+  const app = $("#app"); app.className = "";
+  let score = null;
+  app.innerHTML = `<div class="card"><h2>${esc(t.title)}</h2><p class="muted">${esc(t.patient)}</p><p class="nps-q">${esc(t.question || "")}</p>
+    <div class="nps" id="nps">${[...Array(11).keys()].map(k => `<button data-s="${k}">${k}</button>`).join("")}</div>
+    <div class="nps-l muted"><span>Точно нет</span><span>Обязательно порекомендую</span></div>
+    <textarea id="npsC" rows="3" placeholder="Что понравилось или что нам улучшить? (необязательно)"></textarea>
+    <div class="row"><span></span><button class="big" id="ok">Отправить</button></div><div class="err" id="err"></div></div>`;
+  app.querySelectorAll("#nps button").forEach(b => b.onclick = () => { score = +b.dataset.s; app.querySelectorAll("#nps button").forEach(x => x.classList.toggle("on", x === b)); $("#err").textContent = ""; });
+  $("#ok").onclick = async () => {
+    if (score === null) { $("#err").textContent = "Выберите оценку от 0 до 10"; return; }
+    $("#ok").disabled = true; busy = true;
+    try {
+      const r = await call("submit", [t.id, {score, comment: $("#npsC").value}]);
+      app.className = "center";
+      const links = (r.links || []).filter(l => l.qr);
+      app.innerHTML = `<div class="done">✓</div><h1>Спасибо за оценку!</h1>${links.length ? `<p>Будем очень рады вашему отзыву. Наведите камеру телефона на QR-код:</p>
+        <div class="qrs">${links.map(l => `<figure><img alt="QR-код: ${esc(l.title)}" src="${l.qr}"><figcaption>${esc(l.title)}</figcaption></figure>`).join("")}</div>
+        <button class="big ghost" id="fin">Готово</button>` : `<p class="muted">Верните, пожалуйста, планшет администратору.</p>`}`;
+      const fin = () => { busy = false; waitScreen(); };
+      const timer = setTimeout(fin, links.length ? 90000 : 6000);
+      const f = $("#fin"); if (f) f.onclick = () => { clearTimeout(timer); fin(); };
+    } catch (e) { $("#err").textContent = e.message; $("#ok").disabled = false; busy = false; }
   };
 }
 
