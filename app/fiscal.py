@@ -42,7 +42,9 @@ TAXES = {"none": "Без НДС", "vat0": "НДС 0%", "vat5": "НДС 5%", "vat
 DRIVERS = {"emulator": "Тестовый режим (без кассы)", "atol": "АТОЛ (веб-сервер драйвера ДТО 10)", "shtrih": "Штрих-М (драйвер ККТ)"}
 # how the clinic's payment methods map to receipt payment types; None = no receipt needed
 PAY_TYPE = {"Наличные": "cash", "Карта": "electronically", "Перевод": "electronically", "СБП": "electronically",
-            "Безнал (организация)": None, "Сертификат": "prepaid", "Бонусы": None}
+            "Безнал (организация)": None, "Сертификат": "prepaid", "Бонусы": None,
+            "Из аванса": "prepaid",  # 2.12: an invoice paid from the patient's advance — offset of the prepayment
+            "Страховая": None}       # ДМС: the insurance company pays by bank transfer, no receipt
 METHOD_TITLES = {"fullPayment": "Полный расчёт", "partialPayment": "Частичный расчёт", "creditPayment": "Оплата кредита",
                  "advance": "Аванс"}
 
@@ -413,6 +415,11 @@ class Fiscal:
         return self.receipt(rid)
 
     def for_payment(self, payment_id, contact="", user="", electronically=False):
+        p = self.db.one("SELECT amount, kind FROM payments WHERE id=?", (payment_id,))
+        if p and (p["amount"] or 0) < 0:  # 2.12: a refund gets a «return» receipt; moving an advance needs none
+            if p["kind"] == "refund":
+                return self.for_refund(payment_id, contact, user, electronically)
+            return {"status": "not_required", "message": "Перенос аванса между счетами — чек не нужен"}
         if self.db.one("SELECT 1 AS x FROM receipts WHERE payment_id=? AND kind='sell' AND status IN ('done','test')", (payment_id,)):
             raise FiscalError("Чек по этой оплате уже пробит")
         body = self.build_for_payment(payment_id)
@@ -427,6 +434,37 @@ class Fiscal:
                       (rid, "sell", payment_id, body["invoice_id"], body["patient_id"], json.dumps(body["items"], ensure_ascii=False),
                        json.dumps(body["payments"]), body["total"], str(contact or "").strip()[:100], "pending", user, _now()))
         return self._print(rid, {**body, "electronically": electronically}, user)
+
+    def for_refund(self, payment_id, contact="", user="", electronically=False):
+        """2.12: «return of income» for a refund row (a negative payment): money given back from the advance or
+        from an overpaid invoice — for the refunded sum, not for a whole earlier receipt."""
+        p = self.db.one("SELECT * FROM payments WHERE id=?", (payment_id,))
+        if not p or (p["amount"] or 0) >= 0 or p["kind"] != "refund":
+            raise FiscalError("Возврат не найден")
+        if self.db.one("SELECT 1 AS x FROM receipts WHERE payment_id=? AND kind='refund' AND refund_of IS NULL AND status IN ('done','test')",
+                       (payment_id,)):
+            raise FiscalError("Чек возврата по этой операции уже пробит")
+        ptype = PAY_TYPE.get(p["method"], "cash")
+        if ptype is None:
+            return {"status": "not_required", "message": "Возврат по безналу организации — чек не нужен"}
+        s = settings()
+        amount = round(-p["amount"], 2)
+        adv = not p["invoice_id"]
+        items = [{"name": "Возврат аванса за стоматологические услуги" if adv else "Возврат за стоматологические услуги",
+                  "quantity": 1, "price": amount, "amount": amount, "paymentMethod": "advance" if adv else "fullPayment",
+                  "paymentObject": "payment" if adv else "service", "tax": s["tax"]}]
+        rid = "C-" + uuid.uuid4().hex[:10]
+        with self.db.tx() as c:
+            c.execute("DELETE FROM receipts WHERE payment_id=? AND kind='refund' AND refund_of IS NULL AND status='error'", (payment_id,))
+            c.execute("""INSERT INTO receipts(id, kind, payment_id, invoice_id, patient_id, items, payments, total, contact, status,
+                         user_name, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (rid, "refund", payment_id, p["invoice_id"], p["patient_id"], json.dumps(items, ensure_ascii=False),
+                       json.dumps([{"type": ptype, "sum": amount}]), amount, str(contact or "").strip()[:100], "pending", user, _now()))
+        return self._print(rid, {"taxation": s["taxation"], "electronically": electronically}, user)
+
+    def refund_printed(self, payment_id) -> bool:
+        return bool(self.db.one("SELECT 1 AS x FROM receipts WHERE payment_id=? AND kind='refund' AND refund_of IS NULL "
+                                "AND status IN ('done','test')", (payment_id,)))
 
     def retry(self, rid, user=""):
         r = self.db.one("SELECT * FROM receipts WHERE id=?", (rid,))
@@ -485,7 +523,7 @@ class Fiscal:
             rows = self.db.q("SELECT id, kind, status, refund_of FROM receipts WHERE payment_id=? ORDER BY created_at", (pid,))
             st = None
             for r in rows:
-                if r["kind"] == "sell":
+                if r["kind"] == "sell" or (r["kind"] == "refund" and not r["refund_of"]):  # 2.12: receipt of a refund row
                     st = {"id": r["id"], "status": r["status"]}
                 elif r["kind"] == "refund" and r["status"] in ("done", "test") and st:
                     st["status"] = "refunded"

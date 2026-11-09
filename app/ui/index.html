@@ -3,24 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
-<script src="theme.js?v=2.11.0"></script>
+<script src="theme.js?v=2.13.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=2.11.0">
-<link rel="stylesheet" href="styles-v2.css?v=2.11.0">
-<link rel="stylesheet" href="styles-brand.css?v=2.11.0">
-<link rel="stylesheet" href="styles-auth.css?v=2.11.0">
-<link rel="stylesheet" href="styles-motion.css?v=2.11.0">
-<link rel="stylesheet" href="styles-stock.css?v=2.11.0">
-<link rel="stylesheet" href="styles-office.css?v=2.11.0">
-<link rel="stylesheet" href="styles-medcard.css?v=2.11.0">
-<link rel="stylesheet" href="styles-theme.css?v=2.11.0">
-<link rel="stylesheet" href="styles-teeth.css?v=2.11.0">
-<link rel="stylesheet" href="styles-voice.css?v=2.11.0">
-<link rel="stylesheet" href="styles-platform.css?v=2.11.0">
-<link rel="stylesheet" href="styles-director.css?v=2.11.0">
-<link rel="stylesheet" href="styles-plans.css?v=2.11.0">
-<link rel="stylesheet" href="styles-crm.css?v=2.11.0">
-<link rel="stylesheet" href="styles-responsive.css?v=2.11.0">
+<link rel="stylesheet" href="styles.css?v=2.13.0">
+<link rel="stylesheet" href="styles-v2.css?v=2.13.0">
+<link rel="stylesheet" href="styles-brand.css?v=2.13.0">
+<link rel="stylesheet" href="styles-auth.css?v=2.13.0">
+<link rel="stylesheet" href="styles-motion.css?v=2.13.0">
+<link rel="stylesheet" href="styles-stock.css?v=2.13.0">
+<link rel="stylesheet" href="styles-office.css?v=2.13.0">
+<link rel="stylesheet" href="styles-medcard.css?v=2.13.0">
+<link rel="stylesheet" href="styles-theme.css?v=2.13.0">
+<link rel="stylesheet" href="styles-teeth.css?v=2.13.0">
+<link rel="stylesheet" href="styles-voice.css?v=2.13.0">
+<link rel="stylesheet" href="styles-platform.css?v=2.13.0">
+<link rel="stylesheet" href="styles-director.css?v=2.13.0">
+<link rel="stylesheet" href="styles-plans.css?v=2.13.0">
+<link rel="stylesheet" href="styles-crm.css?v=2.13.0">
+<link rel="stylesheet" href="styles-finance.css?v=2.13.0">
+<link rel="stylesheet" href="styles-ai.css?v=2.13.0">
+<link rel="stylesheet" href="styles-settings.css?v=2.13.0">
+<link rel="stylesheet" href="styles-responsive.css?v=2.13.0">
 </head>
 <body>
 <div class="app">
@@ -154,7 +157,7 @@
     <section class="view" id="view-accounting" hidden>
       <header class="top">
         <div class="title-block"><h1>Бухгалтерия</h1><span class="muted">Поступления, расходы, зарплата сотрудников и прибыль</span></div>
-        <div class="seg" id="accTabs"><button data-k="summary" class="on">Сводка</button><button data-k="expenses">Расходы</button><button data-k="payroll">Зарплата</button></div>
+        <div class="seg" id="accTabs"><button data-k="summary" class="on">Сводка</button><button data-k="expenses">Расходы</button><button data-k="payroll">Зарплата</button><button data-k="insurance">ДМС</button></div>
       </header>
       <div class="card-scroll" id="accBody"></div>
     </section>
@@ -227,69 +230,71 @@
 
     <!-- ===================== SETTINGS ===================== -->
     <section class="view" id="view-settings" hidden>
-      <header class="top"><div class="title-block"><h1>Настройки</h1><span class="muted" id="verLbl"></span></div></header>
+      <header class="top"><div class="title-block"><h1>Настройки</h1><span class="muted" id="verLbl"></span></div>
+        <div class="tools"><div class="set-find"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input class="input" id="setSearch" placeholder="Найти настройку: касса, планшет, пароль…" autocomplete="off"></div></div></header>
+      <div class="set-wrap"><nav class="set-nav" id="setNav" aria-label="Разделы настроек"></nav>
       <div class="settings">
-        <div class="panel">
+        <div class="panel" data-sec="general">
           <h3>Оформление</h3>
           <p class="hint">Тема сохраняется для вашей учётной записи. «Как в системе» следует за светлым или тёмным режимом Windows. Печать и PDF всегда светлые.</p>
           <div class="seg theme-seg" data-theme-seg><button type="button" data-tp="light">Светлая</button><button type="button" data-tp="dark">Тёмная</button><button type="button" data-tp="system">Как в системе</button></div>
         </div>
 
-        <div class="panel" id="backupPanel">
+        <div class="panel" data-sec="data" id="backupPanel">
           <h3>Резервные копии</h3>
           <p class="hint">Программа сама сохраняет копию всей базы: при запуске, каждые несколько часов и при закрытии. Каждая копия проверяется. Добавьте вторую папку на флешке или другом диске — тогда данные переживут поломку ноутбука.</p>
           <div id="backupBody">…</div>
         </div>
 
-        <div class="panel" id="securityPanel">
+        <div class="panel" data-sec="data" id="securityPanel">
           <h3>Защита данных</h3>
           <p class="hint">В программе медицинские данные пациентов. Если ноутбук потеряют или украдут, без шифрования диска базу можно прочитать на другом компьютере.</p>
           <div id="securityBody">…</div>
         </div>
 
-        <div class="panel" id="filesPanel">
+        <div class="panel" data-sec="patients" id="filesPanel">
           <h3>Снимки и файлы пациентов</h3>
           <p class="hint">Укажите папку, куда программа визиографа или датчика сохраняет снимки. Новые снимки появятся в карте пациента по кнопке «Из визиографа».</p>
           <div id="filesBody">…</div>
         </div>
 
-        <div class="panel" id="loyalPanel">
+        <div class="panel" data-sec="money" id="loyalPanel">
           <h3>Бонусы, сертификаты и СБП</h3>
           <p class="hint">Бонусы пациентам с каждой оплаты, срок подарочных сертификатов и QR-код для оплаты по СБП.</p>
           <div id="loyalBody">…</div>
         </div>
 
-        <div class="panel" id="tabletPanel">
+        <div class="panel" data-sec="patients" id="tabletPanel">
           <h3>Планшет для пациентов</h3>
           <p class="hint">Пациент подписывает согласия и договор пальцем и заполняет анкету о здоровье на планшете. Планшет подключается один раз — дальше документы отправляются на него из карты пациента.</p>
           <div id="tabletBody">…</div>
         </div>
 
-        <div class="panel" id="cloudPanel">
+        <div class="panel" data-sec="data" id="cloudPanel">
           <h3>Облако и подписка</h3>
           <p class="hint">Все компьютеры клиники обмениваются данными через облако: каждый работает сам по себе, а когда появляется интернет, изменения сходятся. Данные шифруются на компьютерах клиники — сервер их прочитать не может.</p>
           <div id="cloudBody">…</div>
         </div>
 
-        <div class="panel" id="updatePanel">
+        <div class="panel" data-sec="general" id="updatePanel">
           <h3>Обновления программы</h3>
           <div id="updateBody">…</div>
         </div>
 
-        <div class="panel" id="importPanel">
+        <div class="panel" data-sec="data" id="importPanel">
           <h3>Перенос базы пациентов</h3>
           <p class="hint">Из IDENT, Dentist Plus или любой таблицы: выгрузите список пациентов в Excel (.xlsx) или CSV и выберите файл. Программа сама найдёт колонки (ФИО, телефон, дата рождения, номер карты), покажет, что загрузит, и пропустит пациентов, которые уже есть.</p>
           <div id="importBody">…</div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="general">
           <h3>Сеть клиники</h3>
           <p class="hint">Этот компьютер — сервер: здесь хранится база. На других компьютерах установите программу, выберите «Подключиться к серверу» — она найдёт сервер сама. Если не нашла, введите один из адресов ниже.</p>
           <div class="net-box" id="netBox">…</div>
           <div class="row"><button class="btn ghost" id="netFw">Разрешить подключения в брандмауэре Windows</button><span class="msg" id="netMsg"></span></div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="dp">
           <h3>Подключение к Dentist Plus</h3>
           <p class="hint">Логин и пароль партнёрского API выдаёт поддержка Dentist Plus. Пароль хранится зашифрованным средствами Windows и не покидает этот компьютер.</p>
           <label class="switch-row"><input type="checkbox" id="sDemo"><span class="sw"></span>Демо-режим (тестовые данные без подключения)</label>
@@ -305,19 +310,19 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="ai">
           <h3>Голос и ИИ</h3>
           <p class="hint">Диктовка в медкарту: речь распознаётся прямо на этом компьютере, без интернета, звук не сохраняется.</p>
           <div id="voiceSettings"></div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="money">
           <h3>Касса (ККТ)</h3>
           <p class="hint">Фискальные чеки по 54-ФЗ: приход при оплате, возврат, смены, X- и Z-отчёты. Пока кассы нет — включите тестовый режим.</p>
           <div id="fiscalSettings"></div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="dp">
           <h3>Перенос изменений в Dentist Plus</h3>
           <p class="hint">Как попадают в Dentist Plus записи и новые пациенты, созданные в этой программе.</p>
           <div class="mode-cards">
@@ -331,7 +336,7 @@
           <div class="warn-line" id="tmNote">Автоматически отправляются только пациенты и записи. Медкарта, документы, счета и оплаты пока переносятся вручную: для них в API Dentist Plus нет описанного способа записи, а оплатам нужен кассовый чек.</div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="dp">
           <h3>Что хранить</h3>
           <div class="form">
             <label>Дней назад<input class="input" id="sBack" type="number" min="1" max="365"></label>
@@ -343,13 +348,13 @@
           <label class="switch-row"><input type="checkbox" id="sAuto"><span class="sw"></span>Запускать вместе с Windows (свёрнуто) — синхронизация идёт в фоне</label>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="dp">
           <h3>История синхронизаций</h3>
           <table class="tbl compact" id="histTable"><thead><tr><th>Время</th><th>Результат</th><th>Записей</th><th>Пациентов</th></tr></thead><tbody></tbody></table>
           <div class="row"><span class="muted" id="dataDir"></span><button class="btn ghost small" id="openDir">Открыть папку с данными</button></div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-sec="help">
           <h3>Отчёт для разработчика</h3>
           <p class="muted">Если программа работает не так, как нужно, нажмите кнопку и отправьте файл разработчику. В отчёте нет данных пациентов, паролей и ключей: только настройки, ошибки и названия полей из Dentist Plus.</p>
           <div class="row">
@@ -360,7 +365,7 @@
           <div class="msg" id="devRepMsg"></div>
         </div>
 
-        <details class="panel adv">
+        <details class="panel adv" data-sec="dp">
           <summary>Для специалиста: тонкая настройка API</summary>
           <div class="form">
             <label>Параметр «дата с»<input class="input" id="sFromP"></label>
@@ -374,6 +379,7 @@
           <div class="row"><button class="btn ghost" id="sDiag">Диагностика API (показать сырые ответы)</button></div>
           <pre class="diag" id="diagOut" hidden></pre>
         </details>
+      </div>
       </div>
     </section>
   </main>
@@ -391,38 +397,41 @@
   <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
   <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=2.11.0"></script>
-<script src="booking.js?v=2.11.0"></script>
-<script src="calendar-dnd.js?v=2.11.0"></script>
-<script src="waitlist.js?v=2.11.0"></script>
-<script src="steril.js?v=2.11.0"></script>
-<script src="files.js?v=2.11.0"></script>
-<script src="perio.js?v=2.11.0"></script>
-<script src="sign.js?v=2.11.0"></script>
-<script src="taxcert.js?v=2.11.0"></script>
-<script src="lab.js?v=2.11.0"></script>
-<script src="money.js?v=2.11.0"></script>
-<script src="record.js?v=2.11.0"></script>
-<script src="docs.js?v=2.11.0"></script>
-<script src="billing.js?v=2.11.0"></script>
-<script src="plans.js?v=2.11.0"></script>
-<script src="journal.js?v=2.11.0"></script>
-<script src="refs.js?v=2.11.0"></script>
-<script src="tpl-editor.js?v=2.11.0"></script>
-<script src="staff.js?v=2.11.0"></script>
-<script src="stock.js?v=2.11.0"></script>
-<script src="stock-lots.js?v=2.11.0"></script>
-<script src="fiscal.js?v=2.11.0"></script>
-<script src="backup.js?v=2.11.0"></script>
-<script src="reports.js?v=2.11.0"></script>
-<script src="director.js?v=2.11.0"></script>
-<script src="accounting.js?v=2.11.0"></script>
-<script src="marketing.js?v=2.11.0"></script>
-<script src="crm.js?v=2.11.0"></script>
-<script src="shifts.js?v=2.11.0"></script>
-<script src="dictate.js?v=2.11.0"></script>
-<script src="platform.js?v=2.11.0"></script>
-<script src="motion.js?v=2.11.0"></script>
-<script src="responsive.js?v=2.11.0"></script>
+<script src="app.js?v=2.13.0"></script>
+<script src="booking.js?v=2.13.0"></script>
+<script src="calendar-dnd.js?v=2.13.0"></script>
+<script src="waitlist.js?v=2.13.0"></script>
+<script src="steril.js?v=2.13.0"></script>
+<script src="files.js?v=2.13.0"></script>
+<script src="perio.js?v=2.13.0"></script>
+<script src="sign.js?v=2.13.0"></script>
+<script src="taxcert.js?v=2.13.0"></script>
+<script src="lab.js?v=2.13.0"></script>
+<script src="money.js?v=2.13.0"></script>
+<script src="finance.js?v=2.13.0"></script>
+<script src="record.js?v=2.13.0"></script>
+<script src="docs.js?v=2.13.0"></script>
+<script src="billing.js?v=2.13.0"></script>
+<script src="plans.js?v=2.13.0"></script>
+<script src="journal.js?v=2.13.0"></script>
+<script src="refs.js?v=2.13.0"></script>
+<script src="tpl-editor.js?v=2.13.0"></script>
+<script src="staff.js?v=2.13.0"></script>
+<script src="stock.js?v=2.13.0"></script>
+<script src="stock-lots.js?v=2.13.0"></script>
+<script src="fiscal.js?v=2.13.0"></script>
+<script src="backup.js?v=2.13.0"></script>
+<script src="reports.js?v=2.13.0"></script>
+<script src="director.js?v=2.13.0"></script>
+<script src="accounting.js?v=2.13.0"></script>
+<script src="marketing.js?v=2.13.0"></script>
+<script src="crm.js?v=2.13.0"></script>
+<script src="shifts.js?v=2.13.0"></script>
+<script src="dictate.js?v=2.13.0"></script>
+<script src="ai.js?v=2.13.0"></script>
+<script src="settings-nav.js?v=2.13.0"></script>
+<script src="platform.js?v=2.13.0"></script>
+<script src="motion.js?v=2.13.0"></script>
+<script src="responsive.js?v=2.13.0"></script>
 </body>
 </html>

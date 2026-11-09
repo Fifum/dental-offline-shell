@@ -43,13 +43,17 @@ working without it.
 | **Periodontal chart** | Pocket depth, recession, bleeding, mobility and furcation for 32 teeth; fast keyboard entry, voice entry ("tooth sixteen, three two four, bleeding, palatal…"), colour-coded depths, mean depth / CAL / % ≥ 4 mm / BOP and the change since the previous chart |
 | **Allergy check** | The patient's allergies (card and anamnesis) against the treatment, recommendations and billed services: same substance is a stop, same group (e.g. amide anaesthetics, penicillins) is a warning |
 | **Visit templates and prescriptions** | 17 visit templates (protocols) for therapy, surgery, prosthetics, orthodontics, periodontics and pediatrics fill the record fields with the chosen tooth, ICD-10 diagnoses, the tooth state and prescriptions in one click; any visit can be saved as a template; a medicines list with dose, how to take and duration; prescriptions are checked against the patient's allergies |
-| **Documents** | 14 templates (consents, contract, plan, act, extract, form 043/u, receipt, prescription form 107-1/u, referral, patient memo) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
+| **Documents** | 15 templates (consents, consent to record a visit, contract, plan, act, extract, form 043/u, receipt, prescription form 107-1/u, referral, patient memo) filled from patient, doctor, clinic and invoice data; edit in preview, print or save as PDF |
 | **Signatures** | Documents signed with a mouse, pen or finger on this screen or on the patient tablet; signer, time, place and a hash of the text are kept, an edit after signing is flagged, signatures print under the document |
 | **Patient tablet** | Any tablet browser on the clinic Wi-Fi, paired once with a 6-digit code (no login); staff send a document or the questionnaire from the card and see "done" when the patient signs; the tablet key opens only its own task |
 | **Health questionnaire** | Yes/no questions with details, signed by the patient; saved as a signed document, key answers shown on the card, allergies fed into the allergy check |
 | **Tax deduction certificate** | Certificate of paid medical services for the tax office: year totals from payments, payer other than the patient, numbering per year, saved to the card, yearly register |
 | **Excel export** | Report, accounting, CRM and sterilization tables saved as .xlsx with numbers kept as numbers (built without extra libraries) |
 | **Money** | Invoices from the price list with per-line discounts, partial payments, staged treatment plans billed step by step, daily cash report |
+| **Advance, refunds, installments** | Patient advance without an invoice and paying invoices from it (a linked pair of «from advance» rows, so the day's cash is not doubled and the doctor gets the payment), overpayments count as advance; refunds as negative payments with a return receipt for the refunded sum and bonuses taken back; payment schedules with paid / waiting / overdue instalments, a printable schedule, overdue payments in the debts report, on the director's screen and as front-desk tasks |
+| **Memberships** | Membership types (services × count, price, months); selling one bills an invoice; «by membership» lines cost 0 and use up visits, checked against the patient, the expiry and what is left |
+| **Cash drawer by shifts** | Open a shift with the cash in the drawer; expected cash = opening + cash payments − cash refunds + certificates sold for cash + cash in − cash out; cash in/out with reasons (a cash expense goes to accounting); closing with counted cash, card terminal and SBP reconciliation, the difference and a printable shift report |
+| **Voluntary health insurance (ДМС)** | Insurers, patients' policies and letters of guarantee with limits; an invoice paid by the insurer is not the patient's debt; monthly registries in Excel, «sent» and «paid» (refused invoices go back to the patient), insurers' debt in the debts report |
 | **Treatment plan options** | One plan with «economy / standard / premium» options: common items plus each option's own services, warranty, term and a note; the patient's choice confirms the plan and only the chosen option can be billed; analytics count an undecided plan once, at its cheapest option |
 | **Plan presentation** | A patient-facing page: clinic header, the tooth chart with plan teeth and stage numbers, options side by side, stages and prices, signatures; print, a real PDF (headless Edge, no extra software), save to the patient's documents, or send to the patient tablet where the patient picks an option and signs |
 | **Director's screen** | The director lands on it: today's and the month's payments against the same days of last month, a forecast from the pace of working days, plan completion, average check, new patients, cancellations and no-shows; doctors with plan, a «where we should be today» tick, forecast and load by the work schedule; plain-language hints (behind plan and by how much a day, free slots in the next days, the weekday and time of day with most no-shows, plans not started, debts) that open the right screen; the week ahead |
@@ -62,7 +66,14 @@ working without it.
 | **Certificates, bonuses, families** | Gift certificates sold at the cash desk and redeemed by code with a remaining balance; bonus points as a percent of money payments with a cap per invoice; families share bonuses and get a discount offered in every invoice; deleting a payment gives everything back |
 | **SBP and terminal** | The clinic's static SBP QR code with the amount on screen or on the patient tablet; an optional terminal operation number on card payments; the day's cash counts real money only |
 | **Transfer to Dentist Plus** | A checklist of everything created offline — or automatic sending of new patients and appointments |
-| **Dictation** | The doctor dictates the visit; speech is recognized on the laptop (Whisper, no internet), split into record fields, ICD-10 codes and tooth states by offline rules, optionally tidied by any OpenAI-compatible model with the patient's name and phone removed |
+| **Dictation** | The doctor dictates the visit; speech is recognized on the laptop (Whisper, no internet), split into record fields, ICD-10 codes and tooth states by offline rules, optionally tidied by any OpenAI-compatible model with the patient's name and phone removed; a record shows whether it was made by dictation, a visit recording or with the AI |
+| **AI assistant** | A chat in the top bar (and by voice): «who do I have tomorrow», «revenue of Dr. Guseva in October», «patients without hygiene for 6 months», «book Petrova on Thursday with Guseva at 15:00», «remind me to call Ivanov in a week», «translate into English: …». Answers come from the program's own data with the rights of the employee who asks (the same permissions as the screens); bookings, tasks and notes are only proposed and done by the usual method after «Yes». Simple rules understand dates in any form and surnames in any grammatical case (Petrovu after «book» is Petrova, after «call» — Petrov) without the AI; with the AI the model picks a tool from the question only — it never sees patient data |
+| **Texts in seconds** | From the record: a memo for the patient in plain words, an explanation of the diagnosis, an extract, a letter to the insurer; a plan option described for the patient; any document or message translated (English, Turkish, Georgian, Armenian, Kazakh, Uzbek, Kyrgyz, German, Chinese) with the layout kept. Without the AI the same drafts are written by rules; with it the model retells the record and the clinic's standard advice, with the patient's name, phone and dates removed |
+| **Record check** | Live hints in the record form and on the patient card: no ICD-10 diagnosis or tooth, no examination, an extraction or root canal without an X-ray, anaesthesia without the drug and dose, a medicine without a dose, no consent to treatment or to personal data, an old health questionnaire, an insurer's invoice without a record — rules, not AI |
+| **Weekly summary** | The director's screen: last week against the week before — payments, visits, no-shows and their worst time slot, new patients, load per doctor, unfinished plans per doctor, overdue CRM tasks, debts, the next 7 days; optionally retold by the AI as a short note (figures only, no patient data) |
+| **Voice tooth chart and notes** | «Eighteen missing, seventeen crown, from twenty-six to twenty-eight missing, crown on thirty-six» marks the chart after a check; a spoken note goes to the patient's notes and «call back in a week» becomes a CRM task |
+| **Consent to record a visit** | A visit is recorded only after the patient's consent is noted (aloud, on paper or on the printed form); the consent is kept in the card, can be withdrawn and syncs to the other laptops; the server refuses a visit recording without it |
+| **The clinic's own local model** | On top of the downloaded Gemma 3 / Qwen 2.5 the program builds «dental-desk» (Ollama Modelfile: the program's rules, dental terms, settings tuned on the quality check) in seconds; a quality check runs 11 real tasks of the program and scores accuracy, Russian and speed; `tools/ai_dataset.py` prepares an anonymous training set for a later LoRA |
 | **Double bookings** | Overlaps between laptops that worked offline are flagged in the calendar and the transfer list, and are not sent to Dentist Plus until resolved |
 | **Fiscal receipts** | 54-FZ receipts on ATOL (DTO 10 web server) or Shtrih-M (COM driver) registers, or a test mode: receipt on payment, partial payment and credit rules, returns, shifts, X/Z reports, failed receipts kept for retry |
 | **Stock** | Materials with minimum levels, supplier invoices, write-offs with a printed act, stock counts, consumption norms per service — billing a service writes its materials off automatically |
@@ -79,6 +90,7 @@ working without it.
 | **One-click updates** | The program checks a signed `latest.json` (Ed25519, public key built in), downloads the installer, checks size and SHA-256 and lets the director update; the installer closes the program, which makes a backup on exit |
 | **PIN sign-in** | On a shared computer staff pick themselves and type a 4–6-digit PIN; five mistakes lock the PIN until a password sign-in |
 | **Moving a base in** | Patients from IDENT, Dentist Plus or any table (.xlsx / CSV, Windows-1251 too): columns recognised by their titles, editable mapping, preview, duplicates by phone or name + birth date skipped |
+| **Settings by sections** | Seven sections in a list (general, Dentist Plus, voice and AI, cash and payments, X-rays and tablet, data and protection, help) and a search across all of them; the last section is remembered |
 | **Disk encryption check** | Settings show whether the drive with the database is protected by BitLocker / Device Encryption (read without admin rights) and how to turn it on |
 
 | Patient card | Dental formula |
@@ -166,7 +178,14 @@ Dentist Plus partner API
 | `app/auth.py` | Staff accounts, password hashing, sessions, roles and permissions, action journal |
 | `app/speech.py` | Offline speech recognition: model download, transcription |
 | `app/dictation.py` | Dictated protocol → record fields, ICD-10, tooth states |
-| `app/ai.py` | Optional language-model layer (OpenAI-compatible), anonymization, validation |
+| `app/ai.py` | Optional language-model layer (OpenAI-compatible), anonymization, validation, common rules and answer cleaning |
+| `app/assistant.py` | AI assistant 2.13: dates, times and surnames in any case by rules, tools with the asker's rights, proposals (booking, task, note), the model as a tool picker, voice notes |
+| `app/ai_docs.py` | Drafts from the record (memo, explanation, extract, insurer letter), plan option text, line-by-line translation; rules without the AI |
+| `app/medcheck.py` | Record and card check: what is missing for an inspection or an insurer |
+| `app/consents.py` | The patient's consent to a visit recording |
+| `app/llm_local.py` | AI on this computer: Ollama and models downloaded by the program, the clinic's own «dental-desk» model, the background quality check |
+| `app/ai_eval.py` | The program's test questions for a model: accuracy, Russian, speed (also `tools/ai_eval.py` to compare models) |
+| `app/ui/ai.js` | The assistant panel, drafts and translation, record check, voice chart and notes, consent dialog, weekly card, local model settings |
 | `app/conflicts.py` | Double-booking detection |
 | `app/fiscal.py` | Fiscal receipts: receipt rules, test mode, ATOL web server and Shtrih-M drivers, shifts, returns |
 | `app/stock.py` | Materials as a ledger of moves, receipts, write-offs, stock counts, service norms, lots and expiry (FEFO), purchase list, barcode parsing (GS1), equipment register |
@@ -185,6 +204,8 @@ Dentist Plus partner API
 | `app/lab.py` | Dental lab orders, labs, paying labs |
 | `app/loyalty.py` | Gift certificates, bonus points, families |
 | `app/plans.py` | Treatment plan options: cleaning, sums per option, billable items, the patient's choice, signing on the tablet, PDF through headless Edge |
+| `app/finance.py` | Money 2.12: advance and its use, refunds, payment schedules and overdue list, memberships, cash shifts, insurers, policies and registries |
+| `app/ui/finance.js` | Advance, refund, schedule, membership, cash shift and ДМС dialogs, the debts-report reminders |
 | `app/crm.py` | CRM: tasks and the rules that make them, requests and the funnel, segments, visit scores (NPS) and review QR codes, advertising spend by source |
 | `app/ui/crm.js` | Tasks, the requests board and funnel, segments and the WhatsApp mailing, scores, CRM settings, the CRM tab of the patient card |
 | `app/director.py` | Director's analytics: visit history (schedule + archive of Dentist Plus visits), main screen and hints, patients and retention, load, conversion, materials share, plan vs fact |
@@ -285,6 +306,8 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_plans.py                # 78 checks: plan options and sums, choice and billing, tablet choice and signature, surfaces of the tooth chart, migration, PDF, rights
 .venv\Scripts\python tests\test_director.py             # 72 checks: visit history after the mirror is purged, new/repeat and retention, load by chairs and schedules, conversion, materials, plan vs fact, rights, change capture under UPSERT
 .venv\Scripts\python tests\test_crm.py                  # 109 checks: rule tasks and their ids, plan and score tasks, requests and funnel, segments, NPS and the tablet, ad payback, sync capture, rights
+.venv\Scripts\python tests\test_finance.py              # 115 checks: advance and its use, refunds and receipts, schedules and reminder tasks, memberships, cash shift, ДМС registries, sync capture, rights
+.venv\Scripts\python tests\test_ai_213.py               # 136 checks: dates and surnames in any case, assistant answers and proposals with rights over HTTP, drafts by rules and by a fake model with anonymous data, translation, record check, weekly summary, voice chart, consent, quality check
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 
@@ -294,7 +317,7 @@ settings, dedupe and validation errors on write, paging variants, timezones and 
 
 ## Status and privacy
 
-Version 2.11: CRM — tasks by hand and by rules, requests and funnel, segments with a WhatsApp mailing, visit scores with review QR codes, advertising payback; 2.10: visit templates by speciality, prescriptions, prescription form, referral and patient memo; 2.9: treatment plan options, the plan presentation (print, PDF, patient tablet), the tooth chart by surfaces. All screenshots use an invented demo clinic — no real patient
+Version 2.13: AI — the assistant with the employee's rights, texts and translation in seconds, the record check, the director's weekly summary, the tooth chart and notes by voice, consent to record a visit, the clinic's own local model with a quality check; 2.12: money — advance, refunds, installments, memberships, cash shifts with reconciliation, ДМС registries, debt reminders; 2.11: CRM — tasks by hand and by rules, requests and funnel, segments with a WhatsApp mailing, visit scores with review QR codes, advertising payback; 2.10: visit templates by speciality, prescriptions, prescription form, referral and patient memo; 2.9: treatment plan options, the plan presentation (print, PDF, patient tablet), the tooth chart by surfaces. All screenshots use an invented demo clinic — no real patient
 appears anywhere in this repository. The app stores medical data locally only; the clinic is advised
 to use Windows login and BitLocker.
 

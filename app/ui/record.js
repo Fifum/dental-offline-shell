@@ -226,6 +226,8 @@ async function openRecord(o) {
   checkAllergy();
   attachDictation(box, o.patient_id, r => {
     setTimeout(checkAllergy, 50);
+    st.source = st.source || new Set();  // 13.7: the record says it was made by dictation / with the AI
+    st.source.add(r.mode === "visit" ? "visit" : "dictation"); if (r.engine === "ai") st.source.add("ai");
     for (const [k, v] of Object.entries(r.fields || {})) {
       const ta = $("#rf_" + k, box); if (!ta || !v) continue;
       const cur = ta.value.trim();
@@ -236,12 +238,21 @@ async function openRecord(o) {
     Object.assign(st.teeth, r.teeth || {});
     drawTeeth(); drawDiag();
   }, {doctor: () => $("#rDoc", box).value});
+  const formNow = () => {  // what the form says now (for the check and the memo), not saved
+    const f = {patient_id: o.patient_id, visit_id: rec ? rec.visit_id : o.visit_id, date: $("#rDate", box).value, diagnoses: st.diagnoses,
+      teeth: st.teeth, rx: st.rx, next_visit: $("#rf_next_visit", box).value.trim()};
+    [...REC_FIELDS, ...REC_FIELDS2].forEach(([k]) => f[k] = $("#rf_" + k, box).value.trim());
+    return f;
+  };
+  st.source = new Set((data.source || []));
+  if (typeof aiRecordTools === "function") aiRecordTools({box, st, patient_id: o.patient_id, drawTeeth, form: formNow});
   if (o.tooth) { $("#rDiagT", box).value = o.tooth; const tb = $(`#rTeeth .ft[data-n="${o.tooth}"]`, box); if (tb) setTimeout(() => { tb.scrollIntoView({block: "center"}); tb.click(); }, 50); }
 
   const save = async () => {
     if ($("#rDiagQ", box).value.trim()) $("#rDiagAdd", box).click();
     const f = {id: rec ? rec.id : null, patient_id: o.patient_id, visit_id: rec ? rec.visit_id : o.visit_id, doctor_id: $("#rDoc", box).value,
-      date: $("#rDate", box).value, diagnoses: st.diagnoses, teeth: st.teeth, surf: st.surf, rx: st.rx.filter(r => String(r.name || "").trim()), next_visit: $("#rf_next_visit", box).value.trim()};
+      date: $("#rDate", box).value, diagnoses: st.diagnoses, teeth: st.teeth, surf: st.surf, rx: st.rx.filter(r => String(r.name || "").trim()), next_visit: $("#rf_next_visit", box).value.trim(),
+      source: [...(st.source || [])]};
     [...REC_FIELDS, ...REC_FIELDS2].forEach(([k]) => f[k] = $("#rf_" + k, box).value.trim());
     return api.save_record(f);
   };

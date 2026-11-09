@@ -33,7 +33,7 @@ async function openInvoice(o) {
           <div class="pay-add"><button class="btn" id="planBill">Выставить счёт по отмеченным</button><button class="btn ghost" id="planPrint">Печать плана</button></div></div>` : ""}
         ${isPlan ? `<div class="pv-pres"><button class="btn ghost" id="planPres">Презентация для пациента</button><span class="muted">Формула, варианты и этапы — печать, PDF или на планшет</span></div>` : ""}
         ${inv && !isPlan ? `<div class="pays"><div class="pb-head"><b>Оплаты</b><span class="muted">Оплачено ${money(inv.paid)} из ${money(inv.total)}</span></div>
-          ${inv.payments.map(p => `<div class="pay"><span>${fmtDT(p.created_at)}</span><span>${esc(p.method)}</span><b>${money(p.amount)}</b>${receiptPill(p)}${can("payments") ? `<button class="linkbtn" data-delpay="${esc(p.id)}">удалить</button>` : ""}</div>`).join("") || '<div class="muted">Оплат пока нет</div>'}
+          ${inv.payments.map(p => `<div class="pay"><span>${fmtDT(p.created_at)}</span><span>${esc(typeof payLabel === "function" ? payLabel(p) : p.method)}</span><b class="${p.amount < 0 ? "bad-t" : ""}">${money(p.amount)}</b>${receiptPill(p)}${can("payments") ? `<button class="linkbtn" data-delpay="${esc(p.id)}">удалить</button>` : ""}</div>`).join("") || '<div class="muted">Оплат пока нет</div>'}
           ${inv.total - inv.paid > 0.009 ? (!can("payments") ? `<div class="muted">Оплату принимает администратор</div>` : `<div class="pay-add"><input class="input" id="payAmt" type="number" step="0.01" value="${Math.round((inv.total - inv.paid) * 100) / 100}">
             <select class="input" id="payM">${PAY_METHODS.map(m => `<option>${m}</option>`).join("")}</select><button class="btn" id="payGo">Принять оплату</button></div><div class="pay-extra" id="payExtra"></div>${S.settings.fiscal_enabled ? `<div class="pay-fiscal"><label class="switch-row" style="margin:0"><input type="checkbox" id="payRcpt" ${S.settings.fiscal_auto ? "checked" : ""}><span class="sw"></span>Пробить чек${S.settings.fiscal_test ? " (тестовый режим)" : ""}</label><input class="input" id="payContact" placeholder="телефон или e-mail для электронного чека (необязательно)"></div>` : ""}`) : '<div class="ok-t">Счёт оплачен полностью</div>'}
           ${S.settings.fiscal_enabled ? "" : `<div class="muted" style="font-size:12px">Касса не подключена: оплата в программе — не кассовый чек. Пробейте чек на кассе отдельно (подключить кассу — в Настройках).</div>`}</div>` : ""}
@@ -45,6 +45,7 @@ async function openInvoice(o) {
       <button class="btn" id="ivSave">${inv ? "Сохранить" : isPlan ? "Сохранить план" : "Выставить счёт"}</button></div>`, {wide: true});
 
   if (typeof familyDiscountHint === "function") familyDiscountHint(box, pat);
+  if (typeof finPayerInit === "function") finPayerInit(box, inv, pat, isPlan);
   if (isPlan && inv && typeof planLabOrders === "function") planLabOrders(box, inv, pat);
   const total = () => {
     let t = 0;
@@ -82,12 +83,20 @@ async function openInvoice(o) {
       ${cur ? `<div class="pv-det"><label class="fl">Название варианта<input class="input" data-v="name" value="${esc(cur.name)}" maxlength="40"></label>
         <label class="fl">Гарантия<input class="input" data-v="warranty" value="${esc(cur.warranty || "")}" placeholder="например 3 года"></label>
         <label class="fl">Срок лечения<input class="input" data-v="term" value="${esc(cur.term || "")}" placeholder="например 2 визита, 3 недели"></label>
-        <label class="fl pv-note">Для пациента: чем хорош вариант<input class="input" data-v="note" value="${esc(cur.note || "")}" placeholder="материалы, срок службы, эстетика"></label>
+        <label class="fl pv-note"><span>Для пациента: чем хорош вариант <button class="linkbtn ai-pv" id="pvAi" type="button" title="Описание для пациента по услугам, гарантии и сроку">написать за меня</button></span><textarea class="input" data-v="note" rows="2" placeholder="материалы, срок службы, эстетика">${esc(cur.note || "")}</textarea></label>
         <button class="linkbtn danger" id="pvDel">Убрать вариант</button></div>` : `<div class="muted pv-hint">Услуги, выбранные слева, попадают во вкладку, открытую сейчас. Общие услуги входят во все варианты.</div>`}
       <div class="pv-choice"><label class="fl">Пациент выбрал<select class="input" id="pvChosen"><option value="">— ещё не выбрал —</option>${st.variants.map(v => `<option value="${esc(v.key)}" ${v.key === st.variant ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>
         <button class="linkbtn" id="pvOff">Один вариант</button></div>`;
     $$("[data-tab]", bar).forEach(b => b.onclick = () => { st.tab = b.dataset.tab; drawVariants(); drawItems(); });
     $$("[data-v]", bar).forEach(x => x.oninput = () => { cur[x.dataset.v] = x.value; if (x.dataset.v === "name") { const t = $(`[data-tab="${cur.key}"]`, bar); if (t) t.firstChild.textContent = x.value; } });
+    const pa = $("#pvAi", bar); if (pa) pa.onclick = async e => {  // 2.13 (14.3): the description for the patient
+      e.preventDefault(); pa.disabled = true; pa.textContent = "пишу…";
+      const items = st.items.filter(it => !st.variants.some(v => v.key === it.opt) || it.opt === cur.key).map(it => ({title: it.title, tooth: it.tooth || ""}));
+      try { const r = await api.ai_plan_variant({...cur, items}); cur.note = r.text; $('[data-v="note"]', bar).value = r.text;
+        toast(r.engine === "ai" ? "Описание написал ИИ — проверьте" : r.ai_error ? `ИИ недоступен — описание по правилам` : "Описание составлено по услугам — поправьте при необходимости"); }
+      catch (err) { toast(errText(err), true); }
+      pa.disabled = false; pa.textContent = "написать за меня";
+    };
     const add = $("#pvAdd", bar); if (add) add.onclick = () => { const key = "abcdefgh".split("").find(k => !st.variants.some(v => v.key === k)); st.variants.push({key, name: "Вариант " + (st.variants.length + 1)}); st.tab = key; drawVariants(); drawItems(); };
     const del = $("#pvDel", bar); if (del) del.onclick = async () => {
       const n = st.items.filter(it => it.opt === cur.key).length;
@@ -112,12 +121,13 @@ async function openInvoice(o) {
       <td><input class="input sm" data-i="${i}" data-k="qty" type="number" min="1" value="${esc(it.qty || 1)}" style="width:56px"></td>
       <td><input class="input sm" data-i="${i}" data-k="price" type="number" min="0" value="${esc(it.price)}" style="width:90px"></td>
       <td><input class="input sm" data-i="${i}" data-k="discount" type="number" min="0" max="100" value="${esc(it.discount || 0)}" style="width:60px"></td>
-      <td class="sum">${money(it.sum || it.price)}</td><td><button class="linkbtn" data-del="${i}">×</button></td></tr>`).join("")
+      <td class="sum">${money(Math.round((+it.price || 0) * (+it.qty || 1) * (1 - (+it.discount || 0) / 100) * 100) / 100)}</td><td><button class="linkbtn" data-del="${i}">×</button></td></tr>`).join("")
       || `<tr><td colspan="9" class="muted" style="padding:16px">Выберите услуги слева</td></tr>`;
     $$("#ivItems .pv-opt", box).forEach(x => x.onchange = () => { st.items[+x.dataset.i].opt = x.value; drawItems(); });
     $$("#ivItems input:not(.pl-ch)", box).forEach(x => x.oninput = () => { st.items[+x.dataset.i][x.dataset.k] = x.value; total();
       $$("#ivItems .sum", box).forEach((td, i) => td.textContent = money(st.items[i].sum)); });
     $$("#ivItems [data-del]", box).forEach(b => b.onclick = () => { st.items.splice(+b.dataset.del, 1); drawItems(); });
+    if (typeof finItemsDecorate === "function") finItemsDecorate(box, st, pat, isPlan, drawItems);
     total();
     api.allergy_check(o.patient_id, st.items.map(x => x.title).join("\n")).then(r => allergyBar($("#ivAllergy", box), r)).catch(() => {});
   };
@@ -141,7 +151,7 @@ async function openInvoice(o) {
     return api.save_invoice({id: inv ? inv.id : null, patient_id: o.patient_id, visit_id: inv ? inv.visit_id : o.visit_id,
       doctor_id: $("#ivDoc", box).value, items: st.items, discount: +$("#ivDisc", box).value || 0, comment: $("#ivCom", box).value.trim(),
       kind: isPlan ? "plan" : "invoice", title: isPlan ? $("#ivTitle", box).value.trim() : "", plan_status: isPlan ? $("#ivPSt", box).value : null,
-      ...(isPlan ? {variants: st.variants, variant: st.variant} : {})});
+      ...(isPlan ? {variants: st.variants, variant: st.variant} : (typeof finPayerValues === "function" ? finPayerValues(box) : {}))});
   };
   $("#ivSave", box).onclick = async () => { const id = await save(); if (!id) return; toast(isPlan ? "План сохранён" : "Счёт сохранён");
     if (o.after) { closeModal(); o.after(id); return; }
@@ -163,6 +173,7 @@ async function openInvoice(o) {
   const act = $("#ivAct", box); if (act) act.onclick = async () => { const doc = $("#ivDoc", box).value; const id = await save(); if (!id) return; closeModal(); afterChange();
     openDocFill({patient_id: o.patient_id, template_id: "doc_act", invoice_id: id, doctor_id: doc, visit_id: o.visit_id}); };
   if ($("#payM", box) && typeof payExtraInit === "function") payExtraInit(box, inv, pat);
+  if (inv && !isPlan && typeof finInvoicePays === "function") finInvoicePays(box, inv, pat, () => openInvoice({...o, id: inv.id}));
   const pg = $("#payGo", box); if (pg) pg.onclick = async () => {
     const id = await save(); if (!id) return;
     const rc = $("#payRcpt", box), ct = $("#payContact", box);
@@ -189,12 +200,14 @@ async function loadCash() {
       <div class="stat"><span>Деньги за день</span><b>${money(c.money_total ?? c.total)}</b></div>
       ${PAY_METHODS.filter(m => PAY_CORE.includes(m) || c.by_method[m]).map(m => `<div class="stat"><span>${m}</span><b>${money(c.by_method[m] || 0)}</b></div>`).join("")}
       ${c.cert_sold ? `<div class="stat"><span>Продано сертификатов</span><b>${money(c.cert_sold)}</b></div>` : ""}
+      ${c.refunds ? `<div class="stat warn"><span>Возвраты</span><b>${money(c.refunds)}</b></div>` : ""}
     </div>
-    <div class="cash-loyal">${can("payments") ? `<button class="btn ghost small" id="cashCert">Продать сертификат</button>` : ""}<button class="btn ghost small" id="cashCerts">Сертификаты</button>${c.cert_sales && c.cert_sales.length ? `<span class="muted">За день: ${c.cert_sales.map(x => `${esc(x.code)} — ${money(x.amount)} (${esc(x.method)})`).join("; ")}</span>` : ""}</div>
+    <div id="cashShift"></div>
+    <div class="cash-loyal">${can("payments") ? `<button class="btn ghost small" id="cashCert">Продать сертификат</button>` : ""}<button class="btn ghost small" id="cashCerts">Сертификаты</button><button class="btn ghost small" id="cashMs">Абонементы</button>${c.cert_sales && c.cert_sales.length ? `<span class="muted">За день: ${c.cert_sales.map(x => `${esc(x.code)} — ${money(x.amount)} (${esc(x.method)})`).join("; ")}</span>` : ""}</div>
     <div id="fiscalPanel"></div>
     <div class="pbody" style="margin-top:12px"><div class="pb-head"><b>Оплаты</b></div>
       ${c.payments.length ? `<table class="tbl"><thead><tr><th>Время</th><th>Пациент</th><th>Способ</th><th>Сумма</th><th>В DP</th></tr></thead><tbody>${
-        c.payments.map(p => `<tr data-p="${esc(p.patient_id)}"><td>${hm(p.created_at)}</td><td>${esc(p.patient_name || "")}</td><td>${esc(p.method)}</td><td><b>${money(p.amount)}</b></td>
+        c.payments.map(p => `<tr data-p="${esc(p.patient_id)}"><td>${hm(p.created_at)}</td><td>${esc(p.patient_name || "")}</td><td>${esc(typeof payLabel === "function" ? payLabel(p) : p.method)}</td><td><b class="${p.amount < 0 ? "bad-t" : ""}">${money(p.amount)}</b></td>
           <td>${p.transferred ? '<span class="pill st-done">перенесено</span>' : '<span class="pill st-cancel">нет</span>'}</td></tr>`).join("")}</tbody></table>`
         : `<div class="empty"><b>За этот день оплат нет</b></div>`}
     </div>
@@ -205,6 +218,8 @@ async function loadCash() {
         : `<div class="empty"><b>Счетов за этот день нет</b></div>`}
     </div>`;
   renderFiscal(day);
+  if (typeof finCashPanel === "function") finCashPanel(c);
+  const ms = $("#cashMs"); if (ms && typeof openMembershipTypes === "function") ms.onclick = openMembershipTypes;
   const cs = $("#cashCert"); if (cs && typeof sellCertificate === "function") cs.onclick = () => sellCertificate(loadCash);
   const cl = $("#cashCerts"); if (cl && typeof openCertificates === "function") cl.onclick = openCertificates;
   $$("#cashBody tr[data-inv]").forEach(tr => tr.onclick = () => openInvoice({patient_id: tr.dataset.p, id: tr.dataset.inv}));

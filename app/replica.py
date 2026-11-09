@@ -80,6 +80,16 @@ TABLES = [
     T("crm_reviews", title="Оценка визита"),
     T("crm_segments", title="Сегмент пациентов"),
     T("crm_settings", key=("k",), title="Настройка CRM"),
+    T("pay_schedules", title="График платежей"),
+    T("membership_types", title="Вид абонемента"),
+    T("memberships", title="Абонемент"),
+    T("membership_uses", title="Услуга по абонементу"),
+    T("cash_shifts", title="Кассовая смена"),
+    T("cash_moves", title="Внесение или изъятие из кассы"),
+    T("insurers", title="Страховая компания"),
+    T("insurance_docs", title="Полис или гарантийное письмо"),
+    T("insurance_registries", title="Реестр для страховой"),
+    T("patient_consents", title="Согласие пациента"),
     T("audit", intpk=True, refs={"user_id": "users"}, title="Журнал действий"),
 ]
 BY_NAME = {t.name: t for t in TABLES}

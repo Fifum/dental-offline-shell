@@ -147,9 +147,10 @@ class Reports:
                    json_extract(COALESCE(p.detail,p.data),'$.debt') AS dp_debt
             FROM patients p
             LEFT JOIN (SELECT patient_id, SUM(total) AS billed, MAX(created_at) AS last_invoice FROM invoices
-                       WHERE COALESCE(kind,'invoice')='invoice' GROUP BY patient_id) b ON b.patient_id=p.id
-            LEFT JOIN (SELECT patient_id, SUM(amount) AS paid, MAX(created_at) AS last_payment FROM payments
-                       GROUP BY patient_id) pp ON pp.patient_id=p.id
+                       WHERE COALESCE(kind,'invoice')='invoice' AND COALESCE(insurer_id,'')='' GROUP BY patient_id) b ON b.patient_id=p.id
+            LEFT JOIN (SELECT pay.patient_id, SUM(pay.amount) AS paid, MAX(pay.created_at) AS last_payment FROM payments pay
+                       LEFT JOIN invoices iv ON iv.id=pay.invoice_id WHERE COALESCE(iv.insurer_id,'')=''
+                       GROUP BY pay.patient_id) pp ON pp.patient_id=p.id
             WHERE b.billed IS NOT NULL OR pp.paid IS NOT NULL
                OR CAST(json_extract(COALESCE(p.detail,p.data),'$.balance') AS REAL) < 0
                OR CAST(json_extract(COALESCE(p.detail,p.data),'$.debt') AS REAL) > 0""")

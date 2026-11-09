@@ -72,6 +72,14 @@ DEFAULT_SETTINGS = {
     "review_text": "{имя}, спасибо за высокую оценку! Нам очень поможет ваш отзыв: {ссылка}",
     "mail_text": "Здравствуйте, {имя}! Клиника {клиника} приглашает вас на профилактический осмотр — "
                  "запишитесь в удобное время{телефон клиники}.",
+    # 2.12: reminders about money
+    "debt_on": True,            # the patient owes for this many days → «напомнить о долге»
+    "debt_days": 7,
+    "pay_on": True,             # an installment date has passed → «напомнить о платеже по рассрочке»
+    "debt_text": "Здравствуйте, {имя}! Напоминаем, что в клинике {клиника} за лечение осталось оплатить {сумма}. "
+                 "Оплатить можно в клинике, картой или по СБП. Если уже оплатили — просто не обращайте внимания на это сообщение.",
+    "pay_text": "Здравствуйте, {имя}! Напоминаем о платеже по графику: {сумма} (срок — {срок}). "
+                "Клиника {клиника}. Если уже оплатили — спасибо!",
 }
 LINK_TITLES = {"yandex": "Яндекс Карты", "gis": "2ГИС", "other": "Другая площадка"}
 LOOKBACK = 30          # a rule makes tasks only for the last 30 days (2 for rules under a month: a call after an
@@ -193,6 +201,14 @@ class CRM:
             raise ValueError("Плохая оценка должна быть ниже хорошей")
         if "plan_on" in f:
             put["plan_on"] = bool(f["plan_on"])
+        for k in ("debt_on", "pay_on"):
+            if k in f:
+                put[k] = bool(f[k])
+        if "debt_days" in f:
+            try:
+                put["debt_days"] = min(180, max(1, int(f["debt_days"])))
+            except (TypeError, ValueError):
+                raise ValueError("Через сколько дней напомнить о долге: введите число") from None
         if "links" in f:
             links = {}
             for k in LINK_TITLES:
@@ -201,7 +217,7 @@ class CRM:
                     raise ValueError(f"{LINK_TITLES[k]}: ссылка должна начинаться с https://")
                 links[k] = v
             put["links"] = links
-        for k in ("nps_question", "nps_text", "review_text", "mail_text"):
+        for k in ("nps_question", "nps_text", "review_text", "mail_text", "debt_text", "pay_text"):
             if k in f:
                 v = str(f[k] or "").strip()
                 if len(v) > 1000:
@@ -450,15 +466,52 @@ class CRM:
                 new.append((tid, title, "auto", "plan", pid, None, p["id"], "", today.isoformat(), "open", None,
                             f"{p['title'] or 'План лечения'}; последний раз — {_fmt(act)}", _now(), "Программа", None, None, _now()))
             close += [tid for tid, t in have.items() if t["status"] == "open" and t["rule"] == "plan" and t["patient_id"] in fut]
+        self._money_tasks(s, today, skip, have, new, close)
         if new or close:
             with self.db.tx() as c:
                 c.executemany("""INSERT OR IGNORE INTO crm_tasks(id, title, kind, rule, patient_id, lead_id, plan_id, assignee, due,
                                  status, result, comment, created_at, created_by, done_at, done_by, updated_at)
                                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", new)
                 for tid in close:
-                    c.execute("UPDATE crm_tasks SET status='done', result='Записался', done_at=?, done_by='Программа', updated_at=? "
-                              "WHERE id=? AND status='open'", (_now(), _now(), tid))
+                    c.execute("UPDATE crm_tasks SET status='done', result=CASE WHEN rule IN ('debt','pay') THEN 'Сделано' ELSE 'Записался' END, "
+                              "done_at=?, done_by='Программа', comment=CASE WHEN rule IN ('debt','pay') THEN TRIM(COALESCE(comment,'') || ' Оплачено.') "
+                              "ELSE comment END, updated_at=? WHERE id=? AND status='open'", (_now(), _now(), tid))
         return len(new)
+
+    def _money_tasks(self, s, today, skip, have, new, close):
+        """2.12: a passed installment date and a debt that hangs for `debt_days` → a reminder for the front desk.
+        The task closes itself when the money comes."""
+        from finance import Finance
+        from reports import Reports
+        fin = Finance(self.db)
+        if s.get("pay_on", True):
+            late = fin.overdue()
+            keys = set()
+            for x in late:
+                if x["patient_id"] in skip:
+                    continue
+                tid = _auto_id("pay", x["invoice_id"], x["due"])
+                keys.add(tid)
+                if tid not in have:
+                    new.append((tid, "Напомнить о платеже по рассрочке", "auto", "pay", x["patient_id"], None, None, "", today.isoformat(),
+                                "open", None, f"{_rub(x['amount'])}, срок был {_fmt(x['due'])}", _now(), "Программа", None, None, _now()))
+            close += [tid for tid, t in have.items() if t["status"] == "open" and t["rule"] == "pay" and tid not in keys]
+        if s.get("debt_on", True):
+            border = (today - timedelta(days=int(s.get("debt_days") or 7))).isoformat()
+            later = fin.not_due()
+            owing = set()
+            for x in Reports(self.db).debts()["debts"]:
+                rest = round(x["debt"] - later.get(x["patient_id"], 0), 2)  # what is in a schedule is not late yet
+                if rest < 0.009:
+                    continue
+                owing.add(x["patient_id"])
+                if x["patient_id"] in skip or not x["last"] or x["last"][:10] > border:
+                    continue
+                tid = _auto_id("debt", x["patient_id"], x["last"][:10])
+                if tid not in have:
+                    new.append((tid, "Напомнить о долге", "auto", "debt", x["patient_id"], None, None, "", today.isoformat(), "open", None,
+                                f"Долг {_rub(rest)}", _now(), "Программа", None, None, _now()))
+            close += [tid for tid, t in have.items() if t["status"] == "open" and t["rule"] == "debt" and t["patient_id"] not in owing]
 
     # ============================================================== leads --
     def match(self, phone, name=""):

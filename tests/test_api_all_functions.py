@@ -104,7 +104,7 @@ rid2 = t("save record 2", lambda: api.save_record({"patient_id": np["id"], "doct
 t("visit shows record", lambda: api.visit(lv), lambda r: len(r["records"]) == 1)
 
 # --- templates
-docs = t("templates docs", lambda: api.templates("document"), lambda r: len(r) == 14)  # 2.10: + recipe, referral, memo
+docs = t("templates docs", lambda: api.templates("document"), lambda r: len(r) == 15)  # 2.10: + recipe, referral, memo; 2.13: + consent to record the visit
 t("templates phrases", lambda: api.templates("phrase"), lambda r: len(r) > 20)
 tid = t("save template", lambda: api.save_template({"kind": "document", "category": "Тест", "title": "Мой", "body": "<p>{{patient.fio}}</p>"}))
 t("edit builtin + reset", lambda: (api.save_template({"id": "doc_consent_pd", "kind": "document", "category": "X", "title": "X", "body": "x"}), api.reset_template("doc_consent_pd"),

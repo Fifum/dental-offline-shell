@@ -50,9 +50,12 @@ function attachDictation(box, patientId, apply, opts = {}) {
     if (!Object.values(st.models).some(m => m.ready)) {
       setState(can("settings") ? `Модель распознавания речи ещё не скачана. <button class="linkbtn" id="dictSet" type="button">Открыть настройки</button>`
         : "Модель распознавания речи ещё не скачана — попросите директора скачать её в Настройках.", "bad-t");
-      const l = $("#dictSet", box); if (l) l.onclick = () => { closeModal(); show("settings"); };
+      const l = $("#dictSet", box); if (l) l.onclick = () => { closeModal(); show("settings"); if (typeof settingsGo === "function") settingsGo("ai"); };
       return;
     }
+    // 13.7: a visit is recorded only with the patient's consent (noted once, kept in the card)
+    if (mode === "visit" && typeof aiConsent === "function" && !(await aiConsent(patientId)))
+      return setState("Приём не записывается: пациент не дал согласие. Можно продиктовать запись после приёма — кнопка «Диктовать».", "bad-t");
     let mic;
     try { mic = await micRecorder({bitrate: M.bitrate}); } catch (e) { return setState(esc(e.message), "bad-t"); }
     cur = {mode, ...mic};
@@ -317,6 +320,7 @@ async function loadLocalAi() {
     }).join("")}</div>
     ${st.error ? `<div class="warn-line bad">${esc(st.error)}</div>` : ""}
     <p class="hint">Файлы лежат в <code>${esc(st.folder)}</code> (папки <code>ollama</code> и <code>models\\ollama</code>) — их можно скопировать на другой компьютер флешкой.</p>`;
+  if (typeof aiLocalExtra === "function") aiLocalExtra(box, st, ai);  // 2.13: the clinic's own model and the quality check
   const act = (fn, refreshAll) => async () => {
     try { await fn(); } catch (e) { return toast(errText(e), true); }
     refreshAll ? loadVoiceSettings() : loadLocalAi();

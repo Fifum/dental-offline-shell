@@ -155,13 +155,15 @@ async function repDebts(body) {
         : `<div class="empty sm"><span>Авансов нет</span></div>`}</div>`;
   $$("#repBody [data-p]").forEach(td => td.onclick = () => openPatient(td.dataset.p, "reports"));
   const dc = $("#debtCalls"); if (dc) dc.onclick = () => { S.mkTab = "calls"; S.mkList = "debts"; show("marketing"); };
+  if (typeof finDebts === "function") finDebts(body, r);
 }
 
 /* ---- Excel: any table on the screen → .xlsx (buttons with data-xls="<table selector>") */
 async function exportTable(title, sel) {
   const t = $(sel); if (!t) return toast("Нет таблицы для выгрузки", true);
   const skip = c => c.classList.contains("no-print") || c.classList.contains("row-acts") || c.classList.contains("acts");
-  const cells = tr => [...tr.children].filter(c => !skip(c)).map(c => c.innerText.replace(/[ \t]+\n/g, "\n").trim());
+  const text = c => { if (!c.querySelector(".no-print")) return c.innerText; const x = c.cloneNode(true); x.querySelectorAll(".no-print").forEach(e => e.remove()); return x.textContent; };
+  const cells = tr => [...tr.children].filter(c => !skip(c)).map(c => text(c).replace(/[ \t]+\n/g, "\n").trim());
   const head = t.tHead && t.tHead.rows.length ? cells(t.tHead.rows[t.tHead.rows.length - 1]) : [];
   const rows = [...(t.tBodies[0] ? t.tBodies[0].rows : [])].map(cells).concat(t.tFoot ? [...t.tFoot.rows].map(cells) : []);
   try { const r = await api.export_xlsx(title, head, rows); await saveDataUrl(r.name, r.url); } catch (e) { toast(errText(e), true); }

@@ -119,8 +119,9 @@ async function openDocFill(o) {
       <div class="df-prev"><div class="doc-page" id="dfPage" contenteditable="true"></div></div>
     </div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button>
+      <button class="btn ghost" id="dfTr" title="Перевести документ для пациента-иностранца (ИИ)">Перевести ▾</button>
       <button class="btn ghost" id="dfPrint">Печать</button><button class="btn" id="dfSave">Сохранить в карту</button></div>`, {wide: true});
-  let edited = false;
+  let edited = false, langT = "";
   const page = $("#dfPage", box);
   page.oninput = () => edited = true;
   let asking = false;
@@ -147,8 +148,11 @@ async function openDocFill(o) {
   const cl = $("#dfClinic", box); if (cl) cl.onclick = () => { closeModal(); show("refs"); setRefTab("clinic"); };
   draw();
   $("#dfPrint", box).onclick = () => printDoc(page.innerHTML);
+  const trb = $("#dfTr", box);
+  if (typeof aiTranslateMenu === "function") trb.onclick = e => { e.stopPropagation(); aiTranslateMenu(trb, page, o.patient_id, t => { langT = t; edited = true; }); };
+  else trb.remove();
   $("#dfSave", box).onclick = async () => {
-    await api.save_document({patient_id: o.patient_id, template_id: tpl.id, title: tpl.title, html: page.innerHTML,
+    await api.save_document({patient_id: o.patient_id, template_id: tpl.id, title: tpl.title + (langT ? ` (${langT})` : ""), html: page.innerHTML,
       data: {inputs: $$(".df-in", box).map(x => x.value)}});
     closeModal(); toast("Документ сохранён в карту пациента"); afterChange();
   };
@@ -160,8 +164,16 @@ async function openDocument(did) {
   const box = modal(`<div class="m-h"><h3>${esc(d.title)} <span class="muted" style="font-weight:400;font-size:13px">от ${fmtDT(d.created_at)}</span></h3><button class="x" data-close>×</button></div>
     <div class="m-b doc-view"><div class="doc-page" id="dvPage" contenteditable="true">${d.html}</div><div id="dvSigs"></div></div>
     <div class="m-f"><button class="btn ghost small danger" id="dvDel">Удалить</button><span class="muted">Можно поправить текст и сохранить</span>
+      <button class="btn ghost" id="dvTr" title="Перевести и сохранить копию на другом языке (ИИ)">Перевести ▾</button>
       <button class="btn ghost" id="dvSign">Подписать</button><button class="btn ghost" id="dvSave">Сохранить правки</button><button class="btn" id="dvPrint">Печать</button></div>`, {wide: true});
   const sigs = typeof docSignatures === "function" ? await docSignatures(box, d) : null;
+  const dvt = $("#dvTr", box);
+  if (typeof aiTranslateMenu === "function") dvt.onclick = e => { e.stopPropagation();
+    aiTranslateMenu(dvt, $("#dvPage", box), d.patient_id, async t => {  // the original stays; the translation is a new document
+      if (!(await ask("Сохранить перевод отдельным документом?", {ok: "Сохранить", text: `«${d.title} (${t})» появится в документах пациента, оригинал не изменится.`}))) return;
+      await api.save_document({patient_id: d.patient_id, template_id: d.template_id || "", title: `${d.title} (${t})`, html: $("#dvPage", box).innerHTML});
+      closeModal(); toast("Перевод сохранён в карту пациента"); afterChange(); }); };
+  else dvt.remove();
   $("#dvPrint", box).onclick = () => printDoc($("#dvPage", box).innerHTML + (sigs ? sigs.printHtml() : ""));
   $("#dvSave", box).onclick = async () => { await api.save_document({id: d.id, patient_id: d.patient_id, title: d.title, html: $("#dvPage", box).innerHTML}); toast("Сохранено"); afterChange(); };
   $("#dvDel", box).onclick = async () => { if (await ask("Удалить документ?", {danger: true, ok: "Удалить"})) { await api.delete_document(d.id); closeModal(); afterChange(); } };

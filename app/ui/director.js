@@ -71,6 +71,7 @@ async function loadDirector() {
     </div>
     <div class="muted note-line">Деньги — счета и оплаты, проведённые в программе. Прогноз — поступления за прошедшие рабочие дни, продолженные до конца месяца.</div>`;
   $$("[data-kpi]", body).forEach(b => b.onclick = () => openKpi());
+  if (typeof aiWeeklyCard === "function") aiWeeklyCard($$(".dir-col", body)[1]);  // 2.13 (14.8): the weekly summary
   $$("#dirBody .ahead [data-day]").forEach(tr => tr.onclick = () => { S.day = tr.dataset.day; show("schedule"); });
   const go = a => {
     if (a.go === "plan") return openKpi();

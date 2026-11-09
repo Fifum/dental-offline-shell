@@ -67,6 +67,10 @@ class Api:
         from loyalty import Loyalty
         self._lab = Lab(db)
         self._loyal = Loyalty(db)
+        from finance import Finance
+        self._fin = Finance(db, self._local, self._loyal)
+        from consents import Consents
+        self._consents = Consents(db)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -164,7 +168,13 @@ class Api:
         return self._reports.visits(date_from, date_to)
 
     def report_debts(self):
-        return self._reports.debts()
+        r = self._reports.debts()
+        later = self._fin.not_due()  # 2.12: installments whose date has not come are not overdue debt
+        for x in r["debts"]:
+            x["not_due"] = min(x["debt"], later.get(x["patient_id"], 0))
+        r["overdue"] = self._fin.overdue()
+        r["insurance"] = self._fin.ins_summary()
+        return r
 
     # ----------------------------------------------- director's analytics --
     def director_dashboard(self):
@@ -710,8 +720,25 @@ class Api:
     def import_services(self, text):
         return self._local.import_services_csv(text)
 
+    @staticmethod
+    def _inv_total(inv):
+        t = 0.0
+        for it in inv.get("items") or []:
+            line = float(it.get("price") or 0) * float(it.get("qty") or 1)
+            t += line - line * float(it.get("discount") or 0) / 100
+        return round(t - t * float(inv.get("discount") or 0) / 100, 2)
+
     def save_invoice(self, inv):
+        is_inv = (inv.get("kind") or "invoice") != "plan"
+        if is_inv:
+            self._fin.check_uses(inv)  # lines «по абонементу» cost 0 and need visits left on the membership
+            if inv.get("insurer_id"):
+                self._fin.check_payer(inv, self._inv_total(inv))
         iid = self._local.save_invoice(inv)
+        if is_inv:
+            self._fin.write_uses(iid, inv.get("items"))
+            if "insurer_id" in inv:
+                self._fin.set_payer(iid, inv.get("insurer_id"), inv.get("ins_doc_id"))
         self._stock.on_invoice(iid, self._who())  # materials of billed services leave the stock
         return iid
 
@@ -721,6 +748,14 @@ class Api:
             states = self._fiscal.payment_states([p["id"] for p in inv["payments"]])
             for p in inv["payments"]:
                 p["receipt"] = states.get(p["id"])
+            if inv.get("kind") != "plan":
+                pk = self._fin.pockets(inv["patient_id"])
+                inv["deposit"] = round(sum(x["amount"] for x in pk if x["invoice_id"] != iid), 2)
+                inv["overpaid"] = round(sum(x["amount"] for x in pk if x["invoice_id"] == iid), 2)
+                inv["schedule"] = self._fin.schedule(iid)
+                if inv.get("insurer_id"):
+                    ins = self._db.one("SELECT name FROM insurers WHERE id=?", (inv["insurer_id"],))
+                    inv["insurer_name"] = ins["name"] if ins else ""
         return inv
 
     def plan_to_invoice(self, plan_id, item_indexes=None, visit_id=None):
@@ -748,7 +783,9 @@ class Api:
         for p in self._db.q("SELECT id FROM payments WHERE invoice_id=?", (iid,)):
             if self._fiscal.payment_has_receipt(p["id"]):
                 raise ValueError("По оплатам этого счёта пробиты чеки. Сначала оформите чеки возврата (раздел «Касса»).")
+        self._fin.before_invoice_delete(iid)  # the advance spent on it goes back to the patient
         self._local.delete_invoice(iid)
+        self._fin.after_invoice_delete(iid)
         self._stock.on_invoice(iid)  # invoice gone: its automatic write-off goes back to stock
         return True
 
@@ -759,6 +796,12 @@ class Api:
             amount = round(float(p.get("amount") or 0), 2)
             inv = self._db.one("SELECT patient_id FROM invoices WHERE id=?", (p.get("invoice_id"),)) if p.get("invoice_id") else None
             patient = inv["patient_id"] if inv else p.get("patient_id")
+            if not inv and method not in loyalty.MONEY_METHODS:
+                raise ValueError("Аванс принимается деньгами: наличными, картой, по СБП или переводом")
+            if not inv and not self._db.one("SELECT 1 AS x FROM patients WHERE id=?", (patient,)):
+                raise ValueError("Пациент не найден")
+            if method in ("Из аванса", "Страховая"):
+                raise ValueError("Этот способ оплаты ставится сам: «Оплатить из аванса» в счёте или оплата реестра страховой")
             if method == loyalty.CERT:  # check before the payment exists: nothing to undo on a refusal
                 self._loyal.check_redeem(p.get("cert_code"), amount)
             elif method == loyalty.BONUS:
@@ -787,11 +830,171 @@ class Api:
         return out
 
     def delete_payment(self, pay_id):
-        if self._fiscal.payment_has_receipt(pay_id):
-            raise ValueError("По этой оплате пробит чек. Сначала оформите чек возврата (раздел «Касса»), затем удалите оплату.")
-        self._loyal.on_payment_deleted(pay_id)
-        self._local.delete_payment(pay_id)
+        rows = self._fin.group_rows(pay_id)  # a move of the advance or a refund goes as a whole
+        for r in rows:
+            if self._fiscal.payment_has_receipt(r["id"]):
+                raise ValueError("По этой оплате пробит чек. Сначала оформите чек возврата (раздел «Касса»), затем удалите оплату.")
+            if self._fiscal.refund_printed(r["id"]):
+                raise ValueError("По этому возврату пробит чек возврата — удалить возврат нельзя.")
+        self._fin.can_delete(pay_id)
+        for r in rows:
+            self._loyal.on_payment_deleted(r["id"])
+        if len(rows) > 1 or (rows and rows[0].get("kind") in ("deposit_use", "refund")):
+            self._fin.delete_group(pay_id)
+        else:
+            self._local.delete_payment(pay_id)
         return True
+
+    # ------------------------------------------------------- money 2.12 --
+    def money_patient(self, patient_id):
+        """Everything about the patient's money besides invoices: advance, memberships, schedules, insurance."""
+        return {"deposit": self._fin.deposit(patient_id), "pockets": self._fin.pockets(patient_id),
+                "memberships": self._fin.memberships(patient_id), "schedules": self._fin.schedules(patient_id),
+                "ins_docs": self._fin.ins_docs(patient_id), "insurers": self._fin.insurers()}
+
+    def deposit_use(self, invoice_id, amount=None, receipt=None, contact=""):
+        r = self._fin.deposit_use(invoice_id, amount, self._who())
+        import fiscal
+        fs = fiscal.settings()
+        if fs["enabled"] and (fs["auto"] if receipt is None else receipt):
+            try:
+                r["receipt"] = self._fiscal.for_payment(r["id"], contact, self._who())
+            except ValueError as e:
+                r["receipt"] = {"status": "error", "error": str(e)}
+        return r
+
+    def refund(self, f):
+        f = f or {}
+        r = self._fin.refund(f, self._who())
+        import fiscal
+        fs = fiscal.settings()
+        if fs["enabled"] and f.get("receipt", fs["auto"]):
+            out = []
+            for pid in r["ids"]:
+                try:
+                    out.append(self._fiscal.for_refund(pid, f.get("contact", ""), self._who()))
+                except ValueError as e:
+                    out.append({"status": "error", "error": str(e)})
+            r["receipt"] = out[0] if len(out) == 1 else {"status": out[-1].get("status"), "many": out}
+        return r
+
+    def schedule(self, invoice_id):
+        return self._fin.schedule(invoice_id)
+
+    def schedule_draft(self, invoice_id, count=3, first=None, step="month"):
+        inv = self._db.one("SELECT total FROM invoices WHERE id=?", (invoice_id,))
+        if not inv:
+            raise ValueError("Счёт не найден")
+        paid = self._db.one("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE invoice_id=?", (invoice_id,))["s"]
+        return self._fin.schedule_draft(inv["total"], paid, count, first or None, step)
+
+    def schedule_save(self, f):
+        return self._fin.schedule_save(f, self._who())
+
+    def schedule_delete(self, invoice_id):
+        return self._fin.schedule_delete(invoice_id)
+
+    def overdue_payments(self):
+        return self._fin.overdue()
+
+    def membership_types(self, all_=False):
+        return self._fin.mtypes(bool(all_))
+
+    def membership_type_save(self, f):
+        return self._fin.mtype_save(f)
+
+    def membership_type_delete(self, mid):
+        return self._fin.mtype_delete(mid)
+
+    def membership_sell(self, f):
+        r = self._fin.membership_sell(f, self._who())
+        self._stock.on_invoice(r["invoice_id"], self._who())
+        return r
+
+    def memberships(self, patient_id, active_only=False):
+        return self._fin.memberships(patient_id, bool(active_only))
+
+    def membership_cancel(self, mid):
+        return self._fin.membership_cancel(mid)
+
+    def cash_shift(self):
+        return self._fin.shift_current()
+
+    def cash_shift_open(self, f):
+        return self._fin.shift_open(f, self._who())
+
+    def cash_move(self, f):
+        """Money put into or taken out of the drawer; «Расход из кассы» can go to the expenses at once."""
+        f = f or {}
+        eid = None
+        if f.get("kind") == "out" and f.get("expense"):
+            cur = self._fin.shift_current()["shift"]
+            if cur and float(f.get("amount") or 0) <= cur["expected_cash"] + 0.009:
+                eid = self._acc.save_expense({"amount": f.get("amount"), "category": f.get("category") or "Прочее",
+                                              "method": "Наличные", "comment": (f.get("reason") or "") + (": " + f["comment"] if f.get("comment") else "")},
+                                             self._who())
+        try:
+            return self._fin.shift_move(f, self._who(), eid)
+        except ValueError:
+            if eid:
+                self._acc.delete_expense(eid)
+            raise
+
+    def cash_shift_close(self, f):
+        return self._fin.shift_close(f, self._who())
+
+    def cash_shifts(self, limit=40):
+        return self._fin.shifts(limit)
+
+    def cash_shift_info(self, sid):
+        sh = self._fin.shift(sid)
+        if not sh:
+            raise ValueError("Смена не найдена")
+        b = sh["closed_at"] or "9999"
+        sh["payment_rows"] = self._db.q("""SELECT pay.*, p.name AS patient_name FROM payments pay LEFT JOIN patients p ON p.id=pay.patient_id
+                                           WHERE pay.created_at>=? AND pay.created_at<=? AND pay.method IN ('Наличные','Карта','СБП','Перевод')
+                                           ORDER BY pay.created_at""", (sh["opened_at"], b))
+        return sh
+
+    def insurers(self, all_=False):
+        return self._fin.insurers(bool(all_))
+
+    def insurer_save(self, f):
+        return self._fin.insurer_save(f)
+
+    def ins_docs(self, patient_id):
+        return self._fin.ins_docs(patient_id)
+
+    def ins_doc_save(self, f):
+        return self._fin.ins_doc_save(f)
+
+    def ins_doc_delete(self, did):
+        return self._fin.ins_doc_delete(did)
+
+    def ins_summary(self):
+        return {**self._fin.ins_summary(), "registries": self._fin.registries()}
+
+    def ins_candidates(self, insurer_id, date_from=None, date_to=None):
+        return self._fin.ins_invoices(insurer_id, date_from or None, date_to or None)
+
+    def registry_make(self, f):
+        return self._fin.registry_make(f, self._who())
+
+    def registry(self, rid):
+        return self._fin.registry(rid)
+
+    def registry_status(self, rid, status):
+        return self._fin.registry_status(rid, status)
+
+    def registry_pay(self, rid, f=None):
+        return self._fin.registry_pay(rid, f or {}, self._who())
+
+    def registry_delete(self, rid):
+        return self._fin.registry_delete(rid)
+
+    def registry_xlsx(self, rid):
+        title, head, rows = self._fin.registry_table(rid)
+        return self.export_xlsx(title, head, rows)
 
     # ---------------------------------------------------------------- lab --
     def lab_options(self):
@@ -936,6 +1139,9 @@ class Api:
         non_money = sum(v for k, v in out["by_method"].items() if k in (loyalty.CERT, loyalty.BONUS))
         out["money_total"] = round(out["total"] - non_money + sold, 2)
         out["cert_sold"] = sold
+        out["refunds"] = round(-sum(x["amount"] for x in out["payments"] if x.get("kind") == "refund"), 2)
+        out["by_method"].pop("Из аванса", None)  # a move of the advance: +sum on the invoice, −sum on the advance
+        out["shift"] = self._fin.shift_current()["shift"]
         return out
 
     def journal(self, show_done=False):
@@ -1057,6 +1263,8 @@ class Api:
         mode="visit": a recording of the whole visit; replies are signed «Врач», «Ассистент», «Пациент»
         by the employees' voice prints."""
         import speech
+        if mode == "visit" and patient_id and not self._consents.has(patient_id):
+            raise ValueError("Нет согласия пациента на запись приёма. Отметьте согласие и запишите приём снова.")
         audio, suffix = self._audio(audio_b64, mime)
         phrases = " ".join(t["title"] for t in self._local.templates("phrase")[:30])
         if mode != "visit":
@@ -1165,6 +1373,131 @@ class Api:
     def ai_test(self):
         import ai
         return ai.test()
+
+    # 2.13: the clinic's own local model and its quality check
+    def local_ai_custom(self):
+        import llm_local
+        return llm_local.make_custom()
+
+    def local_ai_eval(self, model=""):
+        import ai
+        import llm_local
+        return llm_local.evaluate(str(model or ai.settings().get("model") or llm_local.CUSTOM))
+
+    # ------------------------------------------------ 2.13: AI in the work --
+    def assistant_ask(self, text, ctx=None):
+        """The assistant in the corner: an answer from the program's data with this employee's rights."""
+        from assistant import Assistant
+        return Assistant(self).ask(text, ctx if isinstance(ctx, dict) else {})
+
+    def assistant_voice(self, audio_b64, mime="audio/webm", ctx=None):
+        import speech
+        audio, suffix = self._audio(audio_b64, mime)
+        rec = speech.transcribe(audio, suffix, "Кто у меня завтра? Запиши Петрову на четверг к Гусевой. Выручка за октябрь.")
+        out = self.assistant_ask(rec["text"], ctx)
+        out["heard"] = rec["text"]
+        return out
+
+    def ai_write(self, kind, record_id=None, patient_id=None, invoice_id=None, data=None):
+        """A draft from the record: recommendations in plain words, an extract, a letter to the insurance company.
+        `data` — the record form that is not saved yet."""
+        import ai_docs
+        rec = self._local.record(record_id) if record_id else None
+        if not rec and isinstance(data, dict) and patient_id:
+            rec = {"id": None, "patient_id": patient_id, "visit_id": data.get("visit_id"), "date": data.get("date"), "data": data}
+        if not rec and patient_id:
+            recs = self._local.records(patient_id)
+            rec = recs[0] if recs else None
+        if not rec:
+            raise ValueError("В медкарте пациента нет записей — сначала проведите лечение")
+        services = []
+        inv = self._local.invoice(invoice_id) if invoice_id else None
+        if not inv and rec.get("visit_id"):
+            inv = next((i for i in self._local.invoices(rec["patient_id"]) if i.get("visit_id") == rec["visit_id"]
+                        and (i.get("kind") or "invoice") == "invoice"), None)
+        if inv:
+            services = [str(x.get("title") or "") + (f" (зуб {x['tooth']})" if x.get("tooth") else "") for x in inv["items"]]
+        p = self._db.patient(rec["patient_id"])
+        out = ai_docs.write(kind, rec, services, names=[p["name"]] if p else [])
+        out["record_id"] = rec["id"]
+        return out
+
+    def ai_plan_variant(self, v):
+        import ai_docs
+        return ai_docs.plan_variant(v if isinstance(v, dict) else {})
+
+    def ai_translate(self, lines, lang, patient_id=None):
+        import ai_docs
+        p = self._db.patient(patient_id) if patient_id else None
+        return ai_docs.translate(lines, lang, names=[p["name"]] if p else [])
+
+    def ai_langs(self):
+        import ai
+        import ai_docs
+        return {"langs": ai_docs.LANG_TITLE, "kinds": ai_docs.KINDS, "enabled": ai.enabled()}
+
+    def medcheck_patient(self, pid):
+        import medcheck
+        return medcheck.check_patient(self._db, self._local, pid)
+
+    def medcheck_record(self, f):
+        import medcheck
+        f = f if isinstance(f, dict) else {}
+        xr = [r["taken_at"] or r["created_at"] for r in self._db.q(
+            "SELECT taken_at, created_at FROM patient_files WHERE patient_id=? AND kind='xray'", (str(f.get("patient_id") or ""),))]
+        return medcheck.check_record(f, xr)
+
+    def director_weekly(self, week=None, use_ai=False):
+        """The weekly summary for the director; with use_ai the model retells it as a short note (kept per week)."""
+        import ai
+        w = self._dir.weekly(week)
+        key = f"ai_weekly:{w['week']}"
+        cached = self._db.meta_get(key)
+        if cached:
+            w["ai_text"] = cached
+        if use_ai and ai.enabled():
+            try:
+                w["ai_text"] = ai.generate("Перескажи директору клиники сводку за неделю короткой запиской: 3–5 предложений, "
+                                           "сначала главное, затем 1–2 конкретных совета, что сделать на этой неделе. Цифры не меняй.",
+                                           w["title"] + "\n" + "\n".join(w["lines"]))
+                self._db.meta_set(key, w["ai_text"])
+            except ValueError as e:
+                w["ai_error"] = str(e)
+        w["ai"] = ai.enabled()
+        return w
+
+    def teeth_voice(self, audio_b64, mime="audio/webm"):
+        """13.2: the tooth chart by voice → {'text', 'teeth'}; the doctor checks it in the form."""
+        import dictation
+        import speech
+        audio, suffix = self._audio(audio_b64, mime)
+        rec = speech.transcribe(audio, suffix, dictation.FORMULA_PROMPT)
+        return {**dictation.formula(rec["text"]), "seconds": rec["seconds"]}
+
+    def teeth_parse(self, text):
+        import dictation
+        return dictation.formula(text)
+
+    def voice_note(self, audio_b64, mime="audio/webm"):
+        """13.4: a spoken note to the patient → text, and a task if it says «перезвонить через неделю»."""
+        import assistant
+        import speech
+        audio, suffix = self._audio(audio_b64, mime)
+        rec = speech.transcribe(audio, suffix, "Перезвонить через неделю. Пригласить на гигиену. Пациент просит утреннее время.")
+        return assistant.voice_note(rec["text"])
+
+    def note_parse(self, text):
+        import assistant
+        return assistant.voice_note(text)
+
+    def consent_get(self, pid):
+        return self._consents.get(pid)
+
+    def consent_give(self, pid, method="verbal", note=""):
+        return self._consents.give(pid, "recording", method, note, self._who())
+
+    def consent_revoke(self, pid):
+        return self._consents.revoke(pid, "recording", self._who())
 
     def offline_snapshot(self, days_back=1, days_forward=14):
         """Read-only copy for a client laptop: the schedule and the cards of patients in it, cut to what
@@ -1417,6 +1750,12 @@ class Api:
                 d["signed"] = d["id"] in signed
             p["perio_count"] = len(self._perio.list(pid))
             p["crm_open"] = self._db.one("SELECT COUNT(*) AS n FROM crm_tasks WHERE patient_id=? AND status='open'", (pid,))["n"]
+            p["deposit"] = self._fin.deposit(pid)  # 2.12: advance, memberships, insurance documents
+            p["free_payments"] = self._db.q("SELECT * FROM payments WHERE patient_id=? AND COALESCE(invoice_id,'')='' ORDER BY created_at DESC",
+                                            (pid,))
+            p["memberships"] = self._fin.memberships(pid, True)
+            p["ins_docs"] = [d for d in self._fin.ins_docs(pid) if not d["expired"]]
+            p["consent_recording"] = self._consents.get(pid)  # 2.13: consent to record the visit
         return p
 
     def add_note(self, pid, text):

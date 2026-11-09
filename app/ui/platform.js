@@ -187,7 +187,7 @@ function showUpdateBanner(ver) {
   if (!el) { el = document.createElement("div"); el.id = "updBanner"; el.className = "upd-banner"; document.body.appendChild(el); }
   el.innerHTML = `<span>Доступна новая версия программы <b>${esc(ver)}</b></span><button class="btn small" id="updOpen">Подробнее</button><button class="x" id="updClose" title="Скрыть">×</button>`;
   el.hidden = false;
-  $("#updOpen").onclick = () => { el.hidden = true; show("settings"); setTimeout(() => { const p = $("#updatePanel"); if (p) p.scrollIntoView({behavior: "smooth", block: "center"}); }, 150); };
+  $("#updOpen").onclick = () => { el.hidden = true; show("settings"); if (typeof settingsGo === "function") settingsGo("updatePanel"); };
   $("#updClose").onclick = () => { el.hidden = true; };
 }
 

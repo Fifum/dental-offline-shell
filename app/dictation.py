@@ -220,3 +220,61 @@ def parse(text: str) -> dict:
     if diag_text:
         fields["diagnosis_text"] = diag_text
     return {"text": t, "fields": fields, "diagnoses": diagnoses, "teeth": teeth}
+
+
+# --- 2.13 (13.2): the tooth chart by voice — «восемнадцать отсутствует, семнадцать коронка, шестнадцать кариес»
+FORMULA_WORDS = [("Каналы запломбированы", r"каналы\s+запломбирован\w*|запломбирован\w*\s+канал\w*"), ("Штифт", r"штифт\w*"),
+                 ("Промежуточная часть моста", r"промежуточн\w*\s+част\w*")] + STATUS_WORDS
+FORMULA_PROMPT = ("Зубная формула. Восемнадцать отсутствует, семнадцать коронка, шестнадцать кариес, тридцать шесть пломба, "
+                  "сорок семь имплант, с двадцать шестого по двадцать восьмой отсутствуют.")
+
+
+def _range(a: str, b: str) -> list[str]:
+    """«с 26 по 28» → 26, 27, 28 (inside one quadrant)."""
+    if a[0] != b[0]:
+        return [a, b]
+    lo, hi = sorted((int(a[1]), int(b[1])))
+    return [f"{a[0]}{n}" for n in range(lo, hi + 1) if f"{a[0]}{n}" in VALID]
+
+
+def formula(text: str) -> dict:
+    """Spoken tooth chart → {'text', 'teeth': {'18': 'Отсутствует', ...}, 'unknown': [...]}: every state goes to the
+    teeth named before it («восемнадцать, семнадцать отсутствуют»), or after it when it comes first («коронка на 17»)."""
+    t = _words_to_teeth(clean(text))
+    t = re.sub(r"\bс\s+(\d\d)\s*(?:-?го|-?й)?\s+по\s+(\d\d)\s*(?:-?й|-?го)?\s*",
+               lambda m: " ".join(_range(m.group(1), m.group(2))) + " ", t, flags=re.I)
+    pat = re.compile(r"(?P<tooth>(?<![\d.,])[1-8][1-8](?![\d.,]))|" + "|".join(f"(?P<s{i}>{p})" for i, (_, p) in enumerate(FORMULA_WORDS)) +
+                     r"|(?P<sep>[.;!?]|\bдалее\b|\bпотом\b)|(?P<comma>,)", re.I)
+    teeth, pending, lead, last, unknown = {}, [], None, [], []
+
+    def put(n, status):
+        have = [x for x in str(teeth.get(n) or "").split(", ") if x]
+        if status not in have:
+            have.append(status)
+        teeth[n] = ", ".join(have)
+    for m in pat.finditer(t):
+        if m.group("tooth"):
+            n = m.group("tooth")
+            if n not in VALID:
+                unknown.append(n)
+            elif lead:
+                put(n, lead)
+            else:
+                pending.append(n)
+                last = []
+        elif m.group("sep"):
+            pending, lead, last = [], None, []
+        elif m.group("comma"):
+            last, lead = [], None
+        else:
+            status = next(FORMULA_WORDS[i][0] for i in range(len(FORMULA_WORDS)) if m.group(f"s{i}"))
+            if pending:
+                for n in pending:
+                    put(n, status)
+                last, pending, lead = pending, [], None
+            elif last:  # «47 имплант коронка»: both states for the same tooth
+                for n in last:
+                    put(n, status)
+            else:
+                lead = status
+    return {"text": t, "teeth": teeth, "unknown": unknown}

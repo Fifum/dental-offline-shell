@@ -121,6 +121,48 @@ def _anonymize(text: str, names=()) -> str:
     return re.sub(r"\+?\d[\d\s()-]{8,}\d", "[телефон]", text)
 
 
+def anonymize(text: str, names=()) -> str:
+    """The patient's name → «Пациент», phone numbers → «[телефон]». Everything sent to a model goes through this."""
+    return _anonymize(str(text or ""), names)
+
+
+def enabled() -> bool:
+    return bool(settings()["enabled"])
+
+
+# 2.13: the common part of every request — the same words open every prompt, so a local model reuses its cache
+BASE = ("Ты помощник стоматологической клиники в программе Dental Desk. Пиши по-русски (другой язык — только когда "
+        "просят перевод), простыми ясными предложениями, без markdown, звёздочек и решёток. Не выдумывай факты, диагнозы, "
+        "препараты, дозировки, цены и сроки, которых нет в данных. Имя пациента в данных заменено словом «Пациент» — "
+        "так и пиши или обращайся на «вы». Решения о лечении принимает врач: ты готовишь черновик, врач проверяет.")
+
+
+def clean_answer(text: str) -> str:
+    """A model's answer without markdown marks and polite openings («Конечно! Вот…»)."""
+    t = str(text or "").replace("\r", "").strip()
+    t = re.sub(r"^```\w*\n?|```$", "", t).strip()
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
+    t = re.sub(r"(?m)^\s*#{1,6}\s*", "", t)
+    t = re.sub(r"(?m)^\s*[*•]\s+", "— ", t)
+    t = re.sub(r"^(?:Конечно|Хорошо|Вот|Разумеется)[^\n]{0,80}?[:!]\s*\n+", "", t, flags=re.I)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def generate(task: str, text: str, names=(), timeout=None, base=True) -> str:
+    """A text from the model: `task` says what to write, `text` is the data (made anonymous here).
+    base=False — without the common rules (translation: they say «write in Russian»).
+    Raises ValueError if the AI is off or fails."""
+    s = settings()
+    if not s["enabled"]:
+        raise ValueError("ИИ выключен")
+    msgs = [{"role": "system", "content": (BASE + "\n" if base else "") + task.strip()},
+            {"role": "user", "content": _anonymize(str(text or ""), names)}]
+    out = clean_answer(_chat(msgs, {**s, "timeout": timeout or max(int(s.get("timeout") or 30), 60)}))
+    if not out:
+        raise ValueError("ИИ вернул пустой ответ")
+    return out
+
+
 def _session():
     """requests session that trusts the Windows certificate store too: GigaChat uses the Russian
     national root certificate (НУЦ Минцифры), which is installed into Windows, not into Python."""

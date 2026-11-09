@@ -74,6 +74,11 @@ def _now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _short(name):
+    w = str(name or "").split()
+    return f"{w[0]} {' '.join(x[0] + '.' for x in w[1:3])}".strip() if len(w) > 1 else (name or "")
+
+
 class Director:
     def __init__(self, db, reports):
         self.db, self.rep = db, reports
@@ -320,10 +325,110 @@ class Director:
                                                          "звонки и приглашения пациентам. Список — «CRM» → «Задачи» → «Просрочено»."})
         if d["debts"] > 0:
             out.append({"level": "info", "go": "debts", "text": f"Пациенты должны клинике {rub(d['debts'])}."})
+        try:  # 2.12: installments and insurance companies
+            from finance import Finance
+            fin = Finance(self.db)
+            late_p = fin.overdue()
+            if late_p:
+                out.append({"level": "warn", "go": "debts", "text": f"Просрочены платежи по рассрочке: {len(late_p)} "
+                            f"{_plural(len(late_p), 'пациент', 'пациента', 'пациентов')} на {rub(sum(x['amount'] for x in late_p))}."})
+            ins = fin.ins_summary()["total_due"]
+            if ins > 0:
+                out.append({"level": "info", "go": "debts", "text": f"Страховые компании должны клинике {rub(ins)} по ДМС."})
+        except Exception:  # noqa: BLE001 — a hint must never break the director's screen
+            pass
         if m["avg_check"] and m["prev_avg_check"] and m["avg_check"] < m["prev_avg_check"] * 0.9:
             out.append({"level": "info", "go": "revenue",
                         "text": f"Средний чек снизился: {rub(m['avg_check'])} против {rub(m['prev_avg_check'])} в прошлом месяце."})
         return out
+
+    # ======================================================== weekly summary --
+    def weekly(self, week_start=None):
+        """2.13 (14.8): the summary of the last full week (Mon–Sun) against the week before, in plain words.
+        Only clinic figures and employees' names — no patient data, so it may go to any AI service."""
+        t = date.today()
+        a = _d(week_start) if week_start else t - timedelta(days=t.weekday() + 7)
+        a = a - timedelta(days=a.weekday())
+        b, pa = a + timedelta(days=6), a - timedelta(days=7)
+
+        def rub(v):
+            v = round(v or 0)
+            return (f"{v / 1000:,.0f} тыс. ₽" if v >= 100_000 else f"{v:,} ₽").replace(",", " ")
+
+        def pc(v):
+            return f"{round(v or 0, 1):g}".replace(".", ",") + " %"
+
+        def pct_d(cur, prev):
+            if not prev:
+                return ""
+            d = round((cur - prev) * 100 / prev)
+            return " (как на прошлой неделе)" if abs(d) < 2 else f" ({'+' if d > 0 else '−'}{abs(d)} % к прошлой неделе)"
+        week = self._workweek()
+        h0, h1 = self._hours()
+        rev, prev = self.rep.revenue(a, b), self.rep.revenue(pa, a - timedelta(days=1))  # `to` is inclusive
+        vis = [v for v in self._visits(a, b + timedelta(days=1)) if v["past"]]
+        pvis = [v for v in self._visits(pa, a) if v["past"]]
+        lost = [v for v in vis if v["kind"] in LOST]
+        share, pshare = _pct(len(lost), len(vis)) or 0, _pct(sum(v["kind"] in LOST for v in pvis), len(pvis)) or 0
+        lines, data = [], {"from": a.isoformat(), "to": b.isoformat()}
+        lines.append(f"Поступило {rub(rev['paid'])}{pct_d(rev['paid'], prev['paid'])}, счетов выставлено на {rub(rev['billed'])}.")
+        came = len(vis) - len(lost)
+        if vis:
+            when = ""
+            if lost:
+                slots = {}
+                for v in lost:
+                    h = _hm(v["start"]) or 0
+                    k = (_d(v["start"]).weekday(), "утром" if h < 12 * 60 else "днём" if h < 16 * 60 else "вечером")
+                    slots[k] = slots.get(k, 0) + 1
+                (wd, part), n = max(slots.items(), key=lambda x: x[1])
+                if n >= 2:
+                    when = f"; больше всего — {('в понедельник', 'во вторник', 'в среду', 'в четверг', 'в пятницу', 'в субботу', 'в воскресенье')[wd]} {part} ({n})"
+            trend = "" if not pvis else (" — больше, чем неделей раньше" if share >= pshare + 3 else " — меньше, чем неделей раньше" if share <= pshare - 3 else "")
+            lines.append(f"Приёмов {came}, отмены и неявки — {pc(share)} записей{trend}{when}.")
+        first = self._first_visits()
+        new = sum(1 for f in first.values() if a.isoformat() <= f[0] <= b.isoformat())
+        lines.append(f"Новых пациентов: {new}.")
+        names, shifts = self._doctor_names(), self._shift_minutes(a, b)
+        load = []
+        for did in sorted({v["doctor_id"] for v in vis if v["doctor_id"]}, key=lambda k: names.get(k, "")):
+            if did not in names:
+                continue
+            mine = [v for v in vis if v["doctor_id"] == did and v["kind"] not in LOST]
+            avail = shifts.get(did) or len({v["start"][:10] for v in mine}) * (h1 - h0) * 60
+            p = _pct(sum(v["min"] for v in mine), avail)
+            if p is not None:
+                load.append((names[did], p))
+        if load:
+            lines.append("Загрузка врачей: " + ", ".join(f"{_short(n)} {pc(p)}" for n, p in load) + ".")
+            avg = sum(p for _, p in load) / len(load)
+            low = [n for n, p in load if p < 60 and (len(load) == 1 or p < avg * 0.85)]
+            if low:
+                lines.append(f"Меньше всего записей: {', '.join(_short(n) for n in low)} — предложите свободные окна пациентам "
+                             "из листа ожидания и обзвона.")
+        plans = self.db.q("""SELECT i.doctor_id, COUNT(*) AS n, COALESCE(SUM(i.total),0) AS s FROM invoices i WHERE i.kind='plan'
+                             AND COALESCE(i.plan_status,'Предварительный') IN ('Предварительный','Подтверждён','Активен')
+                             AND i.created_at >= ? GROUP BY i.doctor_id ORDER BY s DESC""", ((t - timedelta(days=365)).isoformat(),))
+        top = [p for p in plans if p["doctor_id"] in names and p["n"] >= 3][:3]
+        if top:
+            lines.append("Незавершённые планы лечения: " + "; ".join(f"{_short(names[p['doctor_id']])} — {p['n']} на {rub(p['s'])}" for p in top) + ".")
+        try:
+            late = self.db.one("SELECT COUNT(*) AS n FROM crm_tasks WHERE status='open' AND due < ?", (t.isoformat(),))["n"]
+        except Exception:  # noqa: BLE001
+            late = 0
+        if late:
+            lines.append(f"Просрочено задач CRM: {late}.")
+        debts = self.rep.debts()["total_debt"]
+        if debts > 0:
+            lines.append(f"Пациенты должны клинике {rub(debts)}.")
+        ahead = [d for d in self._workdays(t, t + timedelta(days=6), week)]
+        if ahead:
+            booked = sum(v["min"] for v in self._visits(t, t + timedelta(days=7)) if v["kind"] not in LOST)
+            cap = len(ahead) * self._chairs() * (h1 - h0) * 60
+            lines.append(f"На ближайшие 7 дней кресла заняты на {pc(_pct(booked, cap))}.")
+        data.update(paid=rev["paid"], prev_paid=prev["paid"], visits=came, lost_share=share, new_patients=new, load=load)
+        return {"title": f"Неделя {a.day:02d}.{a.month:02d} — {b.day:02d}.{b.month:02d}.{b.year}", "lines": lines, "data": data,
+                "week": a.isoformat()}
 
     # ============================================================ patients --
     def patients(self, date_from=None, date_to=None):

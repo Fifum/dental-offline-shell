@@ -3,10 +3,14 @@
 const RCPT_ST = {done: ["Пробит", "st-ok"], test: ["Тестовый", "st-come"], error: ["Ошибка", "st-cancel"], pending: ["Печатается…", ""],
   refunded: ["Возвращён", ""], not_required: ["Не нужен", ""]};
 
+/** No receipt is needed: organisation's transfer, bonuses, an insurance company, the minus side of an advance move. */
+function finNoReceipt(p) {
+  return /Безнал/.test(p.method || "") || ["Бонусы", "Страховая"].includes(p.method) || (p.amount < 0 && p.kind !== "refund");
+}
 function receiptPill(p) {
   if (!S.settings.fiscal_enabled) return "";
   const r = p.receipt;
-  if (!r) return /Безнал/.test(p.method || "") ? `<span class="pill">чек не нужен</span>` : (canAny("fiscal", "payments") ? `<button class="linkbtn" data-print-pay="${esc(p.id)}">пробить чек</button>` : `<span class="pill st-cancel">без чека</span>`);
+  if (!r) return finNoReceipt(p) ? `<span class="pill">чек не нужен</span>` : (canAny("fiscal", "payments") ? `<button class="linkbtn" data-print-pay="${esc(p.id)}">пробить чек</button>` : `<span class="pill st-cancel">без чека</span>`);
   const [t, c] = RCPT_ST[r.status] || [r.status, ""];
   return `<button class="pill ${c} pill-btn-lite" data-rcpt="${esc(r.id)}" title="Открыть чек">чек: ${t.toLowerCase()}</button>`;
 }
@@ -33,7 +37,7 @@ async function renderFiscal(day) {
     : "Смена закрыта — откроется сама с первым чеком";
   const f = can("fiscal");
   const paid = new Set(rows.filter(r => r.kind === "sell" && ["done", "test"].includes(r.status)).map(r => r.payment_id));
-  const noReceipt = ((S.cash || {}).payments || []).filter(p => !paid.has(p.id) && !/Безнал/.test(p.method) && !rows.some(r => r.payment_id === p.id && r.status === "error"));
+  const noReceipt = ((S.cash || {}).payments || []).filter(p => !paid.has(p.id) && !finNoReceipt(p) && !rows.some(r => r.payment_id === p.id && r.status === "error"));
   el.innerHTML = `<div class="fiscal-bar ${st.test ? "test" : ""}">
       <div class="fb-main"><b>${esc(st.driver_title)}</b>${st.test ? '<span class="pill st-come">чеки не фискальные</span>' : ""}<span class="muted">${shiftTxt}</span></div>
       ${f ? `<div class="fb-acts">${sh.state === "opened" || sh.state === "expired" ? "" : `<button class="btn ghost small" id="fOpen">Открыть смену</button>`}

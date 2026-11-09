@@ -171,6 +171,9 @@ class Local:
         rx = clean_rx(f.get("rx"))
         if rx:
             data["rx"] = rx
+        src = [s for s in (f.get("source") or []) if s in ("dictation", "visit", "ai", "voice_formula")] if isinstance(f.get("source"), list) else []
+        if src:  # 13.7: «created by dictation / with the AI» — shown on the record
+            data["source"] = sorted(set(src))
         with self.db.tx() as c:
             exists = c.execute("SELECT 1 FROM records WHERE id=?", (rid,)).fetchone()
             if exists:
@@ -480,8 +483,11 @@ class Local:
             self._invoice_status(row["invoice_id"])
 
     def balance(self, pid):
-        billed = self.db.one("SELECT COALESCE(SUM(total),0) s FROM invoices WHERE patient_id=? AND COALESCE(kind,'invoice')='invoice'", (pid,))["s"]
-        paid = self.db.one("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE patient_id=?", (pid,))["s"]
+        # invoices paid by an insurance company (ДМС) are not the patient's debt, their payments are not his money
+        billed = self.db.one("""SELECT COALESCE(SUM(total),0) s FROM invoices WHERE patient_id=? AND COALESCE(kind,'invoice')='invoice'
+                                AND COALESCE(insurer_id,'')=''""", (pid,))["s"]
+        paid = self.db.one("""SELECT COALESCE(SUM(pay.amount),0) s FROM payments pay LEFT JOIN invoices i ON i.id=pay.invoice_id
+                              WHERE pay.patient_id=? AND COALESCE(i.insurer_id,'')=''""", (pid,))["s"]
         return round(paid - billed, 2)
 
     def cash_day(self, day):

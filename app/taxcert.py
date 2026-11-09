@@ -71,7 +71,8 @@ class TaxCerts:
         if not p:
             raise ValueError("Пациент не найден")
         pays = self.db.q("""SELECT substr(created_at,1,10) AS day, amount, method FROM payments
-                            WHERE patient_id=? AND substr(created_at,1,4)=? ORDER BY created_at""", (pid, str(year)))
+                            WHERE patient_id=? AND substr(created_at,1,4)=? AND COALESCE(method,'') NOT IN ('Из аванса', 'Страховая')
+                            ORDER BY created_at""", (pid, str(year)))
         issued = self.db.q("SELECT number, issued_at, sum1, sum2, payer_fio FROM tax_certs WHERE patient_id=? AND year=? ORDER BY issued_at",
                            (pid, year))
         return {"year": year, "patient": {"id": pid, "name": p.get("name") or "", "birth": p.get("birth") or ""},

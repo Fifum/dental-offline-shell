@@ -859,16 +859,19 @@ function renderPatient(tab) {
   } else if (tab === "records") {
     body = addBtn("tAddRec", "Провести лечение") + (p.records.length ? p.records.map(r => {
       const dd = r.data || {}, dg = (dd.diagnoses || []).map(x => `${x.tooth ? x.tooth + ": " : ""}${x.code} ${x.title}`).join("; ");
-      return `<div class="rec" data-r="${esc(r.id)}"><div class="rec-h"><b>${fmtDate(r.date)}</b><span class="muted">${esc(r.doctor_name || "")}</span>${tr(r)}</div>
+      const src = dd.source || [], srcT = [src.includes("visit") ? "по записи приёма" : src.includes("dictation") ? "по диктовке" : "", src.includes("voice_formula") ? "формула голосом" : "", src.includes("ai") ? "с помощью ИИ" : ""].filter(Boolean).join(", ");
+      return `<div class="rec" data-r="${esc(r.id)}"><div class="rec-h"><b>${fmtDate(r.date)}</b><span class="muted">${esc(r.doctor_name || "")}</span>${tr(r)}${srcT ? `<span class="pill src-pill" title="Как создана запись">${esc(srcT)}</span>` : ""}</div>
         ${dd.complaints ? `<div><span class="muted">Жалобы:</span> ${esc(dd.complaints)}</div>` : ""}
         ${dg ? `<div><span class="muted">Диагноз:</span> ${esc(dg)}</div>` : ""}
         ${dd.treatment ? `<div><span class="muted">Лечение:</span> ${esc(dd.treatment)}</div>` : ""}</div>`;
     }).join("") : `<div class="empty"><b>Лечений, проведённых в программе, пока нет</b><span>История из Dentist Plus — во вкладке «Персональные данные»</span></div>`);
   } else if (tab === "payments") {
-    const pays = invs.flatMap(i => i.payments.map(x => ({...x, inv: i})));
-    body = addBtn("tAddInv", "Добавить счёт") + `<div class="muted cnt-line">Баланс по программе: <b class="${p.balance_local < 0 ? "bad-t" : ""}">${money(p.balance_local)}</b></div>` +
+    const pays = invs.flatMap(i => i.payments.map(x => ({...x, inv: i}))).concat((p.free_payments || []).map(x => ({...x, inv: null})))
+      .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+    body = addBtn("tAddInv", "Добавить счёт") + `<div class="muted cnt-line">Баланс по программе: <b class="${p.balance_local < 0 ? "bad-t" : ""}">${money(p.balance_local)}</b></div><div id="finPatient"></div>` +
       `<h4 class="sub-h">Оплаты</h4>` + (pays.length ? `<table class="tbl"><thead><tr><th>Дата</th><th>Счёт</th><th>Способ оплаты</th><th>Сумма</th><th>DP</th><th>Действия</th></tr></thead><tbody>${
-        pays.map(x => `<tr data-inv="${esc(x.inv.id)}"><td>${fmtDT(x.created_at)}</td><td class="lnk">от ${fmtDT(x.inv.created_at)}</td><td>${esc(x.method)}</td><td><b>${money(x.amount)}</b></td><td>${tr(x)}</td>
+        pays.map(x => !x.inv ? `<tr><td>${fmtDT(x.created_at)}</td><td class="muted">${x.amount < 0 ? "из аванса" : "аванс"}${x.comment ? ` <small>${esc(x.comment)}</small>` : ""}</td><td>${esc(typeof payLabel === "function" ? payLabel(x) : x.method)}</td><td><b class="${x.amount < 0 ? "bad-t" : ""}">${money(x.amount)}</b></td><td>${tr(x)}</td>
+          <td class="acts">${can("payments") ? `<button class="linkbtn" data-delfree="${esc(x.id)}">удалить</button>` : ""}</td></tr>` : `<tr data-inv="${esc(x.inv.id)}"><td>${fmtDT(x.created_at)}</td><td class="lnk">от ${fmtDT(x.inv.created_at)}</td><td>${esc(typeof payLabel === "function" ? payLabel(x) : x.method)}</td><td><b class="${x.amount < 0 ? "bad-t" : ""}">${money(x.amount)}</b></td><td>${tr(x)}</td>
           <td class="acts"><button class="ia" data-receipt="${esc(x.inv.id)}" title="Квитанция">${ICON.doc}</button></td></tr>`).join("")}</tbody></table>` : `<div class="muted" style="padding:8px 16px">Оплат нет</div>`) +
       `<h4 class="sub-h">Счета</h4>` + (invs.length ? `<table class="tbl"><thead><tr><th>Дата</th><th>Услуги</th><th>Сумма</th><th>Оплачено</th><th>Статус</th></tr></thead><tbody>${
         invs.map(i => `<tr data-inv="${esc(i.id)}"><td>${fmtDT(i.created_at)}</td><td>${esc(i.items.map(x => x.title).join(", ").slice(0, 90))}</td><td><b>${money(i.total)}</b></td><td>${money(i.paid)}</td>
@@ -949,6 +952,9 @@ function renderPatient(tab) {
   if (tab === "lab" && typeof loadPatientLab === "function") loadPatientLab(p);
   if (tab === "crm" && typeof loadPatientCrm === "function") loadPatientCrm(p);
   if (typeof loyaltyHeader === "function") loyaltyHeader(p);
+  if (typeof finHeader === "function") finHeader(p);
+  if (tab === "payments" && typeof finPatientTab === "function") finPatientTab(p);
+  if (typeof aiPatientCard === "function") aiPatientCard(p, tab);  // 2.13: record check, consent, voice note, drafts
   // hide what this employee may not do
   const hideIf = (sel, cond) => $$(sel, $("#patientCard")).forEach(el => { if (cond) el.remove(); });
   hideIf("#aAnketa, #aContract, #ddPrint, #tAddDoc, [data-add=doc], .ia[data-act=doc], [data-receipt]", !can("docs"));
@@ -1118,6 +1124,7 @@ async function startApp(user) {
   show(ME.role === "director" && can("reports") ? "director" : can("schedule_view") ? "schedule" : firstView());
   if (can("staff")) refreshStaffBadge();
   startOfflineCopies();
+  if (typeof aiStart === "function") aiStart();  // 2.13: the assistant in the corner
   if (!started) {
     started = true;
     setInterval(() => { if (ME) refreshStatus(); }, 3000);
@@ -1128,6 +1135,7 @@ async function startApp(user) {
 function needLogin(message) {
   if (!ME && !$("#authScreen").hidden) return;
   ME = null; TOKEN = ""; sessionStorage.removeItem(SESSION_KEY);
+  if (typeof aiStop === "function") aiStop();
   closeModal(); if (typeof closeDrawer === "function" && $("#drawer").classList.contains("open")) closeDrawer();
   showLogin(message && !/Войдите/.test(message) ? message : "Сеанс завершён — войдите снова");
 }

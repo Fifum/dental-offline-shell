@@ -46,6 +46,7 @@ def refuses(name, fn, text=""):
 d = dbm.DB(); demo.ensure_demo(d, force=True)
 a = Api(d, W())
 C = a._crm
+C.settings_save({"debt_on": False, "pay_on": False})  # money reminders (2.12) are tested in test_finance.py
 T = date.today()
 doc = d.doctors()[0]["id"]
 

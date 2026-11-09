@@ -41,7 +41,7 @@ async function loadJournal() {
     for (const [t, ids] of Object.entries(by)) await api.mark_transferred(t, ids, true);
     loadJournal(); refreshStatus();
   });
-  const jm = $("#jMode"); if (jm) jm.onclick = e => { e.preventDefault(); show("settings"); };
+  const jm = $("#jMode"); if (jm) jm.onclick = e => { e.preventDefault(); show("settings"); if (typeof settingsGo === "function") settingsGo("dp"); };
   $$("#journalBody [data-retry]").forEach(b => b.onclick = async e => { e.preventDefault(); await api.retry_push(b.dataset.t, b.dataset.retry); toast("Отправим ещё раз при следующей синхронизации"); loadJournal(); });
   $$("#journalBody [data-open-visit]").forEach(b => b.onclick = e => { e.preventDefault(); openVisit(b.dataset.openVisit); });
   $$("#journalBody [data-force]").forEach(b => b.onclick = async e => {

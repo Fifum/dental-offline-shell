@@ -95,7 +95,8 @@ a{color:var(--accent)}
 .ft:hover{background:var(--beige2);border-color:var(--beige)}
 .pill{border-radius:3px}
 .stat:first-child{background:var(--beige2);border-color:var(--beige)}
-.stat b{font-family:var(--font-d);font-weight:500}
+/* numbers on tiles: the plain UI font with even-width digits — the display serif read badly in sums like «4 417 857,14 ₽» */
+.stat b{font-family:var(--font);font-weight:600;font-variant-numeric:tabular-nums lining-nums;letter-spacing:-.01em}
 .modal{border-radius:8px}
 .toast{background:var(--graphite);border-radius:4px}
 .switch-row input:checked+.sw{background:var(--sw-on)}

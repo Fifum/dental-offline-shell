@@ -371,6 +371,12 @@ async function openCrmSettings(focus) {
         <div id="csRuleList">${s.rules.map(ruleRow).join("")}</div><button class="btn ghost small" id="csAdd">Добавить правило</button>
         <div class="cs-line"><label class="switch-row"><input type="checkbox" id="csPlanOn" ${s.plan_on ? "checked" : ""}><span class="sw"></span>План лечения подтверждён или начат, но пациент не приходит</label>
           <span class="inline-f"><input class="input num" type="number" min="7" id="csPlanD" value="${s.plan_days}"> дн. — задача «пригласить продолжить»</span></div></section>
+      <section id="csMoney"><h4>Напоминания о деньгах</h4>
+        <div class="cs-line"><label class="switch-row"><input type="checkbox" id="csDebtOn" ${s.debt_on !== false ? "checked" : ""}><span class="sw"></span>Пациент должен клинике дольше</label>
+          <span class="inline-f"><input class="input num" type="number" min="1" id="csDebtD" value="${s.debt_days || 7}"> дн. — задача «напомнить о долге»</span></div>
+        <div class="cs-line"><label class="switch-row"><input type="checkbox" id="csPayOn" ${s.pay_on !== false ? "checked" : ""}><span class="sw"></span>Прошёл срок платежа по рассрочке — задача «напомнить о платеже»</label></div>
+        <label class="fl">Сообщение о долге (WhatsApp), {сумма} подставится сама<textarea class="input" id="csDebtT" rows="2">${esc(s.debt_text || "")}</textarea></label>
+        <label class="fl">Сообщение о платеже по рассрочке, {сумма} и {срок} подставятся сами<textarea class="input" id="csPayT" rows="2">${esc(s.pay_text || "")}</textarea></label></section>
       <section id="csReviews"><h4>Оценка визита и отзывы</h4>
         <div class="grid3">${Object.entries({yandex: "Яндекс Карты", gis: "2ГИС", other: "Другая площадка"}).map(([k, t]) => `<label class="fl">${t}<input class="input" data-link="${k}" value="${esc(s.links[k] || "")}" placeholder="https://…"></label>`).join("")}</div>
         <p class="hint">Ссылка на страницу клиники, где пишут отзывы. На планшете после высокой оценки пациент увидит QR-код этой страницы.</p>
@@ -391,6 +397,7 @@ async function openCrmSettings(focus) {
     const links = {}; $$("[data-link]", box).forEach(i => links[i.dataset.link] = i.value.trim());
     try {
       S.crmSet = await api.crm_settings_save({rules, plan_on: $("#csPlanOn", box).checked, plan_days: $("#csPlanD", box).value, links,
+        debt_on: $("#csDebtOn", box).checked, debt_days: $("#csDebtD", box).value, pay_on: $("#csPayOn", box).checked, debt_text: $("#csDebtT", box).value, pay_text: $("#csPayT", box).value,
         bad_score: $("#csBad", box).value, good_score: $("#csGood", box).value, nps_question: $("#csQ", box).value, nps_text: $("#csNps", box).value, review_text: $("#csRev", box).value});
       closeModal(); toast("Настройки CRM сохранены"); if (S.view === "marketing") loadMarketing();
     } catch (e) { $("#csErr").textContent = errText(e); }

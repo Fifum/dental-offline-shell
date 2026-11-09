@@ -37,7 +37,23 @@ MODELS = {  # name: (short title, description, download MB, memory GB)
 }
 DEFAULT_MODEL = "gemma3:4b"
 
+# 2.13: the clinic's own model — a downloaded base model with the program's instructions and settings built in
+# (Ollama «Modelfile»). Nothing is downloaded for it: it is made on this computer in a few seconds.
+# Built-in dialogue examples were tried and dropped: on the quality check they made the model answer in prose where
+# the program asks for JSON (88 against 94 for the plain model), and repeat_penalty above 1 spoils JSON too.
+CUSTOM = "dental-desk"
+BASES = ("gemma3:4b", "qwen2.5:7b", "qwen2.5:3b")   # which downloaded model to build it on, best first
+CUSTOM_SYSTEM = (
+    "Ты помощник стоматологической клиники в программе Dental Desk. Пиши по-русски, простыми ясными предложениями, "
+    "без markdown. Номера зубов — по FDI (11–48, молочные 51–85), диагнозы — по МКБ-10 (K02.1 — кариес дентина, K04.0 — "
+    "пульпит, K05.1 — хронический гингивит). Не выдумывай факты, диагнозы, препараты, дозировки, цены и сроки, которых нет "
+    "в данных. Имя пациента в данных заменено словом «Пациент». Решения о лечении принимает врач: ты готовишь черновик. "
+    "Когда просят JSON — отвечай только JSON.")
+CUSTOM_PARAMS = {"temperature": 0.1, "top_p": 0.9, "repeat_penalty": 1.0, "num_ctx": 8192}
+CUSTOM_EXAMPLES: list = []
+
 _state = {"task": None, "progress": 0, "error": None}
+last_stats: dict = {}   # speed of the last answer: tokens, seconds (for the quality check)
 _proc = {"p": None}
 _start_lock = threading.Lock()
 
@@ -171,7 +187,69 @@ def status() -> dict:
     return {"installed": installed(), "external": not installed() and bool(base()), "address": base(),
             "ollama_mb": download_mb(), "folder": str(config.data_dir()), "memory_gb": memory_gb(),
             "models": {k: {"title": t, "desc": d, "mb": mb, "ram": ram, "ready": _is_ready(k, ready)} for k, (t, d, mb, ram) in MODELS.items()},
-            "other": [m for m in ready if m not in MODELS], **_state}
+            "custom": {"name": CUSTOM, "ready": _is_ready(CUSTOM, ready), "base": _base_for_custom(ready)},
+            "other": [m for m in ready if m not in MODELS and not m.startswith(CUSTOM)], "eval": last_eval(), **_state}
+
+
+def _base_for_custom(ready):
+    return next((b for b in BASES if _is_ready(b, ready)), None)
+
+
+def make_custom(base_model=None) -> dict:
+    """Build «dental-desk» from a downloaded model and make the program use it."""
+    import requests  # noqa: PLC0415
+    ready = models_ready()
+    src = base_model or _base_for_custom(ready)
+    if not src or not _is_ready(src, ready):
+        raise ValueError("Сначала скачайте модель (лучше «Рекомендуется» — Gemma 3), на ней будет построена модель клиники")
+    b = ensure()
+    try:
+        r = requests.post(f"{b}/api/create", timeout=300, json={"model": CUSTOM, "from": src, "system": CUSTOM_SYSTEM,
+                                                                "parameters": CUSTOM_PARAMS, "messages": CUSTOM_EXAMPLES, "stream": False})
+    except requests.RequestException as e:
+        raise ValueError(f"ИИ на этом компьютере не отвечает: {e.__class__.__name__}") from e
+    if r.status_code != 200:
+        raise ValueError(f"Не удалось подготовить модель клиники: {r.text[:200]}")
+    use(CUSTOM)
+    return status()
+
+
+# ------------------------------------------------------------ quality check --
+def _eval_file():
+    return config.data_dir() / "ai_eval.json"
+
+
+def last_eval():
+    try:
+        runs = json.loads(_eval_file().read_text(encoding="utf-8"))
+        return runs[-1] if runs else None
+    except (OSError, ValueError):
+        return None
+
+
+def evaluate(model: str):
+    """Run the program's test questions on a local model in the background (Settings → «Проверить качество»)."""
+    if _state["task"]:
+        return status()
+    _state.update(task=f"eval:{model}", progress=0, error=None)
+
+    def run():
+        try:
+            import ai_eval  # noqa: PLC0415
+            res = ai_eval.run({"provider": "local", "model": model}, progress=lambda p: _state.update(progress=p))
+            try:
+                runs = json.loads(_eval_file().read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                runs = []
+            _eval_file().write_text(json.dumps((runs + [res])[-10:], ensure_ascii=False, indent=1), encoding="utf-8")
+            _state["progress"] = 100
+        except Exception as e:  # noqa: BLE001
+            log.warning("model check failed: %s", e)
+            _state["error"] = f"Проверка не удалась: {e}"
+        finally:
+            _state["task"] = None
+    threading.Thread(target=run, name="ollama-eval", daemon=True).start()
+    return status()
 
 
 # ---------------------------------------------------------------- install --
@@ -362,6 +440,10 @@ def chat(messages, model: str, timeout=300) -> str:
     if r.status_code != 200:
         raise ValueError(f"ИИ на этом компьютере ответил ошибкой {r.status_code}: {r.text[:200]}")
     try:
-        return r.json()["message"]["content"]
+        j = r.json()
+        last_stats.clear()
+        last_stats.update({k: j.get(k) or 0 for k in ("eval_count", "eval_duration", "prompt_eval_count", "prompt_eval_duration",
+                                                      "load_duration", "total_duration")})
+        return j["message"]["content"]
     except (ValueError, KeyError, TypeError) as e:
         raise ValueError("ИИ на этом компьютере вернул непонятный ответ") from e

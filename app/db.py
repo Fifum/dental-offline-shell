@@ -108,6 +108,14 @@ class DB:
             self.conn.execute("ALTER TABLE invoices ADD COLUMN variants TEXT")
         if "variant" not in icols:
             self.conn.execute("ALTER TABLE invoices ADD COLUMN variant TEXT")
+        # 2.12: who pays the invoice — an insurance company (ДМС) by a policy or a letter of guarantee
+        for col in ("insurer_id TEXT", "ins_doc_id TEXT"):
+            if col.split()[0] not in icols:
+                self.conn.execute(f"ALTER TABLE invoices ADD COLUMN {col}")
+        pcols = {r[1] for r in self.conn.execute("PRAGMA table_info(payments)")}
+        for col in ("kind TEXT", "link_id TEXT"):  # 2.12: '' payment, 'refund', 'deposit_use', 'insurance'; rows of one operation
+            if col.split()[0] not in pcols:
+                self.conn.execute(f"ALTER TABLE payments ADD COLUMN {col}")
         if self.conn.execute("SELECT value FROM meta WHERE key='visits_archive'").fetchone() is None:
             self.conn.execute(_TO_ARCHIVE)  # first start: what is already in the mirror
             self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('visits_archive','1')")
