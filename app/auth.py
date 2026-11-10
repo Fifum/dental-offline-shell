@@ -253,6 +253,7 @@ METHOD_PERMS = {
     "director_settings": "reports", "director_settings_save": "reports",
     "acc_summary": "accounting", "expenses": "accounting", "save_expense": "accounting", "delete_expense": "accounting",
     "salary_schemes": "accounting", "save_salary_scheme": "accounting", "payroll": "accounting", "pay_salary": "accounting",
+    "finmodel": "accounting", "finmodel_scenario": "accounting", "finmodel_brief": "accounting",
     # marketing
     "mk_summary": "marketing", "mk_sources": ("marketing", "patients_view", "patients_edit"), "save_mk_sources": "marketing",
     "mk_sources_report": "marketing", "call_list": "marketing", "log_call": "marketing",

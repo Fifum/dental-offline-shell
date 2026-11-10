@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 
 DEFAULT_VARIANTS = [{"key": "a", "name": "Эконом"}, {"key": "b", "name": "Стандарт"}, {"key": "c", "name": "Премиум"}]
@@ -143,18 +144,25 @@ def _esc(s) -> str:
 
 # ------------------------------------------------------------------ PDF --
 def find_edge() -> str:
-    """Microsoft Edge (or the WebView2 runtime the program already needs) — both print HTML to PDF."""
+    """Microsoft Edge prints HTML to PDF. (The WebView2 runtime's msedgewebview2.exe cannot run headless.)"""
     cands = []
     for base in (os.environ.get("PROGRAMFILES(X86)"), os.environ.get("PROGRAMFILES"), os.environ.get("LOCALAPPDATA")):
         if base:
             cands.append(os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"))
-    for base in (os.environ.get("PROGRAMFILES(X86)"), os.environ.get("PROGRAMFILES")):
-        root = os.path.join(base or "", "Microsoft", "EdgeWebView", "Application")
-        if base and os.path.isdir(root):
-            for ver in sorted(os.listdir(root), reverse=True):
-                cands.append(os.path.join(root, ver, "msedge.exe"))
     cands.append(shutil.which("msedge") or "")
     return next((c for c in cands if c and os.path.isfile(c)), "")
+
+
+def _pdf_ready(path: str) -> bool:
+    try:
+        if os.path.getsize(path) < 500:
+            return False
+        with open(path, "rb") as f:
+            head = f.read(5)
+            f.seek(-1024, os.SEEK_END)
+            return head == b"%PDF-" and b"%%EOF" in f.read()
+    except OSError:
+        return False
 
 
 def html_to_pdf(html: str, timeout=90) -> bytes:
@@ -167,12 +175,20 @@ def html_to_pdf(html: str, timeout=90) -> bytes:
         src, out = os.path.join(tmp, "plan.html"), os.path.join(tmp, "plan.pdf")
         with open(src, "w", encoding="utf-8") as f:
             f.write(html)
-        args = [edge, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-                "--disable-extensions", f"--user-data-dir={os.path.join(tmp, 'profile')}", "--no-pdf-header-footer",
-                "--print-to-pdf-no-header", f"--print-to-pdf={out}", "file:///" + src.replace("\\", "/")]
+        # Edge 157+ relaunches itself past the Windows compatibility layer: the started process exits at once
+        # with code 0 and a detached copy prints the PDF later. The switch keeps the work in our process;
+        # older versions ignore it. The wait below covers any other detached relaunch.
+        args = [edge, "--headless=new", "--edge-skip-compat-layer-relaunch", "--disable-gpu", "--no-first-run",
+                "--no-default-browser-check", "--disable-extensions", f"--user-data-dir={os.path.join(tmp, 'profile')}",
+                "--no-pdf-header-footer", "--print-to-pdf-no-header", f"--print-to-pdf={out}",
+                "file:///" + src.replace("\\", "/")]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        deadline = time.monotonic() + timeout
         subprocess.run(args, timeout=timeout, capture_output=True, creationflags=flags)
-        if not os.path.isfile(out) or os.path.getsize(out) < 500:
+        wait_until = min(deadline, time.monotonic() + 30)
+        while not _pdf_ready(out) and time.monotonic() < wait_until:
+            time.sleep(0.2)
+        if not _pdf_ready(out):
             raise ValueError("Не удалось сохранить PDF. Сохраните через «Печать» → «Сохранить как PDF».")
         with open(out, "rb") as f:
             return f.read()

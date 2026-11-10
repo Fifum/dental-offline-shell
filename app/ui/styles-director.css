@@ -68,3 +68,30 @@
 @media print{.meter,.advice .adv-ic{display:none}}
 .rep-stack{display:flex;flex-direction:column;gap:12px}
 .heat th.num{text-align:center}
+
+/* 2.15: «Бухгалтерия» → «Финмодель» */
+.fm-pnl td{white-space:nowrap}
+.fm-pnl td:first-child{white-space:normal}
+.fm-pnl tr.fm-sub td:first-child{padding-left:26px;color:var(--ink2)}
+.fm-pnl tr.fm-group td{font-weight:600;color:var(--ink2)}
+.fm-pnl tr.fm-group td.muted{font-weight:400}
+.fm-pnl tr.fm-total td{font-weight:600;background:var(--panel2)}
+.fm-pnl tr.fm-net td{border-top:2px solid var(--line)}
+.fm-guide{font-size:12.5px}
+.fm-flag{background:var(--warn-soft);color:var(--warn);font-size:11.5px;padding:0 7px;white-space:nowrap}
+.fm-hist td.bar-cell{width:30%}
+.fm-hist tr.fm-cur td{background:var(--panel2)}
+.fm-neg .hb i{background:var(--warn)}
+.fm-sliders{padding:2px 16px 4px;display:flex;flex-direction:column;gap:10px}
+.fm-sl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;font-size:13.5px;align-items:center}
+.fm-sl output{font-variant-numeric:tabular-nums;font-weight:600;min-width:56px;text-align:right}
+.fm-sl input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--accent);margin:0}
+.fm-sliders .fl{margin-top:4px}
+#fmOut{padding:4px 16px 12px}
+#fmOut .fm-out td{white-space:nowrap}
+#fmOut .note-box{margin:10px 0 0}
+#fmOut .note-line{margin-top:8px}
+.fm-res td small{font-size:12px}
+.fm-tile .linkbtn{margin-top:4px}
+@media print{.fm-what,.fm-flag{display:none}}
+.dir-tiles:has(.fm-tile){grid-template-columns:repeat(auto-fit,minmax(148px,1fr))}

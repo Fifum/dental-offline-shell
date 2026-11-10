@@ -7,7 +7,8 @@ $$("#accTabs button").forEach(b => b.onclick = () => { S.accTab = b.dataset.k; $
 
 async function loadAccounting() {
   const body = $("#accBody");
-  const fn = {summary: accSummary, expenses: accExpenses, payroll: accPayroll, insurance: typeof accInsurance === "function" ? accInsurance : accSummary}[S.accTab] || accSummary;
+  const fn = {summary: accSummary, expenses: accExpenses, payroll: accPayroll, insurance: typeof accInsurance === "function" ? accInsurance : accSummary,
+    finmodel: typeof accFinmodel === "function" ? accFinmodel : accSummary}[S.accTab] || accSummary;
   $$("#accTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === S.accTab));
   await fn(body);
   bindPeriod(body, loadAccounting);

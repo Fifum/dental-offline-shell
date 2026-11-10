@@ -261,6 +261,20 @@ class Api:
     def pay_salary(self, f):
         return self._acc.pay_salary(f, self._who())
 
+    # 2.15: the financial model — profit by steps, break-even, «what if»
+    def _fm(self):
+        from finmodel import FinModel
+        return FinModel(self._db, self._acc, self._fin, self._dir, self._reports)
+
+    def finmodel(self, month=None):
+        return self._fm().model(month)
+
+    def finmodel_scenario(self, month=None, f=None):
+        return self._fm().scenario(month, f or {})
+
+    def finmodel_brief(self):
+        return self._fm().brief()
+
     # ----------------------------------------------------------- marketing --
     def mk_summary(self):
         return {**self._mk.summary(), "sources": self._mk.sources()}
