@@ -192,10 +192,11 @@ function netClinicHtml(c) {
   const j = c.join && c.join.state === "wait" ? `<div class="warn-line" style="margin:6px 0">Запрос отправлен. Код для проверки: <b>${esc(c.join.code)}</b> — директор должен нажать «Принять» на том компьютере.</div>` : "";
   return `<div style="margin-bottom:8px">Клиника «<b>${esc(c.clinic_name)}</b>», этот компьютер: <b>${esc(c.computer)}</b>${c.paused ? ` <span class="bad-t">${esc(c.paused)}</span>` : ""}</div>
     ${peers ? `<ul style="margin:0 0 8px 18px;padding:0">${peers}</ul>` : `<div class="muted" style="margin-bottom:8px">Других компьютеров клиники пока нет.</div>`}
-    ${others}${j}<div class="row" style="margin-bottom:8px"><button class="btn ghost small" id="netSyncNow">Обменяться сейчас</button></div>`;
+    ${others}${j}<div class="row" style="margin-bottom:8px"><button class="btn ghost small" id="netSyncNow">Обменяться сейчас</button><button class="btn ghost small" id="netConf">Журнал расхождений</button></div>`;
 }
 function netClinicBind() {
   const b = $("#netSyncNow"); if (b) b.onclick = async () => { await api.p2p_sync(); toast("Обмен с компьютерами клиники запущен"); };
+  const cf = $("#netConf"); if (cf) cf.onclick = () => openConflicts(true);  // the same journal as for the cloud
   document.querySelectorAll("[data-join]").forEach(x => x.onclick = async () => {
     if (!(await ask("Объединить этот компьютер с клиникой на другом компьютере?", {ok: "Отправить запрос",
       text: "Пациенты, записи, оплаты и сотрудники этого компьютера объединятся с данными клиники. Если логины совпадают, останется пароль, изменённый позже. Директор на том компьютере должен нажать «Принять»."}))) return;
