@@ -42,6 +42,10 @@ def main():
         installer.make_shortcuts(exe)
     except Exception:  # noqa: BLE001
         pass
+    try:  # 3.0: the clinic's computers reach each other — one UAC prompt now instead of «Разрешить доступ?» later
+        installer.add_firewall_rule(exe)
+    except Exception:  # noqa: BLE001
+        pass
     installer.launch(exe, args)
     return 0
 

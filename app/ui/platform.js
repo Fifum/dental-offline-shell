@@ -167,8 +167,46 @@ async function loadUpdatePanel(check) {
   };
 }
 
+/* ------------------------------------------------------------ 3.0: clinic network */
+const NET_ASKED = {};
+function netPairRequests(st) {
+  for (const r of st.pair_requests || []) {
+    if (NET_ASKED[r.node]) continue;
+    NET_ASKED[r.node] = 1;
+    (async () => {
+      const yes = await ask(`Новый компьютер «${r.host || r.name}» просит подключиться — принять?`, {ok: "Принять", cancel: "Отклонить",
+        text: `Код на экране нового компьютера: ${String(r.code).replace(/(\d{3})(\d{3})/, "$1 $2")}. Принимайте, только если код совпадает и это компьютер вашей клиники: он получит все данные клиники.`
+          + (r.has_data ? "\n\nНа нём уже есть свои пациенты и записи — они объединятся с данными клиники." : "")});
+      try {
+        if (yes) { await api.p2p_accept(r.node); toast(`Компьютер «${r.host || r.name}» подключён к клинике. Данные начнут приходить на него через несколько секунд.`); }
+        else { await api.p2p_reject(r.node); toast("Подключение отклонено"); }
+      } catch (e) { toast(errText(e), true); }
+    })();
+  }
+}
+function netClinicHtml(c) {
+  if (!c || !c.configured) return "";
+  const ago = t => t ? fmtDT(t) : "ещё не было";
+  const peers = (c.peers || []).map(p => `<li><b>${esc(p.host || p.name || p.node)}</b> — ${p.online ? '<span class="ok-t">в сети</span>' : "не в сети"}, обмен: ${esc(ago(p.last_sync))}${p.error && p.online ? ` <span class="bad-t">${esc(p.error)}</span>` : ""}</li>`).join("");
+  const others = isDirector() && c.lone ? (c.others || []).map(o => `<div class="row" style="margin:6px 0"><span>В сети есть компьютер <b>${esc(o.host)}</b> (клиника «${esc(o.clinic_name)}»), ещё не объединённый с этим.</span><button class="btn small" data-join="${esc(o.clinic)}">Объединить с ним</button></div>`).join("") : "";
+  const j = c.join && c.join.state === "wait" ? `<div class="warn-line" style="margin:6px 0">Запрос отправлен. Код для проверки: <b>${esc(c.join.code)}</b> — директор должен нажать «Принять» на том компьютере.</div>` : "";
+  return `<div style="margin-bottom:8px">Клиника «<b>${esc(c.clinic_name)}</b>», этот компьютер: <b>${esc(c.computer)}</b>${c.paused ? ` <span class="bad-t">${esc(c.paused)}</span>` : ""}</div>
+    ${peers ? `<ul style="margin:0 0 8px 18px;padding:0">${peers}</ul>` : `<div class="muted" style="margin-bottom:8px">Других компьютеров клиники пока нет.</div>`}
+    ${others}${j}<div class="row" style="margin-bottom:8px"><button class="btn ghost small" id="netSyncNow">Обменяться сейчас</button></div>`;
+}
+function netClinicBind() {
+  const b = $("#netSyncNow"); if (b) b.onclick = async () => { await api.p2p_sync(); toast("Обмен с компьютерами клиники запущен"); };
+  document.querySelectorAll("[data-join]").forEach(x => x.onclick = async () => {
+    if (!(await ask("Объединить этот компьютер с клиникой на другом компьютере?", {ok: "Отправить запрос",
+      text: "Пациенты, записи, оплаты и сотрудники этого компьютера объединятся с данными клиники. Если логины совпадают, останется пароль, изменённый позже. Директор на том компьютере должен нажать «Принять»."}))) return;
+    try { const r = await api.p2p_join_other(x.dataset.join); toast(`Запрос отправлен. Код для проверки: ${r.code}`); }
+    catch (e) { toast(errText(e), true); }
+  });
+}
+
 /* banner for the director and the cloud subscription warning (called from refreshStatus) */
 function platformStatus(st) {
+  netPairRequests(st);
   const u = st.update;
   if (u && u.available && isDirector() && S.updateShown !== u.latest) {
     S.updateShown = u.latest;

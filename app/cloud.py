@@ -49,6 +49,10 @@ class Keys:
     def check(self) -> str:
         return hmac.new(self.mac, b"dd-key-check", hashlib.sha256).hexdigest()
 
+    def clinic_id(self) -> str:
+        """Public name of the clinic in the network: computers with the same key see the same id."""
+        return hmac.new(self.mac, b"dd-clinic-id", hashlib.sha256).hexdigest()[:16]
+
     def row_key(self, table, k) -> str:
         return hmac.new(self.mac, f"{table}\x1f{k}".encode(), hashlib.sha256).hexdigest()
 
@@ -106,10 +110,28 @@ def norm_url(url: str) -> str:
 
 
 # ------------------------------------------------------------------ client --
+def clinic_key() -> bytes | None:
+    """3.0: one clinic key for the clinic network and the cloud (before 3.0 only the cloud had one)."""
+    s = config.load_settings()
+    raw = config.unprotect(s.get("clinic_key") or "") or config.unprotect(s.get("cloud_key") or "")
+    try:
+        key = base64.b64decode(raw) if raw else None
+    except ValueError:
+        return None
+    return key if key and len(key) == 32 else None
+
+
+def set_clinic_key(key: bytes, name="", member=False):
+    config.save_settings({"clinic_key": config.protect(base64.b64encode(key).decode()), "clinic_id": Keys(key).clinic_id(),
+                          "clinic_name": name or config.load_settings().get("clinic_name") or "",
+                          **({"clinic_member": True} if member else {})})
+
+
 def _settings():
     s = config.load_settings()
+    ck = clinic_key()
     return {"url": s.get("cloud_url") or "", "token": config.unprotect(s.get("cloud_token") or ""),
-            "key": config.unprotect(s.get("cloud_key") or ""), "invite": config.unprotect(s.get("cloud_invite") or ""),
+            "key": base64.b64encode(ck).decode() if ck else "", "invite": config.unprotect(s.get("cloud_invite") or ""),
             "device": s.get("cloud_device") or "", "name": s.get("cloud_name") or "", "tenant": s.get("cloud_tenant") or "",
             "interval": max(1, int(s.get("cloud_interval_min") or 3))}
 
@@ -199,6 +221,10 @@ class Cloud:
         if configured():
             raise CloudError("Этот компьютер уже подключён к облаку. Сначала отключите его.")
         c_url, invite, key = parse_code(code)
+        own = clinic_key()
+        if key is not None and own and key != own:
+            raise CloudError("Этот код — от облака другой клиники: его ключ не совпадает с ключом этой клиники.")
+        key = key or own
         url = norm_url(c_url or url)
         h = Http(url)
         r = h.post("/v1/join", {"invite": invite, "name": name or socket.gethostname(), "version": config.VERSION})
@@ -223,8 +249,9 @@ class Cloud:
         prev = config.load_settings().get("cloud_last_tenant")
         if prev and prev != r["tenant"]:
             self.reset()
-        config.save_settings({"cloud_url": url, "cloud_token": config.protect(r["token"]), "cloud_key": config.protect(
-            base64.b64encode(key).decode()), "cloud_invite": config.protect(invite), "cloud_device": r["device"],
+        set_clinic_key(key)
+        config.save_settings({"cloud_url": url, "cloud_token": config.protect(r["token"]), "cloud_key": "",
+            "cloud_invite": config.protect(invite), "cloud_device": r["device"],
             "cloud_name": r["name"], "cloud_tenant": r["tenant"], "cloud_last_tenant": r["tenant"]})
         self._meta_set("cloud_sub", json.dumps(r.get("subscription") or {}, ensure_ascii=False))
         log.info("joined cloud tenant %s as device %s", r["tenant"], r["device"])
@@ -243,7 +270,7 @@ class Cloud:
                 Http(s["url"], s["token"]).post("/v1/leave")
             except CloudError as e:
                 log.info("leave: %s", e)
-        config.save_settings({"cloud_url": "", "cloud_token": "", "cloud_key": "", "cloud_invite": "", "cloud_device": "",
+        config.save_settings({"cloud_url": "", "cloud_token": "", "cloud_invite": "", "cloud_device": "",  # the clinic key stays
                               "cloud_name": "", "cloud_tenant": ""})
         self.state.update(error="", last_ok=None)
         return True
@@ -257,10 +284,10 @@ class Cloud:
         return True
 
     def reset(self):
-        """Another clinic or a fresh start: forget versions and send everything again."""
+        """Another cloud: it has nothing of ours yet — send every version again (versions themselves stay)."""
         with self.db.tx() as c:
-            c.execute("DELETE FROM sync_rows")
-            c.execute("DELETE FROM sync_state WHERE k LIKE 'installed:%' OR k LIKE 'cloud_%'")
+            c.execute("UPDATE sync_rows SET cver=NULL")
+            c.execute("DELETE FROM sync_state WHERE k LIKE 'cloud_%'")
         replica.install(self.db)
 
     def refresh_status(self):
@@ -327,10 +354,12 @@ class Cloud:
                 except CloudError:
                     log.warning("row %s: cannot decrypt", row["key"][:12])
                     continue
-                items.append({"t": obj["t"], "k": obj["k"], "row": obj["row"], "ver": row["ver"], "device": row["device"],
-                              "seq": row["seq"]})
+                # 3.0: the same versions as between computers in the clinic network (vv, ancestor, who made the row)
+                items.append({"t": obj["t"], "k": obj["k"], "row": obj["row"], "ver": row["ver"], "seq": row["seq"],
+                              "vv": obj.get("vv") or replica.vv_of_ver(row["ver"]), "pbase": obj.get("pbase"),
+                              "origin": obj.get("origin") or ""})
             if items:
-                replica.apply_remote(self.db, items, row["device"])
+                replica.apply_versions(self.db, items, config.node_id(), cloud=True)
                 total += len(items)
             if r["rows"]:
                 self._meta_set("cloud_seq", str(r["rows"][-1]["seq"]))
@@ -338,21 +367,21 @@ class Cloud:
                 return total
 
     def _push(self, h, keys, device):
-        items = replica.outgoing(self.db, limit=400)
+        replica.stamp(self.db, config.node_id())
+        items = replica.cloud_outgoing(self.db, limit=400)
         if not items:
             return 0, False, False
         self._upload_files(h, keys, [i for i in items if i["t"] == "patient_files" and i["row"]])
-        changes, vers = [], {}
+        changes, byk = [], {}
         for it in items:
             rk = keys.row_key(it["t"], it["ks"])
-            ver = self._ver(device, it["at"])
-            vers[rk] = (it, ver)
-            changes.append({"key": rk, "ver": ver, "base": it["base"],
-                            "data": keys.seal_row({"t": it["t"], "k": it["k"], "row": it["row"]}, rk)})
+            byk[rk] = it
+            changes.append({"key": rk, "ver": it["ver"], "base": it["base"],
+                            "data": keys.seal_row({"t": it["t"], "k": it["k"], "row": it["row"], "vv": it["vv"],
+                                                   "pbase": it["pbase"], "origin": it["origin"]}, rk)})
         r = h.post("/v1/push", {"changes": changes})
         for rk in r["accepted"]:
-            it, ver = vers[rk]
-            replica.pushed(self.db, it, ver, device)
+            replica.cloud_pushed(self.db, byk[rk])
         return len(r["accepted"]), bool(r["rejected"]), len(items) >= 400
 
     # ------------------------------------------------- X-rays and files --

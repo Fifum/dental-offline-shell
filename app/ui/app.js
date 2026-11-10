@@ -1028,8 +1028,10 @@ async function loadSettings() {
   if (typeof loadPlatformSettings === "function") loadPlatformSettings();
   if (typeof loadDaySettings === "function") loadDaySettings();
   api.network_info().then(n => {
-    $("#netBox").innerHTML = (n.urls.length ? `Адрес сервера для других компьютеров: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
-      : "Компьютер не подключён к сети — другие компьютеры не смогут подключиться.") + (n.public ? `<div class="warn-line" style="margin-top:6px">${NET_PUBLIC_HINT}</div>` : "");
+    $("#netBox").innerHTML = (typeof netClinicHtml === "function" ? netClinicHtml(n.clinic) : "")
+      + (n.urls.length ? `Адрес этого компьютера в сети: ${n.urls.map(u => `<code>${esc(u)}</code>`).join(" или ")}`
+      : "Компьютер не подключён к сети — другие компьютеры его не видят.") + (n.public ? `<div class="warn-line" style="margin-top:6px">${NET_PUBLIC_HINT}</div>` : "");
+    if (typeof netClinicBind === "function") netClinicBind(n.clinic);
   }).catch(() => {});
   $("#histTable tbody").innerHTML = s.history.map(h => `<tr><td>${fmtDT(h.finished)}</td><td class="${h.ok ? "ok-t" : "bad-t"}">${esc(h.message)}</td><td>${h.counts.visits ?? "—"}</td><td>${h.counts.patients ?? "—"}</td></tr>`).join("")
     || `<tr><td colspan="4" class="muted">Ещё не было</td></tr>`;

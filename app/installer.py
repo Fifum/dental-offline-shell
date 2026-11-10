@@ -125,6 +125,50 @@ def install_zip(zip_path, target_dir) -> str:
     return os.path.join(target_dir, exe_name)
 
 
+# ------------------------------------------------------------- firewall (3.0) --
+TCP_PORT, UDP_PORT = 8765, 8766   # the program's server and the «who is there?» broadcasts of the clinic network
+
+
+def firewall_rule_name() -> str:
+    return f"{config.BRAND['name']} — сеть клиники"
+
+
+def firewall_commands(exe, tcp=TCP_PORT, udp=UDP_PORT) -> list[str]:
+    """netsh commands for an inbound rule: the program's ports, Private and Public networks (and a domain one).
+    Without it Windows shows «Разрешить доступ?» on the first start, and on a «Public» network blocks the clinic."""
+    name = firewall_rule_name()
+    base = f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" profile=private,public,domain enable=yes'
+    return [f'netsh advfirewall firewall delete rule name="{name}"',
+            f"{base} protocol=TCP localport={tcp}",
+            f"{base} protocol=UDP localport={udp}"]
+
+
+def firewall_ok(exe) -> bool:
+    """The rule is there for this exe (reading rules needs no administrator rights)."""
+    try:
+        r = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={firewall_rule_name()}", "verbose"],
+                           capture_output=True, timeout=20, creationflags=NO_WINDOW, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    out = (r.stdout or b"").decode("cp866", "replace").lower()
+    return r.returncode == 0 and os.path.normcase(exe).lower() in out and str(TCP_PORT) in out and str(UDP_PORT) in out
+
+
+def add_firewall_rule(exe, tcp=TCP_PORT, udp=UDP_PORT, wait=True) -> bool:
+    """One UAC prompt («Разрешить этому приложению вносить изменения?») when the rule is missing; nothing otherwise."""
+    if os.name != "nt" or firewall_ok(exe):
+        return True
+    script = " & ".join(firewall_commands(exe, tcp, udp))
+    ps = (f"Start-Process cmd -Verb RunAs -WindowStyle Hidden {'-Wait ' if wait else ''}"
+          f"-ArgumentList '/c {script.replace(chr(39), chr(39) * 2)}'")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], creationflags=NO_WINDOW,
+                           timeout=180, check=False, capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
 def launch(exe, args):
     subprocess.Popen([exe, *args], close_fds=True, creationflags=DETACHED)  # noqa: S603
 

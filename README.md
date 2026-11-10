@@ -131,7 +131,35 @@ sync brings the change back from Dentist Plus, the overlay disappears on its own
 card is merged into the real one. Sync can replace its data at any time without losing anything typed
 by staff.
 
-## Clinic network and staff accounts
+## Clinic network without a server (3.0)
+
+A clinic where the power — and the router with it — goes off several times a day cannot depend on one computer
+being the server. Since 3.0 every laptop keeps its own database and works on its own; computers of the same
+clinic that see each other in the Wi-Fi find each other by a UDP broadcast and exchange changes directly, every
+minute and within a second or two after any change. There is nothing to set up: the installer adds the firewall
+rule (one UAC prompt), the first computer creates the clinic, and a new computer finds it and asks to join — the
+director clicks «Принять» on any of his computers that is online, after checking a six-digit code shown on both
+screens. Until then the new computer gets nothing: patient data never goes to a device just because it is in the
+Wi-Fi.
+
+* **Pairing.** The new computer sends a one-time X25519 public key; the code on both screens is made from it, so a
+  substituted key shows a different code. On «Принять» the clinic key is sealed for exactly that key
+  (X25519 + HKDF + AES-GCM). Every later request and answer is sealed with the clinic key (AES-256-GCM).
+* **Versions, peer to peer.** A local change becomes a version with a version vector (`{computer: counter}`,
+  the counter being a time in ms, so it keeps growing after a restore from a backup) and a link to the row it
+  was made from. A computer gives each peer the versions with a local change number above what that peer already
+  took from it, and passes on what it got from a third computer, so every change reaches everyone. A vector that
+  covers another wins; two concurrent versions are merged field by field against their common ancestor, and the
+  result gets a version made from its content — two computers merging the same pair end up with the same row
+  instead of bouncing it. Files go the same way, encrypted, by checksum.
+* **Cloud and LAN together.** The cloud carries the same versions; each computer remembers which version the
+  cloud has, so a row that came over the Wi-Fi is not sent again and is never a false conflict.
+* **Upgrading 2.x.** A computer that worked alone keeps its data and becomes a clinic of its own; the director
+  joins the laptops together in Settings → «Сеть клиники» («Объединить с ним»), and their patients, bookings,
+  payments and staff are merged. A former client computer gets its own database and asks to join.
+
+### Accounts and permissions (2.0)
+
 
 Version 2.0 turns the single-laptop app into a small clinic system without adding any infrastructure.
 The same `.exe` asks on first start whether this computer is the **server** or should **connect to
@@ -177,7 +205,8 @@ Dentist Plus partner API
 | `app/ui/platform.js` | Settings for the cloud, updates and import; PIN sign-in |
 | `app/installer.py` | Install and update the program folder for the current user: close the running copy, swap folders safely, shortcuts |
 | `app/setup_main.py` | The shipped `.exe`: a small installer carrying the program folder as a zip |
-| `app/server.py` | Clinic server: HTTP API, permission checks, UI files, network discovery |
+| `app/server.py` | Each computer's own server: HTTP API, permission checks, UI files, network discovery |
+| `app/p2p.py` | 3.0 clinic network: discovery, pairing with the director's approval, sealed peer-to-peer exchange of versions and files |
 | `app/auth.py` | Staff accounts, password hashing, sessions, roles and permissions, action journal |
 | `app/speech.py` | Offline speech recognition: model download, transcription |
 | `app/dictation.py` | Dictated protocol → record fields, ICD-10, tooth states |
@@ -316,6 +345,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_ai_213.py               # 144 checks: dates and surnames in any case, short texts (token limit, cut at sentences, no greeting), assistant answers and proposals with rights over HTTP, drafts by rules and by a fake model with anonymous data, translation, record check, weekly summary, voice chart, consent, quality check
 .venv\Scripts\python tests\test_staff_214.py            # 92 checks: positions and their rights (built-in and own, later rights, voice labels), rights over HTTP at once, expenses of the day and the drawer, the day report with a fake SMTP server and a fake Telegram Bot API, retry of one channel and the moment to send
 .venv\Scripts\python tests\test_stock_grey.py           # 43 checks: stock without documents — receipts, write-offs and counts, balance by documents and who sees it over HTTP, act numbers, receipt as an expense of the day, the stock block of the day report
+.venv\Scripts\python tests\test_p2p.py                  # 48 checks: three computers (processes) find each other, pairing with the director's approval, both-way sync, staff approval, files, conflicts converge, LAN + cloud without duplicates
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 

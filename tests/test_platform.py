@@ -121,7 +121,7 @@ with A:
     check("code carries address, invite and key", u == URL and cloud_server.norm_invite(inv) == cloud_server.norm_invite(t1["invite"])
           and len(key) == 32)
     s = config.load_settings()
-    check("token and key stored encrypted", s["cloud_token"].startswith(("dpapi:", "plain:")) and s["cloud_key"].startswith(("dpapi:", "plain:")))
+    check("token and key stored encrypted", s["cloud_token"].startswith(("dpapi:", "plain:")) and s["clinic_key"].startswith(("dpapi:", "plain:")))
     gs = A.api.get_settings()
     check("settings shown to the UI have no token or key", not any(k in gs for k in ("cloud_token", "cloud_key", "cloud_invite")))
     refuses("demo switch refused while in the cloud", lambda: A.api.save_settings({"demo": True}), "облак")

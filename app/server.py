@@ -1,8 +1,11 @@
 """Clinic server: one computer keeps the database and syncs with Dentist Plus; every computer in the
 clinic network (including this one) opens the program as a page served from here.
 
-HTTP  :8765  — UI files, /api/<method> (data), /auth/<method> (login, staff), /ping
-UDP   :8766  — answers "where is the server?" broadcasts from client computers
+HTTP  :8765  — UI files, /api/<method> (data), /auth/<method> (login, staff), /ping,
+               /p2p/<method> (3.0: the clinic's computers exchange changes, sealed with the clinic key — p2p.py)
+UDP   :8766  — answers "who is there?" broadcasts: this computer's node id and the clinic id (no patient data)
+
+3.0: every computer runs this server for itself (its own window, tablets, the other computers of the clinic).
 """
 from __future__ import annotations
 
@@ -32,8 +35,21 @@ def server_id() -> str:
 
 
 def server_info(port) -> dict:
-    return {"app": APP_ID, "server_id": server_id(), "name": config.BRAND["name"], "version": config.VERSION,
+    info = {"app": APP_ID, "server_id": server_id(), "name": config.BRAND["name"], "version": config.VERSION,
             "host": socket.gethostname(), "port": port}
+    try:
+        import p2p
+        info.update(p2p.identity())
+    except Exception:  # noqa: BLE001
+        pass
+    return info
+
+
+def discovery_ports(port) -> list:
+    """UDP ports to ask: ours, the standard one, and (tests, several copies on one computer) DD_DISCOVERY_PORTS."""
+    import os
+    extra = [int(x) for x in os.environ.get("DD_DISCOVERY_PORTS", "").split(",") if x.strip().isdigit()]
+    return sorted({port + 1, 8766, *extra})
 
 
 def _brief(args) -> str:
@@ -204,6 +220,12 @@ class ClinicServer:
                         result = srv.call_auth(name, args, token, ip, agent, is_local)
                     elif kind == "api":
                         result = srv.call_api(name, args, token, ip)
+                    elif kind == "p2p":
+                        import p2p
+                        try:
+                            result = p2p.handle(name, args[0] if args and isinstance(args[0], dict) else {}, ip)
+                        except p2p.P2PError as e:
+                            return self._json(e.code if e.code >= 400 else 400, {"error": str(e)})
                     elif kind == "tablet":
                         from tablet import TabletError
                         try:
@@ -240,12 +262,11 @@ class ClinicServer:
         except OSError as e:
             log.warning("discovery disabled: %s", e)
             return
-        info = json.dumps(server_info(self.port)).encode()
         while True:
             try:
                 data, addr = s.recvfrom(256)
                 if data.strip() == DISCOVER_MSG:
-                    s.sendto(info, addr)
+                    s.sendto(json.dumps(server_info(self.port)).encode(), addr)  # 3.0: fresh, the clinic may change
             except OSError:
                 continue
 
@@ -260,14 +281,20 @@ def discover(timeout=1.5, port=8765) -> list[dict]:
     found = {}
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    if hasattr(socket, "SIO_UDP_CONNRESET"):  # Windows: a closed port must not break the listening (ICMP «unreachable»)
+        try:
+            s.ioctl(socket.SIO_UDP_CONNRESET, False)
+        except OSError:
+            pass
     s.settimeout(0.3)
     try:
         for _ in range(2):
             for target in ("255.255.255.255", "127.0.0.1"):
-                try:
-                    s.sendto(DISCOVER_MSG, (target, port + 1))
-                except OSError:
-                    pass
+                for dport in discovery_ports(port):
+                    try:
+                        s.sendto(DISCOVER_MSG, (target, dport))
+                    except OSError:
+                        pass
             import time
             end = time.time() + timeout / 2
             while time.time() < end:
@@ -278,8 +305,8 @@ def discover(timeout=1.5, port=8765) -> list[dict]:
                         ip = addr[0]
                         info["url"] = f"http://{ip}:{info.get('port', port)}/"
                         info["ip"] = ip
-                        found.setdefault(info["server_id"] + ("" if ip == "127.0.0.1" else ip), info)
-                except (socket.timeout, ValueError):
+                        found.setdefault(info["server_id"] + ("" if ip == "127.0.0.1" else ip) + str(info.get("port")), info)
+                except (socket.timeout, ValueError, ConnectionResetError):
                     continue
                 except OSError:
                     break

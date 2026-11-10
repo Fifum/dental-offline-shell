@@ -69,10 +69,11 @@ class Pusher:
 
     # ------------------------------------------------------------ helpers
     def _own(self, rows, table):
-        """With the cloud, every computer sends to Dentist Plus only what was created on it — never twice."""
+        """With the clinic network or the cloud, every computer sends to Dentist Plus only what was created on it —
+        never twice (3.0: «created on it» = the node id in the row's first version)."""
         import config
         import replica
-        dev = config.load_settings().get("cloud_device") or ""
+        dev = config.node_id()
         foreign = replica.foreign_ids(self.db, table, dev) if dev else set()
         return [r for r in rows if r["id"] not in foreign]
 

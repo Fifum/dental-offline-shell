@@ -1,4 +1,5 @@
-"""Two-way replication of the clinic's own data between computers (through the cloud server).
+"""Two-way replication of the clinic's own data between computers (directly in the clinic network — p2p.py —
+and through the cloud server, with the same row versions; see «versions (3.0)» below).
 
 Every laptop works on its own and keeps its own SQLite database. Triggers write the key of every changed row
 of a replicated table into `sync_dirty`. Syncing (cloud.py) pushes those rows and pulls the rows changed on
@@ -127,6 +128,19 @@ def install(db):
     conn = db.conn
     with db._lock:
         conn.executescript(SCHEMA)
+        rcols = set(_cols(conn, "sync_rows"))
+        for col in ("vv TEXT", "pbase TEXT", "seq INTEGER", "cver TEXT"):  # 3.0: versions for peer-to-peer sync
+            if col.split()[0] not in rcols:
+                conn.execute(f"ALTER TABLE sync_rows ADD COLUMN {col}")
+        if "cver" not in rcols:  # before 3.0 every known version came from (or went to) the cloud
+            conn.execute("UPDATE sync_rows SET cver=ver")
+        if conn.execute("SELECT 1 FROM sync_rows WHERE seq IS NULL AND ver IS NOT NULL LIMIT 1").fetchone():
+            top = int((conn.execute("SELECT v FROM sync_state WHERE k='seq'").fetchone() or [0])[0])
+            for i, (rid,) in enumerate(conn.execute("SELECT rowid FROM sync_rows WHERE seq IS NULL AND ver IS NOT NULL").fetchall(), 1):
+                conn.execute("UPDATE sync_rows SET seq=? WHERE rowid=?", (top + i, rid))
+            conn.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES('seq', ?)",
+                         (str(conn.execute("SELECT COALESCE(MAX(seq), 0) FROM sync_rows").fetchone()[0]),))
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sync_rows_seq ON sync_rows(seq)")
         have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         ver = conn.execute("SELECT v FROM sync_state WHERE k='trigger_ver'").fetchone()
         if not ver or ver[0] != TRIGGER_VER:  # older triggers are replaced once
@@ -314,10 +328,151 @@ def set_applying(conn, on: bool):
     conn.execute("UPDATE sync_state SET v=? WHERE k='applying'", ("1" if on else "0",))
 
 
-def apply_remote(db, items, device):
-    """Apply rows pulled from the cloud: [{"t", "k", "row", "ver", "device"}]. Returns counts."""
-    stats = {"applied": 0, "merged": 0, "conflicts": 0, "skipped": 0}
+# ------------------------------------------------------- versions (3.0) --
+# Every computer is a peer: it takes rows from any other computer of the clinic (LAN) and from the cloud.
+# A local change becomes a version when it is «stamped»: `ver` = «<time ms>.<node>.<random>», `vv` = version
+# vector {node: counter} (the counter is a time in ms, so it keeps growing after a restore from a backup),
+# `base` = the row as of this version, `pbase` = the row it was made from (the ancestor for a three-way merge),
+# `seq` = local change number. A computer gives its peers «rows with seq > what you already have from me»;
+# what came from a third computer goes on with a new local seq, so every change reaches everyone.
+# Two versions: one vector covers the other → the newer one is kept, the older one is ignored; neither covers
+# the other (changed on two computers) → merged field by field, the result gets the union of the vectors and a
+# version made from its content, so two computers merging the same pair end up with the same row.
+# `cver` = the version the cloud has, so the cloud gets only what it does not have yet.
+
+def ks(key) -> str:
+    """Row key as stored in sync_dirty / sync_rows — the same text SQLite json_array() makes."""
+    return json.dumps(list(key), ensure_ascii=False, separators=(",", ":"))
+
+
+def make_ver(node, at) -> str:
+    import secrets
+    return f"{int(at):015d}.{node}.{secrets.token_hex(3)}"
+
+
+def ver_device(ver) -> str:
+    p = str(ver or "").split(".")
+    return p[1] if len(p) > 2 and p[1] != "m" else ""
+
+
+def _vv(meta) -> dict:
+    if meta is None:
+        return {}
+    if meta["vv"]:
+        try:
+            return {k: int(v) for k, v in json.loads(meta["vv"]).items()}
+        except (ValueError, TypeError, AttributeError):
+            pass
+    return vv_of_ver(meta["ver"])
+
+
+def vv_of_ver(ver) -> dict:
+    """A version written before 3.0 (cloud only): what its own text tells."""
+    p = str(ver or "").split(".")
+    return {p[1]: ver_time(ver)} if len(p) > 2 and p[1] != "m" else ({"?": ver_time(ver)} if ver else {})
+
+
+def vv_cmp(a: dict, b: dict) -> str:
+    """'eq', 'gt' (a covers b), 'lt' (b covers a) or 'cc' (concurrent)."""
+    ge = all(a.get(k, 0) >= v for k, v in b.items())
+    le = all(b.get(k, 0) >= v for k, v in a.items())
+    return "eq" if ge and le else "gt" if ge else "lt" if le else "cc"
+
+
+def _canon(row) -> str:
+    return json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _next_seq(conn) -> int:
+    r = conn.execute("SELECT v FROM sync_state WHERE k='seq'").fetchone()
+    n = (int(r[0]) if r else 0) + 1
+    conn.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES('seq', ?)", (str(n),))
+    return n
+
+
+def top_seq(db) -> int:
+    r = db.one("SELECT v FROM sync_state WHERE k='seq'")
+    return int(r["v"]) if r else 0
+
+
+def epoch(db) -> str:
+    """Changes with every restore from a backup: peers then take everything again instead of trusting old numbers."""
+    r = db.one("SELECT v FROM sync_state WHERE k='epoch'")
+    if r:
+        return r["v"]
+    return new_epoch(db)
+
+
+def new_epoch(db) -> str:
+    import secrets
+    e = secrets.token_hex(6)
+    with db.tx() as c:
+        c.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES('epoch', ?)", (e,))
+    return e
+
+
+def _save_meta(conn, tbl, k, ver, vv, base, pbase, origin):
+    conn.execute("INSERT INTO sync_rows(tbl, k, ver, base, pbase, vv, seq, origin) VALUES(?,?,?,?,?,?,?,?) "
+                 "ON CONFLICT(tbl, k) DO UPDATE SET ver=excluded.ver, base=excluded.base, vv=excluded.vv, "
+                 "pbase=excluded.pbase, seq=excluded.seq, origin=COALESCE(NULLIF(sync_rows.origin, ''), excluded.origin)",
+                 (tbl, k, ver, None if base is None else json.dumps(base, ensure_ascii=False),
+                  None if pbase is None else (pbase if isinstance(pbase, str) else json.dumps(pbase, ensure_ascii=False)),
+                  json.dumps(vv, separators=(",", ":")), _next_seq(conn), origin or ""))
+
+
+def stamp_conn(conn, node, only=None) -> int:
+    """Turn local changes (sync_dirty) into versions. `only` = (table, key text) for one row. Inside a transaction."""
+    sql, args = "SELECT tbl, k, at FROM sync_dirty", ()
+    if only:
+        sql, args = sql + " WHERE tbl=? AND k=?", only
+    n = 0
+    for d in conn.execute(sql, args).fetchall():
+        t = BY_NAME.get(d["tbl"])
+        conn_del = ("DELETE FROM sync_dirty WHERE tbl=? AND k=? AND at=?", (d["tbl"], d["k"], d["at"]))
+        if not t:
+            conn.execute(*conn_del)
+            continue
+        key = json.loads(d["k"])
+        row = read_row(conn, t, key)
+        meta = conn.execute("SELECT * FROM sync_rows WHERE tbl=? AND k=?", (t.name, d["k"])).fetchone()
+        base = json.loads(meta["base"]) if meta and meta["base"] else None
+        if (meta and meta["ver"] and row is not None and base is not None and _canon(row) == _canon(base)) or \
+                (row is None and (not meta or meta["base"] is None)):
+            conn.execute(*conn_del)  # nothing really changed (saved again as it was) or a row that never left
+            continue
+        vv = _vv(meta)
+        vv[node] = max(vv.get(node, 0) + 1, int(d["at"]))
+        _save_meta(conn, t.name, d["k"], make_ver(node, d["at"]), vv, row, meta["base"] if meta else None, node)
+        conn.execute(*conn_del)
+        n += 1
+    return n
+
+
+def stamp(db, node) -> int:
+    with db.tx() as conn:
+        return stamp_conn(conn, node)
+
+
+def changes_since(db, since=0, limit=500):
+    """Versions this computer has with seq > since, oldest first: what a peer is missing."""
+    rows = db.q("SELECT * FROM sync_rows WHERE seq>? AND ver IS NOT NULL ORDER BY seq LIMIT ?", (int(since or 0), int(limit)))
+    return [{"t": r["tbl"], "k": json.loads(r["k"]), "row": json.loads(r["base"]) if r["base"] else None, "ver": r["ver"],
+             "vv": json.loads(r["vv"]) if r["vv"] else vv_of_ver(r["ver"]), "pbase": json.loads(r["pbase"]) if r["pbase"] else None,
+             "origin": r["origin"] or "", "seq": r["seq"]} for r in rows]
+
+
+def _merged_ver(vv, row) -> str:
+    import hashlib
+    h = hashlib.sha256((_canon(row) + json.dumps(vv, sort_keys=True)).encode("utf-8")).hexdigest()[:12]
+    return f"{max(vv.values() or [0]):015d}.m.{h}"
+
+
+def apply_versions(db, items, node, cloud=False):
+    """Apply versions from a peer or the cloud: [{"t", "k", "row", "ver", "vv", "pbase", "origin"}]. Returns counts.
+    `cloud`: they came from the cloud, which therefore has them (cver)."""
+    stats = {"applied": 0, "merged": 0, "conflicts": 0, "skipped": 0, "same": 0}
     items = sorted(items, key=lambda x: (ORDER.get(x["t"], 999), x.get("seq", 0)))
+    import logging
     with db.tx() as conn:
         set_applying(conn, True)
         try:
@@ -331,73 +486,76 @@ def apply_remote(db, items, device):
                 except Exception:  # noqa: BLE001 — table of a newer version
                     stats["skipped"] += 1
                     continue
-                k = json.dumps(it["k"], ensure_ascii=False)
-                key = it["k"]
-                meta = conn.execute("SELECT ver, base FROM sync_rows WHERE tbl=? AND k=?", (t.name, k)).fetchone()
-                if meta and meta["ver"] == it["ver"]:
-                    continue  # our own change coming back
-                dirty = conn.execute("SELECT at FROM sync_dirty WHERE tbl=? AND k=?", (t.name, k)).fetchone()
-                theirs = it["row"]
-                conn.execute("SAVEPOINT rp")
-                try:
-                    if not dirty:
-                        write_row(conn, t, key, theirs)
-                        stats["applied"] += 1
-                    else:
-                        mine = read_row(conn, t, key)
-                        base = json.loads(meta["base"]) if meta and meta["base"] else None
-                        merged, lost = merge(base, mine, theirs, mine_newer=dirty["at"] >= ver_time(it["ver"]))
-                        write_row(conn, t, key, merged)
-                        if lost:
-                            log_conflict(conn, t, k, merged or theirs or mine, lost, it.get("device", ""))
-                            stats["conflicts"] += len(lost)
-                        stats["merged"] += 1
-                        if merged == theirs:
-                            conn.execute("DELETE FROM sync_dirty WHERE tbl=? AND k=?", (t.name, k))
-                    conn.execute("INSERT INTO sync_rows(tbl, k, ver, base, origin) VALUES(?,?,?,?,?) "
-                                 "ON CONFLICT(tbl, k) DO UPDATE SET ver=excluded.ver, base=excluded.base",
-                                 (t.name, k, it["ver"], json.dumps(theirs, ensure_ascii=False) if theirs is not None else None,
-                                  it.get("device", "")))
-                    conn.execute("RELEASE rp")
-                except Exception as e:  # noqa: BLE001 — e.g. a unique number taken here: keep the row in the journal
-                    conn.execute("ROLLBACK TO rp")
-                    conn.execute("RELEASE rp")
-                    log_conflict(conn, t, k, theirs, [("*", "", _txt(theirs))], it.get("device", ""), kind="failed")
-                    conn.execute("INSERT INTO sync_rows(tbl, k, ver, base, origin) VALUES(?,?,?,?,?) "
-                                 "ON CONFLICT(tbl, k) DO UPDATE SET ver=excluded.ver",
-                                 (t.name, k, it["ver"], None, it.get("device", "")))
-                    stats["conflicts"] += 1
-                    import logging
-                    logging.getLogger("replica").warning("row %s %s not applied: %s", t.name, k, e)
+                key, k = it["k"], ks(it["k"])
+                if conn.execute("SELECT 1 FROM sync_dirty WHERE tbl=? AND k=?", (t.name, k)).fetchone():
+                    stamp_conn(conn, node, (t.name, k))  # our unsaved change becomes a version first
+                meta = conn.execute("SELECT * FROM sync_rows WHERE tbl=? AND k=?", (t.name, k)).fetchone()
+                _apply_one(conn, t, key, k, it, meta, stats, logging)
+                if cloud:
+                    conn.execute("UPDATE sync_rows SET cver=? WHERE tbl=? AND k=?", (it["ver"], t.name, k))
         finally:
             set_applying(conn, False)
     return stats
 
 
-def outgoing(db, limit=400):
-    """Changed rows to push: [{"t", "k", "key", "row", "base", "at"}], oldest change first."""
-    out = []
-    with db._lock:
-        conn = db.conn
-        for d in conn.execute("SELECT tbl, k, at FROM sync_dirty ORDER BY at LIMIT ?", (limit,)).fetchall():
-            t = BY_NAME.get(d["tbl"])
-            if not t:
-                continue
-            key = json.loads(d["k"])
-            meta = conn.execute("SELECT ver FROM sync_rows WHERE tbl=? AND k=?", (t.name, d["k"])).fetchone()
-            out.append({"t": t.name, "k": key, "ks": d["k"], "row": read_row(conn, t, key),
-                        "base": meta["ver"] if meta else None, "at": d["at"]})
-    out.sort(key=lambda x: (ORDER.get(x["t"], 999), x["at"]))
+def _apply_one(conn, t, key, k, it, meta, stats, logging):
+    tv = {kk: int(v) for kk, v in (it.get("vv") or vv_of_ver(it["ver"])).items()}
+    theirs = it["row"]
+    dev = ver_device(it["ver"]) or it.get("origin", "")
+    if meta is not None and meta["ver"] == it["ver"]:
+        stats["same"] += 1
+        return
+    c = "lt" if meta is None or meta["ver"] is None else vv_cmp(_vv(meta), tv)
+    if c == "eq":  # same history, made into different rows on two computers: the same rule everywhere
+        c = "lt" if it["ver"] > meta["ver"] else "gt"
+    if c == "gt":
+        stats["skipped"] += 1  # we already have something newer
+        return
+    conn.execute("SAVEPOINT rp")
+    try:
+        if c == "lt":
+            write_row(conn, t, key, theirs)
+            _save_meta(conn, t.name, k, it["ver"], tv, theirs, it.get("pbase"), it.get("origin") or dev)
+            stats["applied"] += 1
+        else:  # changed here and there
+            mine = json.loads(meta["base"]) if meta["base"] else None
+            anc = it.get("pbase")
+            mine_newer = (ver_time(meta["ver"]), meta["ver"]) > (ver_time(it["ver"]), it["ver"])
+            merged, lost = merge(anc, mine, theirs, mine_newer)
+            vv = _vv(meta)
+            for kk, v in tv.items():
+                vv[kk] = max(vv.get(kk, 0), v)
+            write_row(conn, t, key, merged)
+            _save_meta(conn, t.name, k, _merged_ver(vv, merged), vv, merged, anc, it.get("origin") or dev)
+            if lost:
+                log_conflict(conn, t, k, merged or theirs or mine, lost, dev)
+                stats["conflicts"] += len(lost)
+            stats["merged"] += 1
+        conn.execute("RELEASE rp")
+    except Exception as e:  # noqa: BLE001 — e.g. a unique number taken here: keep the row in the journal
+        conn.execute("ROLLBACK TO rp")
+        conn.execute("RELEASE rp")
+        log_conflict(conn, t, k, theirs, [("*", "", _txt(theirs))], dev, kind="failed")
+        conn.execute("INSERT INTO sync_rows(tbl, k, ver, vv, origin) VALUES(?,?,?,?,?) ON CONFLICT(tbl, k) DO UPDATE "
+                     "SET ver=excluded.ver, vv=excluded.vv", (t.name, k, it["ver"], json.dumps(tv), it.get("origin") or dev))
+        stats["conflicts"] += 1
+        logging.getLogger("replica").warning("row %s %s not applied: %s", t.name, k, e, exc_info=True)
+
+
+def cloud_outgoing(db, limit=400):
+    """Versions the cloud does not have yet: [{"t", "k", "ks", "row", "ver", "vv", "pbase", "origin", "base"}]."""
+    rows = db.q("SELECT * FROM sync_rows WHERE ver IS NOT NULL AND (cver IS NULL OR cver<>ver) ORDER BY seq LIMIT ?", (int(limit),))
+    out = [{"t": r["tbl"], "k": json.loads(r["k"]), "ks": r["k"], "row": json.loads(r["base"]) if r["base"] else None,
+            "ver": r["ver"], "vv": json.loads(r["vv"]) if r["vv"] else vv_of_ver(r["ver"]),
+            "pbase": json.loads(r["pbase"]) if r["pbase"] else None, "origin": r["origin"] or "", "base": r["cver"]}
+           for r in rows]
+    out.sort(key=lambda x: ORDER.get(x["t"], 999))
     return out
 
 
-def pushed(db, item, ver, device):
-    """The cloud took this row: remember it as the new base and forget the change unless it changed again."""
+def cloud_pushed(db, item):
     with db.tx() as conn:
-        conn.execute("INSERT INTO sync_rows(tbl, k, ver, base, origin) VALUES(?,?,?,?,?) "
-                     "ON CONFLICT(tbl, k) DO UPDATE SET ver=excluded.ver, base=excluded.base",
-                     (item["t"], item["ks"], ver, json.dumps(item["row"], ensure_ascii=False) if item["row"] is not None else None, device))
-        conn.execute("DELETE FROM sync_dirty WHERE tbl=? AND k=? AND at=?", (item["t"], item["ks"], item["at"]))
+        conn.execute("UPDATE sync_rows SET cver=? WHERE tbl=? AND k=? AND ver=?", (item["ver"], item["t"], item["ks"], item["ver"]))
 
 
 def foreign_ids(db, table, device) -> set:

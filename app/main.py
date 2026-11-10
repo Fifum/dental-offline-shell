@@ -1369,6 +1369,18 @@ class Api:
             self._daily.tick(self._cash_for)  # the day report at the set time, at most every 5 minutes
         except Exception:  # noqa: BLE001
             log.exception("status 2.14")
+        try:  # 3.0: a new computer asks to join the clinic network — the director answers on any of his computers
+            from auth import _current
+            import p2p
+            u = getattr(_current, "user", None)
+            if u is not None and u.get("role") == "director":
+                st["pair_requests"] = p2p.pending_pairs()
+            if p2p.NODE:
+                ps = p2p.NODE.status()
+                st["net"] = {"peers": len(ps["peers"]), "online": sum(1 for p in ps["peers"] if p["online"]),
+                             "last_ok": ps["last_ok"], "conflicts_new": ps["conflicts_new"], "paused": ps["paused"]}
+        except Exception:  # noqa: BLE001
+            log.exception("status 3.0")
         return st
 
     def sync_now(self):
@@ -1718,7 +1730,13 @@ class Api:
         u = getattr(_current, "user", None)
         if u is not None and u.get("role") != "director":
             raise ValueError("Восстанавливать базу из копии может только директор")
-        return backup.restore(where, name, self._db.conn, self._db._lock, db_path=self._db.path)
+        r = backup.restore(where, name, self._db.conn, self._db._lock, db_path=self._db.path)
+        try:  # 3.0: the other computers take everything from this one again (its change numbers went back)
+            import replica
+            replica.new_epoch(self._db)
+        except Exception:  # noqa: BLE001
+            log.exception("new epoch after restore")
+        return r
 
     def network_info(self):
         from server import local_addresses, network_categories
@@ -1726,10 +1744,50 @@ class Api:
         port = int(s.get("port") or 8765)
         ips = local_addresses()
         cats = network_categories()
-        return {"mode": s.get("net_mode") or "server", "port": port, "addresses": ips,
+        import p2p
+        return {"mode": s.get("net_mode") or "node", "port": port, "addresses": ips,
                 "urls": [f"http://{ip}:{port}/" for ip in ips],
                 # Windows blocks incoming connections on a «Public» network: tablets and other PCs cannot connect
-                "public": bool(ips) and cats.get(ips[0]) == "Public"}
+                "public": bool(ips) and cats.get(ips[0]) == "Public",
+                "clinic": p2p.NODE.status() if p2p.NODE else None}
+
+    # ------------------------------------------------- 3.0: clinic network --
+    def p2p_status(self):
+        import p2p
+        return p2p.NODE.status() if p2p.NODE else {"configured": p2p.configured(), "peers": []}
+
+    def p2p_accept(self, node):
+        self._director("Подключать компьютеры к сети клиники")
+        import p2p
+        try:
+            return p2p.accept_pair(node)
+        except p2p.P2PError as e:
+            raise ValueError(str(e)) from None
+
+    def p2p_reject(self, node):
+        self._director("Отклонять подключение компьютеров")
+        import p2p
+        return p2p.reject_pair(node)
+
+    def p2p_sync(self):
+        import p2p
+        if p2p.NODE:
+            p2p.NODE.wake(full=True)
+        return True
+
+    def p2p_join_other(self, clinic):
+        """2.x laptops that worked apart: this one asks to join the clinic network of another one (director only)."""
+        self._director("Объединять компьютеры клиники")
+        import p2p
+        if not p2p.NODE:
+            raise ValueError("Сеть клиники не запущена")
+        targets = [{"ip": o["ip"], "port": o["port"]} for o in p2p.NODE.others.values() if o.get("clinic") == clinic]
+        if not targets:
+            raise ValueError("Этот компьютер больше не виден в сети")
+        try:
+            return p2p.NODE.join(targets)
+        except p2p.P2PError as e:
+            raise ValueError(str(e)) from None
 
     # ------------------------------------------------- cloud, updates, import --
     @staticmethod
@@ -1939,6 +1997,9 @@ class Api:
         old = config.load_settings()
         if old.get("demo") != upd.get("demo", old.get("demo")):
             import cloud
+            import p2p
+            if p2p.configured() and p2p.NODE and p2p.NODE.status()["peers"]:
+                raise ValueError("Компьютер в сети клиники: демо-режим удалил бы данные на всех компьютерах клиники.")
             if cloud.configured():
                 raise ValueError("Компьютер подключён к облаку клиники: демо-режим удалил бы данные на всех компьютерах. "
                                  "Сначала отключите облако (Настройки → «Облако и подписка»).")
@@ -2125,8 +2186,12 @@ class Host:
         self.worker = SyncWorker(db)
         self.worker.start()
         api = Api(db, self.worker)
+        self.db, self.api = db, api
         self.server = ClinicServer(api, db, port=self.port()).start()
         start_platform(api, db, self)
+        import p2p  # 3.0: the clinic's computers find each other and sync directly
+        self.node = p2p.Node(db, self.port())
+        self.node.start()
         from backup import BackupWorker
         self.backups = BackupWorker(db.path)
         self.backups.start()
@@ -2136,6 +2201,8 @@ class Host:
             self.worker.stop_flag = True
         if getattr(self, "cloud", None):
             self.cloud.stop_flag = True
+        if getattr(self, "node", None):
+            self.node.stop_flag = True
         if self.server:
             self.server.stop()
         if self.backups:
@@ -2143,7 +2210,8 @@ class Host:
 
 
 class Setup:
-    """Bridge for the first-start screen (ui/setup.html): server or client, find the server."""
+    """Bridge for the first-start screen (ui/setup.html). 3.0: find the clinic's computers in the network and ask
+    to join (the director accepts), or — nobody found — make this the first computer of a new clinic."""
 
     def __init__(self, host: Host):
         self._host = host
@@ -2158,6 +2226,54 @@ class Setup:
     def discover(self):
         from server import discover
         return discover(port=self._host.port())
+
+    # ---- 3.0: the clinic network ----
+    def _app_url(self):
+        return f"http://127.0.0.1:{self._host.port()}/"
+
+    def p2p_scan(self):
+        import p2p
+        try:
+            self._host.start_server()
+        except OSError as e:
+            return {"clinics": [], "error": f"Не удалось открыть порт {self._host.port()}: {e}. Возможно, программа уже запущена."}
+        return {"clinics": p2p.scan(), "configured": p2p.configured(), "computer": __import__("socket").gethostname()}
+
+    def create_clinic(self):
+        import p2p
+        try:
+            self._host.start_server()
+        except OSError as e:
+            return {"ok": False, "message": f"Не удалось открыть порт {self._host.port()}: {e}"}
+        p2p.create_clinic(db=self._host.db, fresh=not self._host.api._db.one("SELECT 1 AS x FROM users LIMIT 1"))
+        config.save_settings({"net_mode": "node"})
+        self._go(self._app_url())
+        return {"ok": True}
+
+    def join_clinic(self, clinic):
+        import p2p
+        self._host.start_server()
+        targets = [{"ip": c["ip"], "port": c["port"]} for x in p2p.scan() if x["clinic"] == clinic for c in x["computers"]]
+        if not targets:
+            return {"ok": False, "message": "Компьютеры этой клиники больше не видны в сети. Нажмите «Искать снова»."}
+        try:
+            return {"ok": True, **p2p.NODE.join(targets)}
+        except p2p.P2PError as e:
+            return {"ok": False, "message": str(e)}
+
+    def join_state(self):
+        import p2p
+        j = p2p.NODE.joiner if p2p.NODE else None
+        if not j:
+            return {"state": "idle"}
+        has_users = bool(self._host.db.one("SELECT 1 AS x FROM users WHERE status='active' LIMIT 1"))
+        if j.state == "done":
+            config.save_settings({"net_mode": "node"})
+        return {"state": j.state, "message": j.message, "code": j.code, "clinic_name": j.clinic, "has_users": has_users}
+
+    def open_app(self):
+        self._go(self._app_url())
+        return True
 
     def check(self, url):
         from server import ping
@@ -2302,21 +2418,10 @@ class Setup:
         return bool(url and ping(url, timeout=1.5))
 
     def allow_firewall(self):
-        """Ask Windows (UAC prompt) to let other clinic computers reach this one."""
-        import subprocess
-        exe = sys.executable
-        name = config.BRAND["name"]
+        """Ask Windows (UAC prompt) to let other clinic computers reach this one (3.0: the installer does it too)."""
+        import installer
         port = self._host.port()
-        cmds = [f'netsh advfirewall firewall delete rule name="{name}"',
-                f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow protocol=TCP localport={port} '
-                f'program="{exe}" profile=private,domain enable=yes',
-                f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow protocol=UDP localport={port + 1} '
-                f'program="{exe}" profile=private,domain enable=yes']
-        script = " & ".join(cmds)
-        ps = f"Start-Process cmd -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList '/c {script.replace(chr(39), chr(39) * 2)}'"
-        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                           creationflags=0x08000000, timeout=120, check=False, capture_output=True)
-        return {"ok": r.returncode == 0}
+        return {"ok": installer.add_firewall_rule(sys.executable, port, port + 1)}
 
     def _go(self, url):
         self._error = ""
@@ -2360,6 +2465,14 @@ def _theme_is_dark():
 def _ui_page(name):
     """A page opened from the program folder (other origin than the app): pass the theme along."""
     return str(config.resource_dir() / "ui" / name) + "?theme=" + _theme_pref()
+
+
+def _old_server_v2(port) -> bool:
+    """The server this client used is reachable and still runs 2.x (it cannot take part in the clinic network)."""
+    from server import ping
+    url = _client_url(port)
+    info = ping(url) if url else None
+    return bool(info and str(info.get("version", "")).startswith(("1.", "2.")))
 
 
 def _client_url(port):
@@ -2449,13 +2562,23 @@ def main():
     s = config.load_settings()
     setup_page = _ui_page("setup.html")
     url = setup_page
-    if s.get("net_mode") == "server":
+    mode = s.get("net_mode")
+    if mode == "client" and not _old_server_v2(host.port()):
+        # 3.0: no more clients — this computer gets its own database and joins the clinic (the director accepts)
+        config.save_settings({"net_mode": "", "client_before_3": True})
+        mode = ""
+    if mode in ("server", "node"):
         try:
             host.start_server()
-            url = f"http://127.0.0.1:{host.port()}/"
+            import p2p
+            if not p2p.configured() and mode == "server":
+                # a 2.x computer with its own data: it becomes a clinic of its own, the director can join it to others
+                p2p.create_clinic()
+                config.save_settings({"net_mode": "node"})
+            url = f"http://127.0.0.1:{host.port()}/" if p2p.configured() else setup_page
         except OSError as e:
             setup._error = f"Не удалось запустить сервер на порту {host.port()}: {e}"
-    elif s.get("net_mode") == "client":
+    elif mode == "client":  # the old server still runs 2.x: keep working as its client until it is updated
         url = _client_url(host.port()) or setup_page
         if url == setup_page:
             setup._error = f"Сервер клиники не отвечает ({s.get('server_url')}). Проверьте, что компьютер-сервер включён и программа на нём запущена."

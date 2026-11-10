@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "2.14.1"
+VERSION = "3.0.0"
 
 # Updates: latest.json signed with Ed25519 (tools/update_sign.py). The secret key stays with the developer outside
 # every repository; this public key only checks signatures. The address can also come from brand.json or settings.
@@ -130,6 +130,15 @@ def load_settings() -> dict:
             except Exception:
                 pass
         return s
+
+
+def node_id() -> str:
+    """3.0: this computer in the clinic network (part of every row version made here). Never changes."""
+    s = load_settings()
+    if not s.get("node_id"):
+        import secrets
+        s = save_settings({"node_id": s.get("cloud_device") or secrets.token_hex(6)})
+    return s["node_id"]
 
 
 def save_settings(new: dict) -> dict:

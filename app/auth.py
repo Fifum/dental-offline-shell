@@ -274,6 +274,9 @@ METHOD_PERMS = {
     "cloud_status": "settings", "cloud_join": "settings", "cloud_sync": "settings", "cloud_code": "settings",
     "cloud_leave": "settings", "cloud_revoke": "settings", "cloud_conflicts": "settings",
     "cloud_conflict_seen": "settings", "cloud_conflict_restore": "settings",
+    # 3.0: the clinic network (accepting a computer and merging laptops are checked for the director in Api)
+    "p2p_status": "settings", "p2p_accept": "settings", "p2p_reject": "settings", "p2p_sync": ANY_USER,
+    "p2p_join_other": "settings",
     "update_status": ANY_USER, "update_check": "settings", "update_download": "settings", "update_install": "settings",
     "import_preview": "settings", "import_run": "settings", "import_dp_all": "settings",
 }
@@ -319,6 +322,8 @@ AUDITED = {
     "set_patient_marketing": "Источник пациента", "save_shift": "Смена в графике", "fill_shifts": "Заполнение графика",
     "clear_shifts": "Очистка графика",
     "dictate": "Диктовка в медкарту", "speech_download": "Скачивание модели речи", "ai_settings_save": "Настройки ИИ",
+    "p2p_accept": "Новый компьютер подключён к сети клиники", "p2p_reject": "Отклонено подключение компьютера",
+    "p2p_join_other": "Запрос на объединение с другим компьютером клиники",
     "cloud_join": "Подключение к облаку клиники", "cloud_code": "Показан код подключения к облаку",
     "cloud_leave": "Отключение от облака", "cloud_revoke": "Отключение компьютера клиники от облака",
     "cloud_conflict_restore": "Возврат значения после синхронизации", "update_download": "Скачивание обновления",
@@ -466,7 +471,9 @@ class Auth:
         user = self.user_for(token, touch=False) if token else None
         import config
         return {"brand": config.BRAND, "version": config.VERSION,
-                "has_users": self.has_users(), "can_bootstrap": not self.has_users() and is_local,
+                # 3.0: a computer that joined the clinic gets the director from the others, never makes a second one
+                "has_users": self.has_users(), "can_bootstrap": not self.has_users() and is_local
+                and not config.load_settings().get("clinic_member"),
                 "has_pins": bool(self.db.one("SELECT 1 AS x FROM users WHERE status='active' AND pin_hash IS NOT NULL LIMIT 1")),
                 "user": self.public_user(user) if user else None,
                 "roles": [{"key": k, "title": v["title"], "perms": v["perms"], "base": v["base"], "builtin": v["builtin"]}
@@ -480,6 +487,9 @@ class Auth:
             raise AuthError("Учётная запись директора уже создана. Войдите или подайте заявку.", 403)
         if not is_local:
             raise AuthError("Первую учётную запись (директора) можно создать только на компьютере-сервере.", 403)
+        import config
+        if config.load_settings().get("clinic_member"):
+            raise AuthError("Компьютер подключён к клинике: учётные записи придут с других компьютеров. Подождите минуту.", 403)
         login, name = _clean_login(f.get("login")), str(f.get("name") or "").strip()
         if not login or not name:
             raise AuthError("Укажите имя и логин", 400)
