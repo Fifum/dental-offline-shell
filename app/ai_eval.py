@@ -69,21 +69,35 @@ def _cases():
                   _has(str(j.get("treatment", "")), "ультракаин"), not _has(str(j.get("treatment", "")), "артикаин", "лидокаин")]
         return sum(checks) / len(checks), False
 
+    def short(out, kind):  # as long as the program keeps, without a greeting at the start
+        return len(out) <= ai_docs.LIMITS[kind] and not ai.GREETING.match(out)
+
+    def sentences(out):
+        return len(re.findall(r"[.!?](?:\s|$)", out))
+
     def c_extraction(out):
         low = out.lower()
         checks = [_has(out, "холод"), bool(re.search(r"не\s+(?:\w+\s+)?поло(?:ск|щ)|полоскать\s+нельзя", low)), _has(out, "2 час", "два час", "двух час"),
                   _has(out, "звон", "обратит"), not re.search(r"сол[её]н|содов|ромашк|трав[ая]|настой|антибиот", low),  # nothing invented
-                  not re.search(r"K0\d", out), "**" not in out and "#" not in out]
+                  not re.search(r"K0\d", out), "**" not in out and "#" not in out, short(out, "recommendations"),
+                  not re.search(r"^[^\n—–-]{0,80}:\s*$", out.split("\n")[0])]  # a list, no «Вот что делать дома:» heading
         return sum(checks) / len(checks), True
 
     def c_explain(out):
         n = len(re.findall(r"[.!?](?:\s|$)", out))
-        checks = [_has(out, "нерв", "пульп"), _has(out, "канал", "временн", "пломб"), 2 <= n <= 8, not re.search(r"K0\d", out)]
+        checks = [_has(out, "нерв", "пульп"), _has(out, "канал", "временн", "пломб"), 2 <= n <= 5, not re.search(r"K0\d", out),
+                  short(out, "explain")]
         return sum(checks) / len(checks), True
 
     def c_variant(out):
         checks = [_has(out, "имплант"), _has(out, "коронк"), _has(out, "5 лет", "пять лет"), not re.search(r"\d[\d\s]{3,}\s*(?:₽|руб)", out),
-                  len(out) < 700]
+                  short(out, "plan_variant"), sentences(out) <= 2]
+        return sum(checks) / len(checks), True
+
+    def c_extract(out):  # sections as «Диагноз: …», only what the record has (there is no anamnesis in it)
+        checks = [_has(out, "диагноз:"), _has(out, "k04.0"), "Раздел" not in out, not re.search(r"отягощ|без особенност", out.lower()),
+                  not re.search(r"(?m)^\s*Анамнез", out), short(out, "extract"),
+                  not re.search(r"ортодонт|консультац|^\s*Рекомендац", out, re.M)]  # the doctor wrote no recommendations
         return sum(checks) / len(checks), True
 
     def c_en(out):
@@ -106,7 +120,7 @@ def _cases():
         return f
 
     def c_free(out):
-        checks = [_has(out, "пульп", "нерв"), _has(out, "периодонт", "корн", "кост"), len(out) < 1200]
+        checks = [_has(out, "пульп", "нерв"), _has(out, "периодонт", "корн", "кост"), len(out) <= assistant.FREE_LIMIT]
         return sum(checks) / len(checks), True
 
     sys_dict = ai.prompt()
@@ -117,6 +131,7 @@ def _cases():
                                                                                                     "diagnoses": [{"code": "K08.3"}]}}).split("\n")
                                           if x.startswith("— ") and ai_docs.URGENT not in x), c_extraction, "task"),
         ("explain", "Объяснить пульпит пациенту", ai_docs.TASKS["explain"], REC_PULPITIS, c_explain, "task"),
+        ("extract", "Выписка из медкарты", ai_docs.TASKS["extract"], REC_PULPITIS, c_extract, "task"),
         ("variant", "Описание варианта плана", ai_docs.TASKS["plan_variant"],
          "Название варианта: Премиум\nУслуги: Имплантат Straumann (зуб 36); Коронка на имплантате, цирконий (зуб 36)\nГарантия: 5 лет\n"
          "Срок лечения: 4 месяца\nЗаметка врача: приживление 3 месяца", c_variant, "task"),
@@ -156,7 +171,7 @@ def run(over=None, progress=None, only=None) -> dict:
         st = dict(llm_local.last_stats)
         tok_s = round(st["eval_count"] / (st["eval_duration"] / 1e9), 1) if st.get("eval_duration") else None
         out.append({"id": cid, "title": title, "seconds": sec, "tok_s": tok_s, "accuracy": round(acc, 2),
-                    "russian": round(_ru_share(ans), 2) if russian_case else None, "answer": ans[:600], "error": err,
+                    "russian": round(_ru_share(ans), 2) if russian_case else None, "answer": ans[:600], "chars": len(ans), "error": err,
                     "prompt_tokens": st.get("prompt_eval_count"), "tokens": st.get("eval_count")})
         if progress:
             progress(int((n + 1) * 100 / len(cases)) - 1)

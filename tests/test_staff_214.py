@@ -158,7 +158,7 @@ class FakeSMTP:
 daily.smtplib.SMTP_SSL = FakeSMTP
 st = a.day_report_send(T, True)
 msg = [x[1] for x in SENT if x[0] == "msg"][-1]
-check("sent", st["status"] == "sent" and st["sent_to"] == "boss@mail.ru, second@ya.ru" and ("login", "clinic@yandex.ru", "app-pass") in SENT)
+check("sent", st["status"] == "sent" and st["where"] == "почта: boss@mail.ru, second@ya.ru" and ("login", "clinic@yandex.ru", "app-pass") in SENT, st)
 check("mail content", "отчёт за" in msg["Subject"] and msg["To"] == "boss@mail.ru, second@ya.ru"
       and any(p.get_filename() and p.get_filename().endswith(".xlsx") for p in msg.iter_attachments())
       and "Расходы за день" in msg.get_body(("plain",)).get_content())
@@ -200,8 +200,74 @@ for _ in range(50):
     time.sleep(0.1)
 check("closing the shift sends the day report", (d.one("SELECT status FROM day_reports WHERE day=?", (T,)) or {}).get("status") == "sent")
 
+# ------------------------------------------------------------------ 2.14.1: the report in Telegram (fake Bot API)
+import requests  # noqa: E402
+TG = {"calls": [], "fail": None}
+
+
+class FakeResp:
+    def __init__(self, code, j):
+        self.status_code, self._j = code, j
+
+    def json(self):
+        return self._j
+
+
+def fake_post(url, data=None, files=None, timeout=None):
+    token, method = url.split("/bot", 1)[1].split("/", 1)
+    TG["calls"].append((method, data, bool(files)))
+    if token != "123456:ABCdef":
+        return FakeResp(401, {"ok": False, "description": "Unauthorized"})
+    if TG["fail"] and method in ("sendMessage", "sendDocument"):
+        return FakeResp(*TG["fail"])
+    if method == "getMe":
+        return FakeResp(200, {"ok": True, "result": {"username": "clinic_reports_bot", "first_name": "Отчёты"}})
+    if method == "getUpdates":
+        return FakeResp(200, {"ok": True, "result": [
+            {"message": {"chat": {"id": 501, "first_name": "Андрей", "last_name": "К", "username": "owner"}, "text": "/start"}},
+            {"message": {"chat": {"id": 501, "first_name": "Андрей", "last_name": "К", "username": "owner"}, "text": "hi"}},
+            {"message": {"chat": {"id": 777, "first_name": "Ольга"}, "text": "/start"}}]})
+    if method == "sendMessage":
+        return FakeResp(200, {"ok": True, "result": {"chat": {"id": data["chat_id"], "first_name": "Андрей"}}})
+    return FakeResp(200, {"ok": True, "result": {}})
+
+
+requests.post = fake_post
+refuses("Telegram needs a token", lambda: daily.save_settings({"tg_on": True}), "токен бота")
+refuses("a token looks like 123:ABC", lambda: daily.save_settings({"tg_token": "abc"}), "1234567890:AA")
+refuses("Telegram needs a chat", lambda: daily.save_settings({"tg_on": True, "tg_token": "123456:ABCdef"}), "«Старт»")
+check("bot check", a.day_report_tg_check("123456:ABCdef")["username"] == "clinic_reports_bot")
+refuses("a wrong token in plain words", lambda: a.day_report_tg_check("1:x"), "токен бота")
+ch = a.day_report_tg_chats("123456:ABCdef")
+check("who pressed «Старт»", [c["id"] for c in ch] == [501, 777] and ch[0]["name"] == "Андрей К (@owner)", ch)
+ps = daily.save_settings({"tg_on": True, "tg_token": "123456:ABCdef", "tg_bot": "clinic_reports_bot", "tg_chats": [ch[0]]})
+check("Telegram settings, token hidden", ps["tg_on"] and ps["has_tg_token"] and ps["tg_chats"] == [{"id": 501, "name": "Андрей К (@owner)"}]
+      and "ABCdef" not in json.dumps(config.load_settings(), ensure_ascii=False))
+check("saved token used when none typed", a.day_report_tg_chats()[0]["id"] == 501)
+check("both channels", daily.channels() == ["mail", "tg"])
+TG["calls"].clear(); n = len(SENT)
+st = a.day_report_send(T, True)
+m = [c for c in TG["calls"] if c[0] == "sendMessage"]
+check("report to Telegram and mail", st["status"] == "sent" and "Telegram: Андрей" in st["where"] and "почта:" in st["where"] and len(SENT) > n, st)
+check("Telegram message and Excel file", m and m[0][1]["chat_id"] == 501 and "отчёт за" in m[0][1]["text"] and "Расходы за день" in m[0][1]["text"]
+      and any(c[0] == "sendDocument" and c[2] for c in TG["calls"]))
+TG["fail"] = (403, {"ok": False, "description": "Forbidden: bot was blocked by the user"})
+n = len(SENT)
+refuses("Telegram fails, mail goes", lambda: a.day_report_send(y, True), "ушёл на почту, но не везде")
+st = a._daily.report_state(y)
+check("only Telegram waits", st["status"] == "error" and json.loads(st["channels"]) == {"mail": "sent", "tg": "error"} and "«Старт»" in st["error"], st)
+TG["fail"] = None; TG["calls"].clear(); n = len(SENT)
+st = a._daily.send(y, {}, "Тест")
+check("retry sends Telegram only", st["status"] == "sent" and len(SENT) == n and any(c[0] == "sendMessage" for c in TG["calls"]), st)
+TG["calls"].clear()
+daily.tg_send("123456:ABCdef", [501], "строка\n" * 1500)
+check("a long report goes in parts", sum(1 for c in TG["calls"] if c[0] == "sendMessage") >= 3)
+ps = daily.save_settings({"tg_token": "999:OTHER", "tg_on": False})
+check("another bot forgets the chats", ps["tg_chats"] == [] and ps["tg_bot"] == "")
+daily.save_settings({"tg_token": "123456:ABCdef", "tg_on": True, "tg_bot": "clinic_reports_bot", "tg_chats": [ch[0]]})
+
 # ------------------------------------------------------------------ rights over HTTP
-new = ["day_expenses", "day_expense_save", "day_expense_delete", "day_report", "day_report_send", "day_report_settings", "day_report_settings_save"]
+new = ["day_expenses", "day_expense_save", "day_expense_delete", "day_report", "day_report_send", "day_report_settings", "day_report_settings_save", "day_report_tg_check", "day_report_tg_chats"]
 check("every new method has a right", all(m in auth.METHOD_PERMS for m in new) and all(hasattr(a, m) for m in new))
 check("changes are in the journal", all(m in auth.AUDITED for m in ("day_expense_save", "day_expense_delete", "day_report_send", "day_report_settings_save")))
 check("Excel has its own right", auth.METHOD_PERMS["export_xlsx"] == "export")
@@ -253,6 +319,21 @@ check("deleting an empty position", call("auth", "role_delete", nurse["key"], to
 au = [x["action"] for x in d.q("SELECT action FROM audit ORDER BY id")]
 check("positions in the journal", "Изменены права должности" in au and "Удалена должность" in au and "Расход за день" in au, au[-8:])
 srv.stop()
+
+# ------------------------------------------------------------------ 2.14.1: nobody takes the program's port over
+import server as servermod  # noqa: E402
+sk = socket.socket(); sk.bind(("127.0.0.1", 0)); P2 = sk.getsockname()[1]; sk.close()
+own = servermod._ExclusiveServer(("0.0.0.0", P2), None, bind_and_activate=False)
+own.server_bind()  # bound like the program, not listening (no firewall question in a test)
+thief = socket.socket()
+try:
+    thief.bind(("127.0.0.1", P2))
+    stolen = True
+except OSError:
+    stolen = False
+thief.close()
+own.server_close()
+check("another process cannot take 127.0.0.1 on the program's port", not stolen)
 
 print(f"OK: {OK[0]}  FAIL: {len(FAIL)}")
 for f in FAIL:

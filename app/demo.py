@@ -178,7 +178,8 @@ def ensure_stock(stock):
             day = (today - timedelta(days=days)).isoformat()
             lines = [m for i, m in enumerate(DEMO_MATERIALS) if i % 2 == n]
             total = sum(m[6] * m[7] for m in lines)
-            c.execute("INSERT INTO stock_docs VALUES(?,?,?,?,?,?,?,?,?,?)",
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at)
+                         VALUES(?,?,?,?,?,?,?,?,?,?)""",
                       (f"demo_r{n}", "receipt", f"{1040 + n * 37}", day, sup, "", "", total, "Демо", f"{day} 10:00:00"))
             for m in lines:
                 c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",

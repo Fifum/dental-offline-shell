@@ -16,7 +16,8 @@
 .mv-inventory,.mv-status,.mv-move{background:var(--warn-soft);color:var(--warn)}
 .mv-writeoff.mv{font-weight:600}
 .doc-lines td{vertical-align:middle}
-.doc-lines .input{height:34px}
+.doc-lines .input{height:34px;width:100%;min-width:0}
+.doc-lines td:first-child .input{min-width:220px}
 .eq-kv{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:2px 16px}
 .eq-kv dt{color:var(--muted);font-size:12px;margin-top:6px}
 .eq-kv dd{margin:0;font-weight:500}

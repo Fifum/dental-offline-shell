@@ -44,7 +44,8 @@ async function stockBalance() {
   const q = S.stockQ || "", low = !!S.stockLow, exp = !!S.stockExp;
   const rows = await api.materials(q, low, exp);
   S.stockRows = rows;
-  const edit = can("stock_edit");
+  const edit = can("stock_edit"), acc = can("accounting") && rows.some(m => m.balance_doc !== undefined);
+  const docDiff = acc && rows.some(m => Math.abs(m.balance - m.balance_doc) > 1e-9);
   body.innerHTML = statRow() + `<div class="tab-tools">
       <div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="stQ" placeholder="Материал, код, штрихкод" value="${esc(q)}"></div>
       <label class="switch-row" style="margin:0"><input type="checkbox" id="stLow" ${low ? "checked" : ""}><span class="sw"></span>Только заканчиваются</label>
@@ -53,10 +54,12 @@ async function stockBalance() {
       <button class="btn ghost" id="stOrder" title="Что и сколько заказать, у кого дешевле">Заказ поставщикам</button>
       ${edit && STK.expired ? `<button class="btn ghost danger-t" id="stExpOut">Списать просроченное</button>` : ""}
       ${edit ? `<button class="btn" id="stIn">Приход</button><button class="btn ghost" id="stOut">Списание</button><button class="btn ghost" id="stInv">Инвентаризация</button><button class="btn ghost" id="stNew">Новый материал</button>` : ""}
-      <button class="icon-btn" id="stPrint" title="Печать остатков"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button></div>
-    <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Код</th><th>Материал</th><th>Раздел</th><th class="num">Остаток</th><th class="num">Минимум</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr></thead><tbody>${
+      <button class="icon-btn" id="stPrint" title="Печать остатков"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button>
+      ${acc ? `<button class="btn ghost small" id="stPrintDoc" title="Остатки только по документам — для бухгалтерии">Печать по документам</button>` : ""}</div>
+    ${docDiff ? `<div class="warn-line">Есть приход или списание без документов: остаток «по документам» отличается от фактического. Его видите только вы (право «Бухгалтерия»).</div>` : ""}
+    <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Код</th><th>Материал</th><th>Раздел</th><th class="num">Остаток</th>${docDiff ? '<th class="num" title="Только движения с документами">По документам</th>' : ""}<th class="num">Минимум</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr></thead><tbody>${
       rows.map(m => `<tr data-m="${esc(m.id)}" class="${m.balance < 0 ? "neg" : ""} ${m.exp_state ? "exp-" + m.exp_state : ""}"><td class="muted">${esc(m.code)}</td><td class="lnk"><b>${esc(m.name)}</b>${expLine(m)}</td><td>${esc(m.category)}</td>
-        <td class="num"><b>${qtyFmt(m.balance, m.unit)}</b></td><td class="num muted">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td><td class="num">${money(m.price)}</td><td class="num">${money(m.value)}</td>
+        <td class="num"><b>${qtyFmt(m.balance, m.unit)}</b></td>${docDiff ? `<td class="num ${Math.abs(m.balance - m.balance_doc) > 1e-9 ? "warn-t" : "muted"}">${qtyFmt(m.balance_doc, m.unit)}</td>` : ""}<td class="num muted">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td><td class="num">${money(m.price)}</td><td class="num">${money(m.value)}</td>
         <td class="pills">${m.balance < 0 ? '<span class="pill st-cancel">меньше нуля</span>' : m.low ? '<span class="pill st-cancel">заканчивается</span>' : m.exp_state ? "" : '<span class="pill st-ok">есть</span>'}${m.exp_state === "expired" ? '<span class="pill exp-pill expired">просрочено</span>' : m.exp_state === "soon" ? '<span class="pill exp-pill soon">истекает срок</span>' : ""}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>${q || low || exp ? "Ничего не найдено" : "Склад пока пуст"}</b><span>${edit ? "Добавьте материалы и оформите приход по накладной" : ""}</span></div>`}</div>`;
   let t; $("#stQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { S.stockQ = e.target.value; stockBalance().then(() => { const i = $("#stQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
@@ -65,7 +68,7 @@ async function stockBalance() {
   $$("#stockBody tr[data-m]").forEach(tr => tr.onclick = () => openMaterial(tr.dataset.m));
   const on = (id, f) => { const el = $(id); if (el) el.onclick = f; };
   on("#stIn", () => openStockDoc("receipt")); on("#stOut", () => openStockDoc("writeoff")); on("#stInv", openInventory);
-  on("#stNew", () => editMaterial({})); on("#stPrint", printBalance);
+  on("#stNew", () => editMaterial({})); on("#stPrint", () => printBalance()); on("#stPrintDoc", () => printBalance(true));
   on("#stOrder", () => openPurchase()); on("#stExpOut", writeOffExpired);
 }
 
@@ -103,7 +106,7 @@ async function openMaterial(id) {
   const edit = can("stock_edit");
   const box = modal(`<div class="m-h"><h3>${esc(m.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
-      <div class="stat-row"><div class="stat"><span>Остаток</span><b>${qtyFmt(m.balance, m.unit)}</b></div><div class="stat"><span>Минимум</span><b>${m.min_qty ? qtyFmt(m.min_qty, m.unit) : "—"}</b></div>
+      <div class="stat-row"><div class="stat"><span>Остаток</span><b>${qtyFmt(m.balance, m.unit)}</b>${m.balance_doc !== undefined && Math.abs(m.balance - m.balance_doc) > 1e-9 ? `<small class="muted">по документам: ${qtyFmt(m.balance_doc, m.unit)}</small>` : ""}</div><div class="stat"><span>Минимум</span><b>${m.min_qty ? qtyFmt(m.min_qty, m.unit) : "—"}</b></div>
         <div class="stat"><span>Цена</span><b>${money(m.price)}</b></div><div class="stat"><span>Сумма</span><b>${money(m.value)}</b></div></div>
       <h4 class="sub-h">Партии и сроки годности</h4>
       ${lotsTable(m.lot_list, m.unit, edit)}
@@ -127,7 +130,7 @@ function movesTable(moves, withMaterial = true) {
   return `<table class="tbl compact"><thead><tr><th>Когда</th><th>Операция</th>${withMaterial ? "<th>Материал</th>" : ""}<th class="num">Кол-во</th><th>Основание</th><th>Сотрудник</th></tr></thead><tbody>${
     moves.map(x => `<tr><td>${fmtDT(x.at)}</td><td><span class="mv mv-${x.kind}">${esc(x.kind_title)}</span></td>${withMaterial ? `<td>${esc(x.name)}</td>` : ""}
       <td class="num ${x.qty < 0 ? "bad-t" : "ok-t"}"><b>${x.qty > 0 ? "+" : ""}${qtyFmt(x.qty, x.unit)}</b></td>
-      <td class="muted">${esc([x.doc_number ? "№ " + x.doc_number : "", x.patient_name || "", x.reason || ""].filter(Boolean).join(" · "))}</td><td class="muted">${esc(x.user_name || "")}</td></tr>`).join("")}</tbody></table>`;
+      <td class="muted">${esc([x.doc_number ? "№ " + x.doc_number : "", x.patient_name || "", x.reason || ""].filter(Boolean).join(" · "))}${x.nodoc ? " " + '<span class="pill dx-nodoc">без документа</span>' : ""}</td><td class="muted">${esc(x.user_name || "")}</td></tr>`).join("")}</tbody></table>`;
 }
 
 /* ---------------------------------------------- receipt and write-off */
@@ -147,6 +150,9 @@ async function openStockDoc(kind, preset, opts = {}) {
       <table class="tbl compact doc-lines"><thead><tr><th>Материал</th><th class="num">Остаток</th>${isIn ? `<th style="width:120px">Партия</th><th style="width:150px">Годен до</th>` : ""}<th class="num" style="width:110px">Количество</th>${isIn ? `<th class="num" style="width:120px">Цена, ₽</th><th class="num">Сумма</th>` : ""}<th></th></tr></thead><tbody id="dLines"></tbody></table>
       <div><button class="btn ghost small" id="dAdd">+ Ещё материал</button></div>
       <label class="fl">Комментарий<input class="input" id="dCom" value="${esc(opts.comment || "")}"></label>
+      <div class="nodoc-row"><label class="dx-doc"><input type="checkbox" id="dNodoc">${isIn ? "Без накладной (без документов)" : "Без акта (без документов)"}</label>
+        ${isIn && canAny("expenses_day", "accounting") ? `<label class="fl inline">Записать в расходы за день<select class="input" id="dPay"><option value="">— не записывать —</option>${["Наличные из кассы", "Карта клиники", "Перевод", "Свои деньги сотрудника"].map(m => `<option>${m}</option>`).join("")}</select></label>` : ""}
+        <span class="muted">${isIn ? "Материал всё равно придёт на склад; в остатке «по документам» его не будет." : "Материал уйдёт со склада без акта; номер акта не займёт."}</span></div>
       <div class="auth-err" id="dErr"></div></div>
     <div class="m-f"><span class="muted" id="dTotal"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="dOk">${isIn ? "Оприходовать" : "Списать"}</button></div>`, {wide: true});
   let byId = Object.fromEntries(mats.map(m => [m.id, m]));
@@ -202,13 +208,14 @@ async function openStockDoc(kind, preset, opts = {}) {
   }
   $("#dOk", box).onclick = async () => {
     const lines = st.lines.filter(l => l.material_id);
-    const f = {date: $("#dDate").value, comment: $("#dCom").value, lines};
+    const nodoc = $("#dNodoc").checked, pay = $("#dPay") ? $("#dPay").value : "";
+    const f = {date: $("#dDate").value, comment: $("#dCom").value, lines, nodoc};
     try {
-      const id = isIn ? await api.stock_receive({...f, supplier_id: $("#dSup").value, number: $("#dNum").value})
+      const id = isIn ? await api.stock_receive({...f, supplier_id: $("#dSup").value, number: $("#dNum").value, pay})
         : await api.stock_write_off({...f, reason: $("#dReason").value});
-      closeModal(); toast(isIn ? "Приход оформлен" : "Материалы списаны");
+      closeModal(); toast((isIn ? "Приход оформлен" : "Материалы списаны") + (nodoc ? " — без документов" : "") + (pay ? ", расход записан" : ""));
       loadStock();
-      if (!isIn && await ask("Распечатать акт списания?", {icon: "print", ok: "Распечатать", cancel: "Не сейчас", text: "Акт можно распечатать и позже: «Склад» → «Документы»."})) printStockDoc(id);
+      if (!isIn && !nodoc && await ask("Распечатать акт списания?", {icon: "print", ok: "Распечатать", cancel: "Не сейчас", text: "Акт можно распечатать и позже: «Склад» → «Документы»."})) printStockDoc(id);
     } catch (e) { $("#dErr").textContent = errText(e); }
   };
 }
@@ -221,7 +228,8 @@ async function openInventory() {
       <table class="tbl compact"><thead><tr><th>Материал</th><th class="num">По учёту</th><th class="num" style="width:140px">Фактически</th><th class="num">Разница</th></tr></thead><tbody>${
         mats.map(m => `<tr><td>${esc(m.name)}<small class="muted" style="display:block">${esc(m.category)}</small></td><td class="num">${qtyFmt(m.balance, m.unit)}</td>
           <td><input class="input num" type="number" step="any" min="0" data-im="${esc(m.id)}" data-b="${m.balance}"></td><td class="num" data-d="${esc(m.id)}"></td></tr>`).join("")}</tbody></table>
-      <label class="fl">Комментарий<input class="input" id="invCom"></label><div class="auth-err" id="invErr"></div></div>
+      <label class="fl">Комментарий<input class="input" id="invCom"></label>
+      <label class="dx-doc"><input type="checkbox" id="invNodoc">Внутренняя инвентаризация (без документов)</label><div class="auth-err" id="invErr"></div></div>
     <div class="m-f"><span class="muted" id="invCnt"></span><button class="btn ghost" id="invSheet">Печать бланка</button><button class="btn ghost" data-close>Отмена</button><button class="btn" id="invOk">Провести</button></div>`, {wide: true});
   const recount = () => { let n = 0;
     $$("[data-im]", box).forEach(i => { const d = $(`[data-d="${i.dataset.im}"]`, box); if (i.value === "") { d.textContent = ""; return; } n++;
@@ -231,7 +239,7 @@ async function openInventory() {
   $("#invSheet", box).onclick = () => printInventorySheet(mats);
   $("#invOk", box).onclick = async () => {
     try {
-      const r = await api.stock_inventory({comment: $("#invCom").value, lines: $$("[data-im]", box).map(i => ({material_id: i.dataset.im, actual: i.value}))});
+      const r = await api.stock_inventory({comment: $("#invCom").value, nodoc: $("#invNodoc").checked, lines: $$("[data-im]", box).map(i => ({material_id: i.dataset.im, actual: i.value}))});
       closeModal(); toast(r.diffs.length ? `Проведено. Расхождений: ${r.diffs.length}` : "Проведено. Расхождений нет"); loadStock();
     } catch (e) { $("#invErr").textContent = errText(e); }
   };
@@ -243,7 +251,7 @@ async function stockDocs() {
   const rows = await api.stock_docs(kind || null);
   $("#stockBody").innerHTML = `<div class="tab-tools"><div class="seg" id="sdKind">${[["", "Все"], ["receipt", "Приход"], ["writeoff", "Списание"], ["inventory", "Инвентаризация"]].map(([k, t]) => `<button data-k="${k}" class="${k === kind ? "on" : ""}">${t}</button>`).join("")}</div></div>
     <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Дата</th><th>Документ</th><th>№</th><th>Поставщик / причина</th><th class="num">Строк</th><th class="num">Сумма</th><th>Сотрудник</th></tr></thead><tbody>${
-      rows.map(d => `<tr data-d="${esc(d.id)}"><td>${fmtDate(d.date)}</td><td class="lnk"><b>${esc(DOC_KIND[d.kind] || d.kind)}</b></td><td>${esc(d.number || "—")}</td>
+      rows.map(d => `<tr data-d="${esc(d.id)}"><td>${fmtDate(d.date)}</td><td class="lnk"><b>${esc(DOC_KIND[d.kind] || d.kind)}</b>${d.nodoc ? " " + '<span class="pill dx-nodoc">без документа</span>' : ""}</td><td>${esc(d.number || "—")}</td>
         <td>${esc(d.supplier_name || d.reason || "")}</td><td class="num">${d.lines}</td><td class="num">${d.total ? money(d.total) : "—"}</td><td class="muted">${esc(d.user_name || "")}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>Документов пока нет</b></div>`}</div>`;
   $$("#sdKind button").forEach(b => b.onclick = () => { S.stockDocKind = b.dataset.k; stockDocs(); });
@@ -257,8 +265,8 @@ async function openStockDocView(id) {
       <table class="tbl compact"><thead><tr><th>Материал</th><th class="num">Кол-во</th><th class="num">Цена</th><th class="num">Сумма</th></tr></thead><tbody>${
         d.moves.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty > 0 && d.kind === "inventory" ? "+" : ""}${qtyFmt(d.kind === "writeoff" ? -x.qty : x.qty, x.unit)}</td><td class="num">${money(x.price)}</td><td class="num">${money(Math.abs(x.qty) * x.price)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">Расхождений не было</td></tr>`}</tbody></table>
       ${d.comment ? `<div class="muted">${esc(d.comment)}</div>` : ""}</div>
-    <div class="m-f"><span class="muted">Оформил: ${esc(d.user_name || "—")}, ${fmtDT(d.created_at)}</span><button class="btn ghost" data-close>Закрыть</button><button class="btn" id="sdPrint">Печать</button></div>`, {wide: true});
-  $("#sdPrint").onclick = () => printStockDoc(id);
+    <div class="m-f"><span class="muted">Оформил: ${esc(d.user_name || "—")}, ${fmtDT(d.created_at)}${d.nodoc ? " · без документов, не печатается" : ""}</span><button class="btn ghost" data-close>Закрыть</button>${d.nodoc ? "" : `<button class="btn" id="sdPrint">Печать</button>`}</div>`, {wide: true});
+  const sp = $("#sdPrint"); if (sp) sp.onclick = () => printStockDoc(id);
 }
 
 /* ------------------------------------------------------- moves */
@@ -443,8 +451,9 @@ async function printStockDoc(id) {
       : signLines([{role: "Принял", name: d.user_name}, {role: "Сдал (поставщик)"}])}`;
   window.print();
 }
-async function printBalance() {
-  const rows = S.stockRows || [];
+async function printBalance(byDocs) {
+  /* byDocs (2.14.1, «Бухгалтерия»): only the documented moves — the balance for the accountant */
+  const rows = (S.stockRows || []).map(m => byDocs ? {...m, balance: m.balance_doc, value: m.value_doc} : m);
   $("#printArea").innerHTML = `${await clinicHead()}<h2>Остатки материалов на ${fmtDT(nowLocal())}</h2>
     <table><tr><th>Код</th><th>Материал</th><th>Остаток</th><th>Минимум</th><th>Цена</th><th>Сумма</th></tr>${rows.map(m => `<tr><td>${esc(m.code)}</td><td>${esc(m.name)}</td><td>${qtyFmt(m.balance, m.unit)}</td><td>${m.min_qty ? qtyFmt(m.min_qty) : ""}</td><td>${money(m.price)}</td><td>${money(m.value)}</td></tr>`).join("")}
     <tr><td colspan="5" style="text-align:right"><b>Итого</b></td><td><b>${money(rows.reduce((a, m) => a + (m.balance > 0 ? m.value : 0), 0))}</b></td></tr></table>`;

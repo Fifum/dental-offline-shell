@@ -6,6 +6,10 @@ consumption norms; billing a service writes the materials off automatically (and
 deleting the invoice puts them back).
 
 Equipment: a register with inventory numbers, location, service history and a write-off act.
+
+2.14.1 «без документа»: a receipt bought without an invoice, a write-off without an act or a stock count may be marked
+`stock_docs.nodoc = 1`. The stock itself is always the real one (everything); «по документам» is the balance of the
+documented moves only (plus services and starting balances) — seen with the «Бухгалтерия» right, for the accountant.
 """
 from __future__ import annotations
 
@@ -152,20 +156,25 @@ class Stock:
     def __init__(self, db):
         self.db = db
         db.conn.executescript(SCHEMA)
+        if "nodoc" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_docs)")}:  # 2.14.1: without a document
+            db.conn.execute("ALTER TABLE stock_docs ADD COLUMN nodoc INTEGER DEFAULT 0")
         db.conn.commit()
 
     # ============================================================ materials --
     def materials(self, q="", only_low=False, with_inactive=False, only_expiring=False):
         rows = self.db.q("""
             SELECT m.*, COALESCE(SUM(s.qty), 0) AS balance,
+                   COALESCE(SUM(CASE WHEN COALESCE(d.nodoc, 0) = 0 THEN s.qty END), 0) AS balance_doc,
                    MAX(CASE WHEN s.kind IN ('service','writeoff') THEN s.at END) AS last_used
-            FROM materials m LEFT JOIN stock_moves s ON s.material_id = m.id
+            FROM materials m LEFT JOIN stock_moves s ON s.material_id = m.id LEFT JOIN stock_docs d ON d.id = s.doc_id
             WHERE (? OR m.active = 1)
             GROUP BY m.id ORDER BY m.category, m.name""", (1 if with_inactive else 0,))
         q = (q or "").strip().lower()
         lots = self._lots_by_material({r["id"]: r["balance"] for r in rows})
         for r in rows:
             r["balance"] = round(r["balance"], 3)
+            r["balance_doc"] = round(r["balance_doc"], 3)   # by documents only (2.14.1)
+            r["value_doc"] = round(r["balance_doc"] * (r["price"] or 0), 2)
             r["low"] = r["min_qty"] > 0 and r["balance"] <= r["min_qty"]
             r["value"] = round(r["balance"] * (r["price"] or 0), 2)
             ls = [x for x in lots.get(r["id"], {}).get("lots", []) if x["left"] > 0]
@@ -341,9 +350,10 @@ class Stock:
         day = f.get("date") or date.today().isoformat()
         total = round(sum(q * p for _, q, p in lines), 2)
         with self.db.tx() as c:
-            c.execute("INSERT INTO stock_docs VALUES(?,?,?,?,?,?,?,?,?,?)",
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                       (did, "receipt", _clean(f.get("number"), 50), day, f.get("supplier_id") or None, "",
-                       _clean(f.get("comment"), 500), total, user, at))
+                       _clean(f.get("comment"), 500), total, user, at, 1 if f.get("nodoc") else 0))
             for (mid, q, p), (lot, exp) in zip(lines, lots):
                 cur = c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",
                                 (mid, q, p, "receipt", did, user, f"{day} {at[11:]}"))
@@ -391,9 +401,10 @@ class Stock:
         prices = {r["id"]: r["price"] for r in self.db.q("SELECT id, price FROM materials")}
         total = round(sum(q * (prices.get(mid) or 0) for mid, q, _ in lines), 2)
         with self.db.tx() as c:
-            c.execute("INSERT INTO stock_docs VALUES(?,?,?,?,?,?,?,?,?,?)",
-                      (did, "writeoff", self._next_number("writeoff"), day, None, reason, _clean(f.get("comment"), 500),
-                       total, user, at))
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                      (did, "writeoff", "" if f.get("nodoc") else self._next_number("writeoff"), day, None, reason,
+                       _clean(f.get("comment"), 500), total, user, at, 1 if f.get("nodoc") else 0))
             for (mid, q, _), g in zip(lines, lot_of):
                 why = reason + (f" (партия {g['lot']})" if g and g["lot"] else "")
                 cur = c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at) VALUES(?,?,?,?,?,?,?,?)",
@@ -429,14 +440,28 @@ class Stock:
                     c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at) VALUES(?,?,?,?,?,?,?,?)",
                               (mid, d, price, "inventory", did, "Инвентаризация", user, at))
                     diffs.append({"material_id": mid, "book": book, "actual": actual, "diff": d})
-            c.execute("INSERT INTO stock_docs VALUES(?,?,?,?,?,?,?,?,?,?)",
-                      (did, "inventory", self._next_number("inventory"), at[:10], None, "Инвентаризация",
-                       _clean(f.get("comment"), 500), 0, user, at))
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                      (did, "inventory", "" if f.get("nodoc") else self._next_number("inventory"), at[:10], None, "Инвентаризация",
+                       _clean(f.get("comment"), 500), 0, user, at, 1 if f.get("nodoc") else 0))
         return {"id": did, "counted": len(counted), "diffs": diffs}
 
     def _next_number(self, kind):
-        n = self.db.one("SELECT COUNT(*) AS n FROM stock_docs WHERE kind=?", (kind,))["n"]
+        """Acts are numbered among documented ones only: an internal write-off does not leave a gap in them."""
+        n = self.db.one("SELECT COUNT(*) AS n FROM stock_docs WHERE kind=? AND COALESCE(nodoc,0)=0", (kind,))["n"]
         return str(n + 1)
+
+    def day_docs(self, day) -> dict:
+        """Receipts and write-offs of a day for the day report: sums with and without documents."""
+        rows = self.db.q("""SELECT d.kind, d.number, d.total, COALESCE(d.nodoc,0) AS nodoc, d.reason, d.user_name, s.name AS supplier_name
+                            FROM stock_docs d LEFT JOIN suppliers s ON s.id=d.supplier_id
+                            WHERE d.date=? AND d.kind IN ('receipt','writeoff') ORDER BY d.created_at""", (day,))
+        svc = self.db.one("""SELECT COALESCE(SUM(-qty*price),0) AS v FROM stock_moves WHERE kind='service' AND substr(at,1,10)=?""", (day,))["v"]
+        out = {"rows": rows, "service": round(svc or 0, 2)}
+        for k in ("receipt", "writeoff"):
+            out[k] = round(sum(r["total"] or 0 for r in rows if r["kind"] == k), 2)
+            out[k + "_nodoc"] = round(sum(r["total"] or 0 for r in rows if r["kind"] == k and r["nodoc"]), 2)
+        return out
 
     def docs(self, kind=None, limit=200):
         sql = """SELECT d.*, s.name AS supplier_name, (SELECT COUNT(*) FROM stock_moves m WHERE m.doc_id=d.id) AS lines
@@ -456,7 +481,7 @@ class Stock:
         return d
 
     def moves(self, material_id=None, day_from=None, day_to=None, kind=None, limit=500):
-        sql = """SELECT m.*, t.name, t.unit, p.name AS patient_name, d.number AS doc_number
+        sql = """SELECT m.*, t.name, t.unit, p.name AS patient_name, d.number AS doc_number, COALESCE(d.nodoc,0) AS nodoc
                  FROM stock_moves m JOIN materials t ON t.id = m.material_id
                  LEFT JOIN patients p ON p.id = m.patient_id LEFT JOIN stock_docs d ON d.id = m.doc_id WHERE 1=1"""
         args = []

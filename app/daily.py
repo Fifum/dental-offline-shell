@@ -8,7 +8,11 @@ file. Without internet the report waits and goes as soon as the connection is ba
 
 Mail goes through an ordinary mailbox of the clinic (Yandex, Mail.ru, Gmail…) with an application password,
 which is stored encrypted (DPAPI). Settings are kept on the computer that sends (usually the front desk).
-`day_reports` (which day was sent) syncs between laptops, so a second computer does not send the same day."""
+`day_reports` (which day was sent) syncs between laptops, so a second computer does not send the same day.
+
+2.14.1: the report can also go to Telegram through the clinic's own bot (Bot API over HTTPS, no server of ours):
+the owner makes a bot at @BotFather, presses «Старт» in it, and the program finds that chat. Mail and Telegram
+are separate channels: if one of them failed, only that one is sent again."""
 from __future__ import annotations
 
 import logging
@@ -22,17 +26,21 @@ from email.utils import formataddr, make_msgid
 
 import config
 
+TG_API = "https://api.telegram.org"
+TG_LIMIT = 3900  # one Telegram message holds 4096 characters
+
 log = logging.getLogger("daily")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS day_reports(
-    day TEXT PRIMARY KEY, status TEXT, sent_at TEXT, sent_to TEXT, by TEXT, error TEXT, totals TEXT, updated_at TEXT);
+    day TEXT PRIMARY KEY, status TEXT, sent_at TEXT, sent_to TEXT, by TEXT, error TEXT, totals TEXT, updated_at TEXT,
+    channels TEXT);
 """
 METHODS = ["Наличные из кассы", "Карта клиники", "Перевод", "Свои деньги сотрудника"]
 # what the front desk usually pays for during a day — first in the list
 DAY_CATEGORIES = ["Хозяйственные расходы", "Транспорт и доставка", "Материалы и закупки", "Ремонт и обслуживание", "Прочее"]
 DEFAULTS = {"enabled": False, "to": "", "host": "smtp.yandex.ru", "port": 465, "security": "ssl", "login": "", "pass_enc": "",
-            "time": "21:00", "on_close": True}
+            "time": "21:00", "on_close": True, "tg_on": False, "tg_token_enc": "", "tg_bot": "", "tg_chats": []}
 PROVIDERS = {"yandex": ("smtp.yandex.ru", 465, "ssl"), "mail": ("smtp.mail.ru", 465, "ssl"), "gmail": ("smtp.gmail.com", 465, "ssl")}
 
 
@@ -54,8 +62,14 @@ def settings() -> dict:
 
 def public_settings() -> dict:
     s = settings()
-    return {k: s[k] for k in ("enabled", "to", "host", "port", "security", "login", "time", "on_close")} | {"has_pass": bool(s["pass_enc"]),
-                                                                                                         "methods": METHODS}
+    return {k: s[k] for k in ("enabled", "to", "host", "port", "security", "login", "time", "on_close", "tg_on", "tg_bot", "tg_chats")} | {
+        "has_pass": bool(s["pass_enc"]), "has_tg_token": bool(s["tg_token_enc"]), "methods": METHODS}
+
+
+def channels(s=None) -> list[str]:
+    """Where the report goes: 'mail', 'tg'."""
+    s = s or settings()
+    return [c for c, on in (("mail", s["enabled"]), ("tg", s["tg_on"])) if on]
 
 
 def save_settings(f: dict) -> dict:
@@ -69,11 +83,25 @@ def save_settings(f: dict) -> dict:
             new["port"] = int(f["port"])
         except (TypeError, ValueError):
             raise ValueError("Порт — число, обычно 465") from None
-    for k in ("enabled", "on_close"):
+    for k in ("enabled", "on_close", "tg_on"):
         if k in f:
             new[k] = bool(f[k])
     if f.get("password"):
         new["pass_enc"] = config.protect(str(f["password"]).strip())
+    if f.get("tg_token"):
+        token = "".join(str(f["tg_token"]).split())
+        if ":" not in token:
+            raise ValueError("Токен бота выглядит так: 1234567890:AA… — скопируйте его из сообщения @BotFather целиком")
+        if config.unprotect(cur["tg_token_enc"] or "") != token:
+            new.update(tg_token_enc=config.protect(token), tg_bot="", tg_chats=[])  # another bot: its chats are other
+    if isinstance(f.get("tg_chats"), list):
+        chats = []
+        for c in f["tg_chats"]:
+            if isinstance(c, dict) and str(c.get("id") or "").lstrip("-").isdigit():
+                chats.append({"id": int(c["id"]), "name": str(c.get("name") or "")[:80]})
+        new["tg_chats"] = chats[:10]
+    if "tg_bot" in f:
+        new["tg_bot"] = str(f["tg_bot"] or "")[:64]
     if new["security"] not in ("ssl", "starttls", "none"):
         new["security"] = "ssl"
     try:
@@ -86,6 +114,11 @@ def save_settings(f: dict) -> dict:
             raise ValueError("Укажите почту, куда отправлять отчёт")
         if not new["host"] or not new["login"] or not new["pass_enc"]:
             raise ValueError("Укажите почтовый сервер, ящик-отправитель и его пароль приложения")
+    if new["tg_on"]:
+        if not new["tg_token_enc"]:
+            raise ValueError("Вставьте токен бота от @BotFather")
+        if not new["tg_chats"]:
+            raise ValueError("Выберите, кому бот отправляет отчёт: владелец пишет боту «Старт», затем «Найти, кто написал боту»")
     config.save_settings({"day_report": new})
     return public_settings()
 
@@ -108,6 +141,8 @@ class Daily:
             for col in ("doc INTEGER", "login TEXT"):  # 2.14: with or without a document, who wrote it down
                 if col.split()[0] not in have:
                     db.conn.execute(f"ALTER TABLE expenses ADD COLUMN {col}")
+            if "channels" not in {r[1] for r in db.conn.execute("PRAGMA table_info(day_reports)")}:  # 2.14.1: mail and Telegram
+                db.conn.execute("ALTER TABLE day_reports ADD COLUMN channels TEXT")
             db.conn.commit()
         self._last_tick = 0.0
         self._sending = threading.Lock()
@@ -204,8 +239,16 @@ class Daily:
                     day_shifts.append(self.fin.shift(s["id"]))
             except Exception:  # noqa: BLE001 — no money tables in a bare database
                 day_shifts = []
+        stock = None
+        if shifts:  # 2.14.1: receipts and write-offs of the day, with and without documents (the owner's full report)
+            try:
+                from stock import Stock  # noqa: PLC0415
+                stock = Stock(self.db).day_docs(day)
+            except Exception:  # noqa: BLE001 — a bare database without the stock
+                stock = None
         return {"day": day, "rows": rows, "total": round(doc + nodoc, 2), "doc": doc, "nodoc": nodoc,
-                "by_category": dict(sorted(by_cat.items(), key=lambda x: -x[1])), "by_user": by_user, "cash": cash or {}, "shifts": day_shifts}
+                "by_category": dict(sorted(by_cat.items(), key=lambda x: -x[1])), "by_user": by_user, "cash": cash or {}, "shifts": day_shifts,
+                "stock": stock}
 
     def text(self, rep) -> str:
         c = rep["cash"] or {}
@@ -230,6 +273,16 @@ class Daily:
                       + (f", закрыта {s['closed_at'][11:16]} ({s.get('closed_by') or '—'})" if s.get("closed_at") else ", не закрыта"),
                       f"  Наличных по расчёту: {_rub(s.get('expected_cash'))}"
                       + (f", пересчитано: {_rub(s['counted_cash'])}, разница: {_rub(s.get('diff_cash'))}" if s.get("counted_cash") is not None else "")]
+        st = rep.get("stock")
+        if st and (st["rows"] or st["service"]):
+            lines += ["", f"Склад: приход {_rub(st['receipt'])}" + (f" (без документов {_rub(st['receipt_nodoc'])})" if st["receipt_nodoc"] else "")
+                      + f", списание {_rub(st['writeoff'])}" + (f" (без документов {_rub(st['writeoff_nodoc'])})" if st["writeoff_nodoc"] else "")
+                      + (f", по услугам {_rub(st['service'])}" if st["service"] else "")]
+            for r in st["rows"]:
+                lines.append(f"  {'Приход' if r['kind'] == 'receipt' else 'Списание'}{' № ' + r['number'] if r['number'] else ''} — {_rub(r['total'])}"
+                             + (", без документа" if r["nodoc"] else "")
+                             + (f" — {r['supplier_name']}" if r["supplier_name"] else f" — {r['reason']}" if r["reason"] else "")
+                             + (f" ({r['user_name']})" if r["user_name"] else ""))
         lines += ["", "Отчёт отправлен программой автоматически. Файл Excel — во вложении."]
         return "\n".join(lines)
 
@@ -241,43 +294,68 @@ class Daily:
         c = rep["cash"] or {}
         if c:
             rows += [[], ["", "Поступило денег", c.get("money_total", c.get("total", 0))]] + [["", m, v] for m, v in (c.get("by_method") or {}).items() if v]
+        st = rep.get("stock")
+        if st and st["rows"]:
+            rows += [[], ["Склад"]] + [["", ("Приход" if r["kind"] == "receipt" else "Списание") + (f" № {r['number']}" if r["number"] else ""), r["total"] or 0,
+                                         r["supplier_name"] or r["reason"] or "", "нет" if r["nodoc"] else "есть", "", r["user_name"] or ""] for r in st["rows"]]
         return xlsx.build(f"Расходы {_fmt(rep['day'])}", ["Время", "Статья", "Сумма", "Как оплачено", "Документ", "Комментарий", "Кто внёс"], rows)
 
     # ------------------------------------------------------------ sending --
-    def report_state(self, day):
-        return self.db.one("SELECT * FROM day_reports WHERE day=?", (day,))
-
     def send(self, day, cash=None, who="", force=False) -> dict:
-        """Mail the report of the day. Raises ValueError with a plain reason when it cannot."""
+        """Send the report of the day to every channel that is on (mail, Telegram). A channel that already got this day
+        is skipped unless `force`. Raises ValueError with a plain reason when a channel failed (it is tried again later)."""
+        import json  # noqa: PLC0415
         s = settings()
-        to = _emails(s["to"])
-        if not to or not s["login"] or not s["pass_enc"]:
-            raise ValueError("Почта для отчёта не настроена: Настройки → «Касса и оплаты» → «Отчёт за день на почту»")
+        chans = channels(s)
+        if not chans:
+            raise ValueError("Отправка отчёта не настроена: Настройки → «Касса и оплаты» → «Отчёт за день»")
         st = self.report_state(day)
-        if st and st["status"] == "sent" and not force:
+        done = json.loads(st["channels"] or "{}") if st and st.get("channels") else ({"mail": "sent"} if st and st["status"] == "sent" else {})
+        todo = chans if force else [c for c in chans if done.get(c) != "sent"]
+        if not todo:
             return st
         if not self._sending.acquire(timeout=1):
             raise ValueError("Отчёт уже отправляется")
         try:
             rep = self.report(day, cash)
-            msg = EmailMessage()
-            clinic = config.BRAND.get("name") or "Клиника"
-            msg["Subject"] = f"{clinic}: отчёт за {_fmt(day)} — расходы {_rub(rep['total'])}"
-            msg["From"] = formataddr((clinic, s["login"]))
-            msg["To"] = ", ".join(to)
-            msg["Message-ID"] = make_msgid()
-            msg.set_content(self.text(rep))
-            msg.add_attachment(self.xlsx(rep), maintype="application", subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               filename=f"Отчёт {_fmt(day)}.xlsx")
-            try:
-                self._smtp(s, msg)
-            except (OSError, smtplib.SMTPException) as e:
-                err = _why(e)
-                self._mark(day, "error", to, who, err, rep)
-                raise ValueError(f"Отчёт не отправлен: {err}. Программа повторит отправку сама.") from e
-            return self._mark(day, "sent", to, who, None, rep)
+            text, data, fname = self.text(rep), self.xlsx(rep), f"Отчёт {_fmt(day)}.xlsx"
+            errs, where = [], dict(json.loads(st["sent_to"]) if st and str(st.get("sent_to") or "").startswith("{") else {})
+            for ch in todo:
+                try:
+                    if ch == "mail":
+                        to = _emails(s["to"])
+                        if not to or not s["login"] or not s["pass_enc"]:
+                            raise ValueError("почта не настроена")
+                        self._mail(s, rep, text, data, fname, to)
+                        where["mail"] = ", ".join(to)
+                    else:
+                        token = config.unprotect(s["tg_token_enc"] or "")
+                        names = tg_send(token, [c["id"] for c in s["tg_chats"]], f"{_title(rep)}\n\n{text}", data, fname)
+                        where["tg"] = ", ".join(n or str(c["id"]) for n, c in zip(names, s["tg_chats"]))
+                    done[ch] = "sent"
+                except (OSError, smtplib.SMTPException, TgError, ValueError) as e:
+                    done[ch] = "error"
+                    errs.append(("почта: " if ch == "mail" else "Telegram: ") + (_why(e) if ch == "mail" else str(e)))
+            ok = all(done.get(c) == "sent" for c in chans)
+            st = self._mark(day, "sent" if ok else "error", where, who, "; ".join(errs) or None, rep, done)
+            if errs:
+                part = [c for c in todo if done.get(c) == "sent"]
+                head = f"Отчёт ушёл {'на почту' if part == ['mail'] else 'в Telegram'}, но не везде" if part else "Отчёт не отправлен"
+                raise ValueError(f"{head}: {'; '.join(errs)}. Программа повторит отправку сама.")
+            return st
         finally:
             self._sending.release()
+
+    def _mail(self, s, rep, text, data, fname, to):
+        msg = EmailMessage()
+        clinic = config.BRAND.get("name") or "Клиника"
+        msg["Subject"] = _title(rep)
+        msg["From"] = formataddr((clinic, s["login"]))
+        msg["To"] = ", ".join(to)
+        msg["Message-ID"] = make_msgid()
+        msg.set_content(text)
+        msg.add_attachment(data, maintype="application", subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=fname)
+        self._smtp(s, msg)
 
     @staticmethod
     def _smtp(s, msg):
@@ -303,20 +381,31 @@ class Daily:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _mark(self, day, status, to, who, err, rep):
+    def _mark(self, day, status, where, who, err, rep, done):
         import json  # noqa: PLC0415
         with self.db.tx() as c:
-            c.execute("""INSERT INTO day_reports(day, status, sent_at, sent_to, by, error, totals, updated_at) VALUES(?,?,?,?,?,?,?,?)
+            c.execute("""INSERT INTO day_reports(day, status, sent_at, sent_to, by, error, totals, updated_at, channels) VALUES(?,?,?,?,?,?,?,?,?)
                          ON CONFLICT(day) DO UPDATE SET status=excluded.status, sent_at=excluded.sent_at, sent_to=excluded.sent_to,
-                         by=excluded.by, error=excluded.error, totals=excluded.totals, updated_at=excluded.updated_at""",
-                      (day, status, _now() if status == "sent" else None, ", ".join(to), who or "", err,
-                       json.dumps({"total": rep["total"], "nodoc": rep["nodoc"]}), _now()))
+                         by=excluded.by, error=excluded.error, totals=excluded.totals, updated_at=excluded.updated_at, channels=excluded.channels""",
+                      (day, status, _now() if status == "sent" else None, json.dumps(where, ensure_ascii=False), who or "", err,
+                       json.dumps({"total": rep["total"], "nodoc": rep["nodoc"]}), _now(), json.dumps(done)))
         return self.report_state(day)
+
+    def report_state(self, day):
+        import json  # noqa: PLC0415
+        r = self.db.one("SELECT * FROM day_reports WHERE day=?", (day,))
+        if r:
+            try:
+                w = json.loads(r["sent_to"]) if str(r["sent_to"] or "").startswith("{") else {"mail": r["sent_to"]}
+            except ValueError:
+                w = {}
+            r["where"] = " · ".join(f"{'почта' if k == 'mail' else 'Telegram'}: {v}" for k, v in w.items() if v)
+        return r
 
     def due(self, now=None) -> list[str]:
         """Days whose report should go now: today after the set time, and up to 3 earlier days that did not go."""
         s = settings()
-        if not s["enabled"]:
+        if not channels(s):
             return []
         now = now or datetime.now()
         out = []
@@ -357,3 +446,80 @@ def _why(e) -> str:
     if isinstance(e, (TimeoutError, ConnectionError, OSError)) and not isinstance(e, smtplib.SMTPException):
         return "нет связи с почтовым сервером"
     return f"ошибка почты ({e.__class__.__name__})"
+
+
+def _title(rep) -> str:
+    return f"{config.BRAND.get('name') or 'Клиника'}: отчёт за {_fmt(rep['day'])} — расходы {_rub(rep['total'])}"
+
+
+# ---------------------------------------------------------------- Telegram --
+class TgError(Exception):
+    pass
+
+
+def _tg(token, method, data=None, files=None, timeout=30):
+    """One Bot API call → its «result». Errors in plain words."""
+    import requests  # noqa: PLC0415
+    if not token:
+        raise TgError("не указан токен бота")
+    try:
+        r = requests.post(f"{TG_API}/bot{token}/{method}", data=data, files=files, timeout=timeout)
+    except requests.RequestException as e:
+        raise TgError("нет связи с Telegram") from e
+    try:
+        j = r.json()
+    except ValueError:
+        j = {}
+    if r.status_code == 401 or r.status_code == 404:
+        raise TgError("Telegram не принял токен бота — скопируйте его из @BotFather заново")
+    if r.status_code == 403:
+        raise TgError("бот не может написать получателю: получатель должен открыть бота и нажать «Старт» (или бот заблокирован)")
+    if not j.get("ok"):
+        raise TgError(f"Telegram ответил ошибкой: {str(j.get('description') or r.status_code)[:120]}")
+    return j.get("result")
+
+
+def tg_check(token) -> dict:
+    """The bot behind the token: {'username', 'name', 'link'}."""
+    me = _tg(token, "getMe", timeout=15)
+    return {"username": me.get("username") or "", "name": me.get("first_name") or "", "link": f"https://t.me/{me.get('username') or ''}"}
+
+
+def tg_chats(token) -> list[dict]:
+    """Who wrote to the bot lately (pressed «Старт»): [{'id', 'name'}] — the owner picks who gets the report."""
+    out = {}
+    for u in _tg(token, "getUpdates", {"timeout": 0, "allowed_updates": '["message","my_chat_member"]'}, timeout=20) or []:
+        m = u.get("message") or (u.get("my_chat_member") or {})
+        c = m.get("chat") or {}
+        if c.get("id") is None:
+            continue
+        name = " ".join(x for x in (c.get("first_name"), c.get("last_name")) if x) or c.get("title") or ""
+        if c.get("username"):
+            name = f"{name} (@{c['username']})".strip()
+        out[c["id"]] = {"id": c["id"], "name": name or str(c["id"])}
+    return list(out.values())
+
+
+def tg_send(token, chat_ids, text, data=None, fname="Отчёт.xlsx") -> list[str]:
+    """The report text (in parts of up to 3900 characters) and the Excel file to every chat. → chat names."""
+    if not chat_ids:
+        raise TgError("не выбрано, кому отправлять")
+    parts, cur = [], ""
+    for line in text.split("\n"):
+        if len(cur) + len(line) + 1 > TG_LIMIT:
+            parts.append(cur)
+            cur = ""
+        cur += line + "\n"
+    parts.append(cur)
+    names = []
+    for cid in chat_ids:
+        res = None
+        for p in parts:
+            if p.strip():
+                res = _tg(token, "sendMessage", {"chat_id": cid, "text": p.strip(), "disable_web_page_preview": "true"})
+        if data:
+            _tg(token, "sendDocument", {"chat_id": cid}, files={"document": (fname, data,
+                                                                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}, timeout=60)
+        chat = (res or {}).get("chat") or {}
+        names.append(" ".join(x for x in (chat.get("first_name"), chat.get("last_name")) if x) or chat.get("title") or "")
+    return names

@@ -424,13 +424,16 @@ def delete(model: str):
 
 
 # ------------------------------------------------------------------- chat --
-def chat(messages, model: str, timeout=300) -> str:
+def chat(messages, model: str, timeout=300, max_tokens=None) -> str:
+    """max_tokens — the longest answer (Ollama's num_predict): a short text is short and quick."""
     import requests  # noqa: PLC0415
     b = ensure()
+    opts = {"temperature": 0.1, "num_ctx": CTX}
+    if max_tokens:
+        opts["num_predict"] = int(max_tokens)
     try:
         r = requests.post(f"{b}/api/chat", timeout=max(timeout, 300), json={
-            "model": model, "messages": messages, "stream": False, "keep_alive": "20m",
-            "options": {"temperature": 0.1, "num_ctx": CTX}})
+            "model": model, "messages": messages, "stream": False, "keep_alive": "20m", "options": opts})
     except requests.Timeout as e:
         raise ValueError("ИИ на этом компьютере думал слишком долго. Выберите модель «Быстрая» или сократите запись.") from e
     except requests.RequestException as e:

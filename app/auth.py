@@ -213,6 +213,7 @@ METHOD_PERMS = {
     "day_expense_delete": ("expenses_day", "accounting"), "day_report": ("expenses_day", "accounting", "cash_report"),
     "day_report_send": ("expenses_day", "accounting", "cash_report"), "day_report_settings": "settings",
     "day_report_settings_save": "settings",
+    "day_report_tg_check": "settings", "day_report_tg_chats": "settings",  # 2.14.1: the report in Telegram
     # stock and equipment
     "stock_summary": ("stock_view", "equipment"), "materials": ("stock_view", "stock_edit"),
     "material": ("stock_view", "stock_edit"), "stock_moves": ("stock_view", "stock_edit"),

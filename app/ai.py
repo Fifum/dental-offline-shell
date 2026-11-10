@@ -148,16 +148,59 @@ def clean_answer(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
-def generate(task: str, text: str, names=(), timeout=None, base=True) -> str:
+GREETING = re.compile(r"^\s*(?:(?:Здравствуйте|Добрый\s+день)(?:[\s,]+«?пациент\w*»?)?|(?:Уважаем\w*|Дорог\w*)(?:\s+[^\s,.!]+){0,4})"
+                      r"\s*[,.!]\s*", re.I)
+
+
+def tokens_for(chars: int) -> int:
+    """How many tokens a model may spend on a text of `chars` letters: a Russian token is 2.5–4 letters, plus a margin
+    so the model ends its sentence itself; what goes over the length is cut by fit()."""
+    return int(chars / 2.5) + 40
+
+
+def fit(text: str, limit: int) -> str:
+    """A text no longer than `limit` letters, cut at whole sentences (lines for a list), never in the middle of a word.
+    A reply cut by the token limit loses its unfinished tail."""
+    t = str(text or "").strip()
+    if not limit or len(t) <= limit:
+        return t
+    lines = t.split("\n")
+    if len(lines) > 1:  # a list or paragraphs: whole lines first
+        out = []
+        for ln in lines:
+            if len("\n".join(out + [ln])) > limit:
+                break
+            out.append(ln)
+        if out:
+            return "\n".join(out).strip()
+    parts = re.split(r"(?<=[.!?…])\s+", t)
+    out = ""
+    for p in parts:
+        if len((out + " " + p).strip()) > limit:
+            break
+        out = (out + " " + p).strip()
+    if out:
+        return out
+    cut = t[:limit - 1]
+    cut = cut[:cut.rfind(" ")] if " " in cut else cut
+    return cut.rstrip(" ,;:—-") + "…"
+
+
+def generate(task: str, text: str, names=(), timeout=None, base=True, max_chars=None) -> str:
     """A text from the model: `task` says what to write, `text` is the data (made anonymous here).
     base=False — without the common rules (translation: they say «write in Russian»).
+    max_chars — the longest text wanted: the model gets as many tokens and the reply is cut at whole sentences.
     Raises ValueError if the AI is off or fails."""
     s = settings()
     if not s["enabled"]:
         raise ValueError("ИИ выключен")
     msgs = [{"role": "system", "content": (BASE + "\n" if base else "") + task.strip()},
             {"role": "user", "content": _anonymize(str(text or ""), names)}]
-    out = clean_answer(_chat(msgs, {**s, "timeout": timeout or max(int(s.get("timeout") or 30), 60)}))
+    out = clean_answer(_chat(msgs, {**s, "timeout": timeout or max(int(s.get("timeout") or 30), 60),
+                                    "max_tokens": tokens_for(max_chars) if max_chars else None}))
+    if max_chars:
+        out = fit(GREETING.sub("", out, count=1).strip(), max_chars)
+        out = out[:1].upper() + out[1:]
     if not out:
         raise ValueError("ИИ вернул пустой ответ")
     return out
@@ -213,7 +256,7 @@ def _chat(messages, s=None) -> str:
     prov = s["provider"]
     if prov == "local":  # Ollama started by the program itself: nothing leaves the computer
         import llm_local  # noqa: PLC0415
-        return llm_local.chat(messages, s["model"], s.get("timeout", 30))
+        return llm_local.chat(messages, s["model"], s.get("timeout", 30), s.get("max_tokens"))
     http = _session()
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     base = (s.get("base_url") or PROVIDERS[prov]["base_url"]).rstrip("/")
@@ -232,9 +275,12 @@ def _chat(messages, s=None) -> str:
     for _ in range(4):
         reasoning = "max_completion_tokens" in params
         timeout = max(s.get("timeout", 30), 90) if reasoning else s.get("timeout", 30)
+        send = dict(params)
+        if s.get("max_tokens") and "max_tokens" in send:  # a short text gets a short limit (reasoning models keep theirs)
+            send["max_tokens"] = min(int(send["max_tokens"]), int(s["max_tokens"]))
         try:
             r = http.post(f"{base}/chat/completions", headers=headers, timeout=timeout,
-                          json={"model": model, "messages": messages, **params})
+                          json={"model": model, "messages": messages, **send})
         except requests.exceptions.SSLError as e:
             raise ValueError("Ошибка сертификата при подключении к ИИ-сервису") from e
         except requests.RequestException as e:

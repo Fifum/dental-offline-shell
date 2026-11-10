@@ -20,3 +20,18 @@ body.no-export [data-xls]{display:none!important}
 .pill.dx-nodoc{background:var(--warn-soft);color:var(--warn-ink,var(--warn));font-size:11px;padding:1px 8px}
 .dx-text{white-space:pre-wrap;font:13px/1.55 var(--font,inherit);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0 0 10px;max-height:52vh;overflow:auto}
 @media (max-width:1100px){.dx-add{grid-template-columns:1fr 1fr}}
+/* 2.14.1: the day report in Telegram and by e-mail */
+.dr-ch{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:8px 0 12px}
+.dr-steps{margin:6px 0 2px;padding-left:20px;font-size:13px;color:var(--ink2);line-height:1.55}
+.dr-steps li{margin:4px 0}
+.dr-row{gap:8px;margin-top:6px;align-items:center}
+.dr-row .input{width:300px}
+.dr-chats{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:6px}
+.dr-chat{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink)}
+.dr-chat input{accent-color:var(--accent)}
+/* 2.14.1: stock without documents */
+.nodoc-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin:6px 0 2px;padding:8px 12px;border:1px dashed var(--line);border-radius:8px}
+.nodoc-row .fl.inline{display:flex;align-items:center;gap:8px;margin:0;flex-direction:row;font-size:12.5px}
+.nodoc-row .fl.inline .input{width:auto}
+.nodoc-row .muted{font-size:12px}
+.warn-t{color:var(--warn-ink,var(--warn))}

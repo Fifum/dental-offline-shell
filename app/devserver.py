@@ -1,4 +1,6 @@
-"""Dev only: run the clinic server and open the UI in a normal browser (http://127.0.0.1:8765)."""
+"""Dev only: run the clinic server and open the UI in a normal browser (http://127.0.0.1:8775).
+
+Not 8765: that port belongs to the installed program on the developer's own computer (2.14.1)."""
 import os
 import sys
 import time
@@ -16,7 +18,7 @@ if __name__ == "__main__":
     db = DB()
     worker = SyncWorker(db)
     worker.start()
-    port = int(os.environ.get("PORT", 8765))
+    port = int(os.environ.get("PORT", 8775))
     api = Api(db, worker)
     ClinicServer(api, db, port=port, host=os.environ.get("HOST", "127.0.0.1")).start()
     os.environ.setdefault("DD_CLOUD_DEMO", "1")  # dev data is demo data: let it go to a test cloud

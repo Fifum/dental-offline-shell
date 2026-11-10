@@ -137,7 +137,7 @@ r = ask(f"расписание Гусевой на {vday.strftime('%d.%m')}")
 check("doctor's day", r["tool"] == "schedule" and any(x["go"] == {"visit": v1} and "Зарецкая" in x["sub"] for x in r["rows"])
       and "Гусева П. И." in r["text"], r)
 r = ask(f"свободное время у Гусевой {vday.strftime('%d.%m')}")
-check("free time skips the booked 11:00", "11:00" not in r["text"] and "11:30" in r["text"], r["text"])
+check("free time skips the booked 11:00", "11:00" not in r["text"] and "Свободное время" in r["text"], r["text"])  # demo visits fill other hours
 
 inv = a.save_invoice({"patient_id": pf, "doctor_id": GUS["id"], "items": [{"title": "Пломба", "price": 5000}]})
 a.add_payment({"invoice_id": inv, "patient_id": pf, "amount": 3000, "method": "Наличные"})
@@ -239,7 +239,7 @@ real_chat = ai._chat
 ai._chat = fake_chat
 config.save_settings({"ai": {**ai.DEFAULTS, "enabled": True, "provider": "openai", "base_url": "http://127.0.0.1:9", "model": "x"}})
 w = a.ai_write("recommendations", rid)
-check("memo by the AI", w["engine"] == "ai" and w["text"] == "— Не есть 2 часа.", w)
+check("memo by the AI, the «when to call» point kept", w["engine"] == "ai" and w["text"] == "— Не есть 2 часа.\n— " + ai_docs.URGENT, w)
 check("the model gets the clinic's standard advice", "Стандартные рекомендации клиники" in sent[-1][-1]["content"]
       and "Холод на щёку" in sent[-1][-1]["content"])
 check("no name or phone sent", "Зарецкая" not in json.dumps(sent[-1], ensure_ascii=False)
@@ -262,6 +262,32 @@ check("free answer cleaned", r["text"] == "Пульпит — воспалени
 check("clean_answer", ai.clean_answer("## Итог\n**Да**\n* пункт") == "Итог\nДа\n— пункт")
 pv = a.ai_plan_variant({"name": "Премиум", "items": [{"title": "Имплантат"}]})
 check("plan option by the AI", pv["engine"] == "ai")
+# 2.14.1: short texts — a limit of tokens for the model, the reply cut at whole sentences, no greeting
+LONG = ("Здравствуйте, Пациент. Предлагаем вам вариант лечения под названием «Премиум». Он включает установку имплантата "
+        "Straumann для зуба 36, а затем коронку из циркония на этом имплантате. Этот план обеспечит надёжную и долговечную "
+        "замену зуба, гарантия 5 лет. Лечение займёт около 4 месяцев, включая 3 месяца на приживление имплантата.")
+got = {}
+ai._chat = lambda m, s=None: got.update(s or {}) or LONG
+pv = a.ai_plan_variant({"name": "Премиум", "warranty": "5 лет", "items": [{"title": "Имплантат", "tooth": "36"}]})
+check("a long option is cut to whole sentences", pv["engine"] == "ai" and len(pv["text"]) <= ai_docs.LIMITS["plan_variant"]
+      and pv["text"].endswith(".") and pv["text"].startswith("Предлагаем"), pv["text"])
+check("the model gets a short token limit", got.get("max_tokens") == ai.tokens_for(ai_docs.LIMITS["plan_variant"]), got.get("max_tokens"))
+check("the note always fits the plan (400)", len(ai_docs.plan_variant({"name": "Х", "items": [{"title": "Очень длинная услуга " * 6}] * 9})["text"]) <= 400)
+check("fit: whole lines of a list", ai.fit("— раз\n— два\n— три", 12) == "— раз\n— два")
+check("fit: one long sentence → cut at a word", ai.fit("слово " * 30, 40).endswith("…") and len(ai.fit("слово " * 30, 40)) <= 40)
+check("fit: short text untouched", ai.fit("Коротко.", 260) == "Коротко.")
+ai._chat = lambda m, s=None: "— Не есть 2 часа.\n" + "\n".join(f"— Совет номер {i}, довольно длинный, чтобы не влезть." for i in range(40))
+w = a.ai_write("recommendations", rid)
+check("a cut memo still ends with when to call", len(w["text"]) <= ai_docs.LIMITS["recommendations"] and w["text"].endswith(ai_docs.URGENT), w["text"][-120:])
+ai._chat = lambda m, s=None: got.update(s or {}) or "Пульпит — воспаление нерва. " * 60
+r = ask("чем отличается пульпит от периодонтита")
+check("a free answer has a limit", len(r["text"]) <= A.FREE_LIMIT and got.get("max_tokens") == ai.tokens_for(A.FREE_LIMIT), len(r["text"]))
+ai._chat = lambda m, s=None: "Жалобы: ночные боли.\nДиагноз: K04.0 Пульпит (зуб 26).\nРекомендации: наблюдение у врача."
+ex = ai_docs.write("extract", {"data": {"complaints": "ночные боли", "diagnoses": [{"code": "K04.0", "tooth": "26"}]}})
+check("an extract without the doctor's recommendations has none", ex["engine"] == "ai" and "Рекомендац" not in ex["text"] and "Диагноз" in ex["text"], ex["text"])
+ex = ai_docs.write("extract", {"data": {"complaints": "ночные боли", "recommendations": "не жевать на этой стороне"}})
+check("the doctor's recommendations stay", "Рекомендации" in ex["text"])
+ai._chat = fake_chat
 wk = a.director_weekly(None, True)
 check("weekly retold by the AI and kept", wk["ai_text"] and d.meta_get(f"ai_weekly:{wk['week']}") == wk["ai_text"])
 ai._chat = lambda m, s=None: (_ for _ in ()).throw(ValueError("нет связи"))
@@ -339,7 +365,7 @@ byid = {c["id"]: c for c in res["cases"]}
 check("eval: ideal answers score 100", byid["dictation"]["accuracy"] == 1 and byid["extraction"]["accuracy"] == 1 and byid["en"]["accuracy"] == 1, byid)
 check("eval: a wrong answer scores 0", byid["route_free"]["accuracy"] == 0)
 check("eval summary", res["accuracy"] == 75 and res["russian"] == 100 and res["model"] == "x", res)
-check("eval has 11 cases", len(ai_eval._cases()) == 11)
+check("eval has 12 cases", len(ai_eval._cases()) == 12)
 
 # ------------------------------------------------------------------ rights, journal, sync
 new = ["assistant_ask", "assistant_voice", "ai_langs", "ai_write", "ai_plan_variant", "ai_translate", "medcheck_patient", "medcheck_record",

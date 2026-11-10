@@ -89,8 +89,18 @@ class Api:
         from stock import EQ_STATUS, MOVE_KINDS, UNITS
         return {**self._stock.summary(), "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS}
 
+    def _stock_view(self, rows):
+        """2.14.1: the balance «по документам» is the accountant's view — only with the «Бухгалтерия» right."""
+        if "accounting" in self._my_perms()[0]:
+            return rows
+        for r in rows if isinstance(rows, list) else [rows]:
+            if r:
+                r.pop("balance_doc", None)
+                r.pop("value_doc", None)
+        return rows
+
     def materials(self, q="", only_low=False, only_expiring=False):
-        return self._stock.materials(q, bool(only_low), only_expiring=bool(only_expiring))
+        return self._stock_view(self._stock.materials(q, bool(only_low), only_expiring=bool(only_expiring)))
 
     def stock_lots(self, mid):
         return self._stock.lots(mid)
@@ -105,7 +115,7 @@ class Api:
         return self._stock.scan(code)
 
     def material(self, mid):
-        return self._stock.material(mid)
+        return self._stock_view(self._stock.material(mid))
 
     def save_material(self, f):
         return self._stock.save_material({**f, "_user": self._who()})
@@ -123,7 +133,23 @@ class Api:
         return self._stock.delete_supplier(sid)
 
     def stock_receive(self, f):
-        return self._stock.receive(f, self._who())
+        """A receipt; with `pay` (a way from «Расходы за день») the purchase is also written down as today's expense,
+        «без документа» when the receipt has no invoice (2.14.1)."""
+        import daily
+        f = f if isinstance(f, dict) else {}
+        pay = f.get("pay") if f.get("pay") in daily.METHODS else None
+        perms, u = self._my_perms()
+        if pay and not perms & {"expenses_day", "accounting"}:
+            raise ValueError("Записывать расходы за день может только сотрудник с правом «Расходы за день»")
+        did = self._stock.receive(f, self._who())
+        if pay:
+            d = self._stock.doc(did)
+            if d["total"] > 0:
+                sup = d.get("supplier_name") or ""
+                self._daily.save({"amount": d["total"], "category": "Материалы и закупки", "method": pay, "doc": not f.get("nodoc"),
+                                  "comment": f"Приход на склад{' № ' + d['number'] if d['number'] else ''}{', ' + sup if sup else ''}"},
+                                 self._who(), (u or {}).get("login") or "", "accounting" in perms)
+        return did
 
     def stock_write_off(self, f):
         return self._stock.write_off(f, self._who())
@@ -1011,6 +1037,32 @@ class Api:
         import daily
         return daily.save_settings(f if isinstance(f, dict) else {})
 
+    # 2.14.1: the day report in Telegram through the clinic's own bot
+    @staticmethod
+    def _tg_token(token=""):
+        import daily
+        token = "".join(str(token or "").split()) or config.unprotect(daily.settings()["tg_token_enc"] or "")
+        if not token:
+            raise ValueError("Вставьте токен бота от @BotFather")
+        return token
+
+    def day_report_tg_check(self, token=""):
+        """The bot behind the token (and its link for the owner to press «Старт»)."""
+        import daily
+        try:
+            bot = daily.tg_check(self._tg_token(token))
+        except daily.TgError as e:
+            raise ValueError(str(e)[0].upper() + str(e)[1:]) from e
+        return bot
+
+    def day_report_tg_chats(self, token=""):
+        """Who pressed «Старт» in the bot — the owner picks who gets the report."""
+        import daily
+        try:
+            return daily.tg_chats(self._tg_token(token))
+        except daily.TgError as e:
+            raise ValueError(str(e)[0].upper() + str(e)[1:]) from e
+
     def cash_shifts(self, limit=40):
         return self._fin.shifts(limit)
 
@@ -1535,8 +1587,9 @@ class Api:
         if use_ai and ai.enabled():
             try:
                 w["ai_text"] = ai.generate("Перескажи директору клиники сводку за неделю короткой запиской: 3–5 предложений, "
-                                           "сначала главное, затем 1–2 конкретных совета, что сделать на этой неделе. Цифры не меняй.",
-                                           w["title"] + "\n" + "\n".join(w["lines"]))
+                                           "до 700 знаков, сначала главное, затем 1–2 конкретных совета, что сделать на этой "
+                                           "неделе. Цифры не меняй, без приветствия и заголовка.",
+                                           w["title"] + "\n" + "\n".join(w["lines"]), max_chars=800)
                 self._db.meta_set(key, w["ai_text"])
             except ValueError as e:
                 w["ai_error"] = str(e)

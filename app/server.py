@@ -64,6 +64,18 @@ def _strip_patient(p, perms):
     return p
 
 
+class _ExclusiveServer(ThreadingHTTPServer):
+    """2.14.1: the port belongs to this program alone. On Windows another process may otherwise bind 127.0.0.1 on
+    the same port while we listen on 0.0.0.0 — and the program's own window would then talk to that process
+    (it looked like «Неверный логин или пароль»). SO_EXCLUSIVEADDRUSE forbids that."""
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 class ClinicServer:
     def __init__(self, api, db, port=8765, host="0.0.0.0"):
         self.api, self.db, self.port, self.host = api, db, port, host
@@ -213,8 +225,7 @@ class ClinicServer:
             def log_message(self, *a):
                 pass
 
-        ThreadingHTTPServer.allow_reuse_address = False
-        self.httpd = ThreadingHTTPServer((self.host, self.port), Handler)
+        self.httpd = _ExclusiveServer((self.host, self.port), Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, name="http", daemon=True).start()
         threading.Thread(target=self._discovery, name="discovery", daemon=True).start()
