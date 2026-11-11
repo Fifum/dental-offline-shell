@@ -1358,7 +1358,8 @@ class Api:
         try:
             import updates
             us = updates.UPDATER.state
-            st["update"] = {"available": us["available"], "latest": us["latest"]}
+            st["update"] = {"available": us["available"], "latest": us["latest"], "downloading": us["downloading"],
+                            "progress": us["progress"], "ready": bool(us["ready"]), "error": us["error"] if us["available"] else ""}
         except Exception:  # noqa: BLE001
             pass
         try:  # 2.14: the employee's rights now (the director may change a position while the employee works)
@@ -1860,14 +1861,12 @@ class Api:
         updates.UPDATER.check()
         return self.update_status()
 
-    def update_download(self):
-        self._director("Обновлять программу")
+    def update_download(self):  # 3.1: any employee (signed and checked file, a backup on exit)
         import updates
         updates.UPDATER.start_download()
         return self.update_status()
 
-    def update_install(self):
-        self._director("Обновлять программу")
+    def update_install(self):  # 3.1: any employee (signed and checked file, a backup on exit)
         import updates
         updates.UPDATER.install()
         return True

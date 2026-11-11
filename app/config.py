@@ -10,10 +10,11 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 
 # Updates: latest.json signed with Ed25519 (tools/update_sign.py). The secret key stays with the developer outside
-# every repository; this public key only checks signatures. The address can also come from brand.json or settings.
+# every repository; this public key only checks signatures. The address can also come from brand.json or settings
+# (the clinic's build: brand.json → update_url, a GitHub release feed, and update_key that decrypts its installer).
 UPDATE_PUBKEY = "623f2977c806d462e1cb10b557927ba529e0fb7cafa6167aa638cb9533b9eeee"
 UPDATE_URL = ""
 
@@ -35,6 +36,7 @@ def _load_brand() -> dict:
 BRAND = _load_brand()
 APP_NAME = BRAND["folder"]
 APP_TITLE = f"{BRAND['name']} — программа клиники"
+UPDATE_KEY = str(BRAND.get("update_key") or "")  # hex AES-256 key of this build's updates; never in git
 
 
 def data_dir() -> Path:

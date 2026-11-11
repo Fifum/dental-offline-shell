@@ -3,11 +3,18 @@
     python tools\\publish_update.py <folder> --dest D:\\updates-test              # a local / network folder (tests)
     python tools\\publish_update.py <folder> --bucket <name> [--prefix updates/]  # Yandex Object Storage (S3)
     python tools\\publish_update.py --save-keys                                   # store the S3 keys (DPAPI)
+    python tools\\publish_update.py <folder> --github Fifum/dental-desk-updates   # a GitHub release (3.1, gh CLI)
 
 The exe goes first and latest.json last, so a program never sees a latest.json pointing to a missing file.
 S3 keys: environment YC_ACCESS_KEY_ID / YC_SECRET_ACCESS_KEY, or saved once with --save-keys into
 %USERPROFILE%\\.dental-desk-keys\\yc-s3.key (DPAPI). The bucket needs public read for these two files only.
 The address for the program (brand.json → "update_url") is https://storage.yandexcloud.net/<bucket>/<prefix>latest.json.
+
+GitHub (3.1): a public repository with nothing but releases. The release v<version> is made as a draft, gets the
+encrypted installer and then latest.json, and only then becomes «latest» — the address the programs read
+(update_sign.py feed --github <repo> puts it into brand.json) is .../releases/latest/download/latest.json.
+The repository is created on first use (gh repo create --public). Only an encrypted installer is uploaded there:
+the clinic's build carries the clinic's name (update_sign.py feed makes the key).
 """
 from __future__ import annotations
 
@@ -19,6 +26,7 @@ import hmac
 import json
 import os
 import shutil
+import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
@@ -67,6 +75,42 @@ def s3_put(bucket, key, data: bytes, ctype, kid, secret):
         sys.exit(f"Ошибка загрузки {key}: {r.status_code} {r.text[:300]}")
 
 
+def _gh(*args, check=True):
+    gh = shutil.which("gh")
+    if not gh:
+        sys.exit("Нет GitHub CLI (gh): установите его и выполните gh auth login")
+    r = subprocess.run([gh, *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if check and r.returncode != 0:
+        sys.exit(f"gh {' '.join(args[:3])}: {(r.stderr or r.stdout).strip()[:500]}")
+    return r
+
+
+def github_publish(src: Path, doc: dict, repo: str, allow_plain=False):
+    import updates
+    if not doc.get("enc") and not allow_plain:
+        sys.exit("Установщик не зашифрован, а репозиторий обновлений публичный. Сначала: python tools\\update_sign.py feed "
+                 f"--github {repo}, пересборка и update_sign.py release (или --allow-plain для сборки без названия клиники)")
+    ver, tag = doc["version"], f"v{doc['version']}"
+    if _gh("repo", "view", repo, "--json", "name", check=False).returncode != 0:
+        _gh("repo", "create", repo, "--public", "--add-readme", "--description", "Dental Desk updates (signed, read by the program)")
+        print(f"Создан публичный репозиторий {repo}")
+    if _gh("release", "view", tag, "--repo", repo, check=False).returncode == 0:
+        sys.exit(f"Релиз {tag} уже есть в {repo}. Новая сборка — новая версия (app/config.py → VERSION)")
+    _gh("release", "create", tag, str(src / doc["file"]), "--repo", repo, "--draft", "--title", f"Dental Desk {ver}",
+        "--notes", f"Обновление Dental Desk {ver}. Программа скачивает его сама и проверяет подпись разработчика.")
+    _gh("release", "upload", tag, str(src / "latest.json"), "--repo", repo)
+    _gh("release", "edit", tag, "--repo", repo, "--draft=false", "--latest")
+    feed = updates.github_feed(repo)
+    try:  # what a program will now see
+        with updates._open(feed) as r:
+            live = json.loads(r.read().decode("utf-8-sig"))
+        ok = updates.verify(live) and live.get("version") == ver and live.get("sha256") == doc["sha256"]
+    except Exception as e:  # noqa: BLE001
+        ok, live = False, str(e)
+    print(f"Готово: {feed}" if ok else f"Релиз загружен, но по адресу {feed} пока другое: {str(live)[:200]}")
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("folder", nargs="?")
@@ -74,6 +118,8 @@ def main():
     ap.add_argument("--bucket")
     ap.add_argument("--prefix", default="updates/")
     ap.add_argument("--save-keys", action="store_true")
+    ap.add_argument("--github", help="owner/repo: publish as a GitHub release")
+    ap.add_argument("--allow-plain", action="store_true", help="with --github: allow an unencrypted installer")
     a = ap.parse_args()
     if a.save_keys:
         kid = input("Идентификатор ключа: ").strip()
@@ -89,6 +135,8 @@ def main():
     exe = src / doc["file"]
     if not exe.exists() or exe.stat().st_size != doc["size"]:
         sys.exit("Установщик не совпадает с latest.json — подпишите заново (update_sign.py release)")
+    if a.github:
+        return github_publish(src, doc, a.github, a.allow_plain)
     if a.dest:
         dest = Path(a.dest)
         dest.mkdir(parents=True, exist_ok=True)
@@ -99,7 +147,7 @@ def main():
         print(f"Готово: {dest / 'latest.json'}")
         return 0
     if not a.bucket:
-        ap.error("укажите --dest или --bucket")
+        ap.error("укажите --github, --dest или --bucket")
     kid, secret = _keys()
     prefix = a.prefix.strip("/") + "/" if a.prefix.strip("/") else ""
     s3_put(a.bucket, prefix + exe.name, exe.read_bytes(), "application/octet-stream", kid, secret)

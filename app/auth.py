@@ -270,14 +270,15 @@ METHOD_PERMS = {
     # work schedules
     "shifts_month": ("schedule_view", "shifts_edit", "staff"), "save_shift": "shifts_edit", "fill_shifts": "shifts_edit",
     "clear_shifts": "shifts_edit",
-    # SaaS platform: cloud sync, updates, moving a base in (director-only actions are checked again in Api)
+    # SaaS platform: cloud sync, updates, moving a base in (director-only actions are checked again in Api).
+    # 3.1: any employee may update the program (laptops work on their own; the file is signed and checked)
     "cloud_status": "settings", "cloud_join": "settings", "cloud_sync": "settings", "cloud_code": "settings",
     "cloud_leave": "settings", "cloud_revoke": "settings", "cloud_conflicts": "settings",
     "cloud_conflict_seen": "settings", "cloud_conflict_restore": "settings",
     # 3.0: the clinic network (accepting a computer and merging laptops are checked for the director in Api)
     "p2p_status": "settings", "p2p_accept": "settings", "p2p_reject": "settings", "p2p_sync": ANY_USER,
     "p2p_join_other": "settings",
-    "update_status": ANY_USER, "update_check": "settings", "update_download": "settings", "update_install": "settings",
+    "update_status": ANY_USER, "update_check": ANY_USER, "update_download": ANY_USER, "update_install": ANY_USER,
     "import_preview": "settings", "import_run": "settings", "import_dp_all": "settings",
 }
 

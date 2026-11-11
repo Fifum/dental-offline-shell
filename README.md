@@ -90,7 +90,7 @@ working without it.
 | **Backups** | A verified, compressed copy of the whole database at start, every 2 hours and on exit, made with SQLite's online backup while the app keeps working; rotation (everything for 2 days, one per day for 30); an optional second folder on a flash drive; one-click restore that first saves the current data and then restarts the app |
 | **Cloud sync** | Every laptop keeps working on its own; when there is internet, changes meet through a multi-clinic cloud server. Row-level replication with a three-way merge: edits of different fields both survive, a clash of one field keeps the later edit and saves the other value in a journal with a «bring back» button, a row deleted on one laptop and edited on another is kept. End-to-end encrypted (AES-256-GCM, clinic key never leaves the clinic), X-rays included |
 | **Subscriptions** | Clinics (tenants) with a 30-day trial, three plans by number of computers, grace period; an expired subscription pauses the sync, never the work on the laptops |
-| **One-click updates** | The program checks a signed `latest.json` (Ed25519, public key built in), downloads the installer, checks size and SHA-256 and lets the director update; the installer closes the program, which makes a backup on exit |
+| **One-click updates** | Once a minute the program checks a signed `latest.json` (Ed25519, public key built in) in a GitHub release feed; «Вышла новая версия» pops up bottom right for every employee, «Обновить» downloads the installer, checks size and SHA-256 and runs it; the installer closes the program, which makes a backup on exit |
 | **PIN sign-in** | On a shared computer staff pick themselves and type a 4–6-digit PIN; five mistakes lock the PIN until a password sign-in |
 | **Moving a base in** | Patients from IDENT, Dentist Plus or any table (.xlsx / CSV, Windows-1251 too): columns recognised by their titles, editable mapping, preview, duplicates by phone or name + birth date skipped |
 | **Settings by sections** | Seven sections in a list (general, Dentist Plus, voice and AI, cash and payments, X-rays and tablet, data and protection, help) and a search across all of them; the last section is remembered |
@@ -176,6 +176,25 @@ permission edits and sign-ins land in an action journal with the employee's name
 
 The same server is ready to move to a hosted machine later: the UI already talks to it only over HTTP.
 
+## Updates from GitHub (3.1)
+
+Every laptop checks once a minute whether a new version is out and shows «Вышла новая версия X.Y.Z» bottom right
+to whoever works on it; «Обновить» downloads the update, checks it, closes the program (which saves a backup)
+and opens the new version. Laptops of a clinic work on their own, so any employee may update, not only the director.
+
+* **Where.** A public GitHub repository holds nothing but releases. The program reads
+  `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`: a download link, not the REST API,
+  so the check once a minute from several laptops behind one IP is not limited to 60 requests an hour; it sends
+  `If-None-Match`, and an unchanged file comes back as a short 304. A repository without releases is just «no update».
+* **Trust.** `latest.json` is signed with Ed25519 (the secret key stays with the developer, DPAPI); size and
+  SHA-256 are checked after the download and again right before the installer starts.
+* **Privacy.** The clinic's build carries its name, so the installer is stored encrypted (AES-256-CTR, neutral name
+  `update-X.Y.Z.bin`) and so are the notes (AES-GCM), with a key that exists only in that build (`brand.json` →
+  `update_key`, never in git). A build with another key or none explains that the update is not for it.
+* **Publishing.** `tools\update_sign.py feed --github <repo>` once (address and key into brand.json, a DPAPI copy of
+  the key), then after each build `.\publish-update.ps1`: signs, encrypts and uploads a draft release, adds
+  `latest.json` last and only then marks the release latest.
+
 ## Architecture
 
 ```
@@ -247,10 +266,10 @@ Dentist Plus partner API
 | `app/replica.py` | Replication: change capture by triggers, integer ids made stable (uid / login), three-way merge, conflict journal |
 | `app/cloud.py` | Cloud client: connection codes, clinic key, AES-GCM encryption, pull / merge / push loop, encrypted file transfer |
 | `cloud/cloud_server.py` | Multi-clinic sync server (standard library only): devices, plans and trials, versioned rows, files; admin commands |
-| `app/updates.py` | Update check: signed latest.json, download with size and SHA-256 check, starting the installer |
+| `app/updates.py` | Update check once a minute (GitHub release feed, ETag): signed latest.json, encrypted installer, download with size and SHA-256 check, starting the installer |
 | `app/importer.py` | Patient import from .xlsx / CSV: column recognition, phone and date clean-up, duplicates |
-| `tools/update_sign.py` | Developer side: signing key (DPAPI, outside the repository), signing a release |
-| `tools/publish_update.py` | Uploading an update to Yandex Object Storage (S3, SigV4) or a folder |
+| `tools/update_sign.py` | Developer side: signing key (DPAPI, outside the repository), the build's encryption key and feed address, signing a release |
+| `tools/publish_update.py` | Uploading an update as a GitHub release (gh CLI), to Yandex Object Storage (S3, SigV4) or a folder; `publish-update.ps1` signs and publishes the version just built |
 | `app/config.py` | Paths, settings, DPAPI password protection, clinic branding |
 | `app/sync.py` | Background worker: online check, pull, purge, push, offline mode |
 | `app/api_client.py` | Partner API client: auth, paging in any shape, retries, writes |
@@ -346,6 +365,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_staff_214.py            # 92 checks: positions and their rights (built-in and own, later rights, voice labels), rights over HTTP at once, expenses of the day and the drawer, the day report with a fake SMTP server and a fake Telegram Bot API, retry of one channel and the moment to send
 .venv\Scripts\python tests\test_stock_grey.py           # 43 checks: stock without documents — receipts, write-offs and counts, balance by documents and who sees it over HTTP, act numbers, receipt as an expense of the day, the stock block of the day report
 .venv\Scripts\python tests\test_p2p.py                  # 48 checks: three computers (processes) find each other, pairing with the director's approval, both-way sync, staff approval, files, conflicts converge, LAN + cloud without duplicates
+.venv\Scripts\python tests\test_updates.py              # 58 checks: encrypted installer and notes, signing a release, a fake GitHub (302, ETag/304, 404), download and install, another build's key, worker once a minute, rights, publishing order
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 
