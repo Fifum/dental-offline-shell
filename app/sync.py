@@ -18,6 +18,20 @@ log = logging.getLogger("sync")
 
 HOURLY = 60 * 60   # dictionaries (chairs, visit statuses) and the doctors' schedule change rarely
 SCHEDULE_LIMIT = 100   # GET /schedule returns at most 100 rows: a fuller answer is asked again in halves
+CARD_PAUSE_S = 0.7     # pause between patient cards asked one by one after a 429 / 5xx
+RETRY_MAX = 2000       # cards remembered for the next sync
+
+
+def _card_reason(e) -> str:
+    """Short reason of a patient card that did not load, for the sync log and the developer's report."""
+    st = getattr(e, "status", None)
+    if isinstance(st, int):
+        return "HTTP 5xx" if st >= 500 else f"HTTP {st}"
+    if isinstance(e, OfflineError) or "не ответил" in str(e):
+        return "нет ответа"
+    if isinstance(e, ApiError):
+        return "ошибка API"
+    return e.__class__.__name__
 
 
 def _num(v):
@@ -224,14 +238,25 @@ class SyncWorker(threading.Thread):
                     batch = []
             self.db.upsert_patients(batch)
 
-        # patient cards (detail + extras), 4 parallel requests
-        ids = sorted(patient_ids)
+        # patient cards (detail + extras): 4 parallel requests. 3.7.1: a card that did not load is not lost —
+        # on «too many requests» (429), a server error (5xx) or a timeout the parallel pass stops sending, the rest
+        # are asked one by one with a pause, and what still failed is asked again by the next sync
+        # (meta «patients_retry»). A 404 is a patient deleted or merged in Dentist Plus: counted, not retried.
+        retry_before = self._retry_list()
+        ids = sorted(patient_ids | set(retry_before))
         extras = [e for e in s.get("patient_extras", []) if e.get("path")]
         disabled_extras: set[str] = set()
+        slow = threading.Event()   # set at the first transient error: the parallel pass stops sending
         done = 0
-        errors = 0
+        reasons: dict[str, int] = {}
+        examples: dict[str, str] = {}
+        deferred: list[str] = []
+        failed_transient: list[str] = []
+        loaded = 0
 
-        def fetch(pid):
+        def fetch(pid, parallel=True):
+            if parallel and slow.is_set():
+                return pid, None
             detail = c.request(f"patients/{pid}")
             if isinstance(detail, dict) and isinstance(detail.get("data"), dict):
                 detail = detail["data"]
@@ -249,27 +274,99 @@ class SyncWorker(threading.Thread):
                         disabled_extras.add(ex["key"])
             return pid, out
 
+        def save(pid, out):
+            nonlocal loaded
+            if isinstance(out["detail"], dict):
+                out["detail"].setdefault("id", pid)
+                self.db.upsert_patients([out["detail"]], detail=True)
+            for k, items in out["extras"].items():
+                self.db.upsert_extra(pid, k, items)
+            loaded += 1
+
+        def failed(pid, e, final):
+            """Count the reason; a transient one is retried (now one by one, or by the next sync)."""
+            reason = _card_reason(e)
+            transient = reason in ("HTTP 429", "HTTP 5xx", "нет ответа")
+            if transient and not final:
+                slow.set()
+                deferred.append(pid)
+                return
+            if transient:
+                failed_transient.append(pid)
+            reasons[reason] = reasons.get(reason, 0) + 1
+            examples.setdefault(reason, str(e)[:160])
+
+        def progress():
+            if done % 5 == 0 or done == len(ids):
+                self._set(phase=f"Карты пациентов {done}/{len(ids)}…", progress=62 + int(37 * done / max(1, len(ids))))
+
         with ThreadPoolExecutor(max_workers=4) as pool:
-            for fut in [pool.submit(fetch, pid) for pid in ids]:
+            futs = [(pid, pool.submit(fetch, pid)) for pid in ids]
+            for pid, fut in futs:
+                n_deferred = len(deferred)
                 try:
-                    pid, out = fut.result()
-                    if isinstance(out["detail"], dict):
-                        out["detail"].setdefault("id", pid)
-                        self.db.upsert_patients([out["detail"]], detail=True)
-                    for k, items in out["extras"].items():
-                        self.db.upsert_extra(pid, k, items)
-                except OfflineError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    errors += 1
-                done += 1
-                if done % 5 == 0 or done == len(ids):
-                    self._set(phase=f"Карты пациентов {done}/{len(ids)}…", progress=62 + int(37 * done / max(1, len(ids))))
+                    _, out = fut.result()
+                    if out is None:
+                        deferred.append(pid)
+                    else:
+                        save(pid, out)
+                except OfflineError as e:
+                    if loaded == 0 and done == 0:
+                        raise  # the link is gone, not one card
+                    failed(pid, e, final=False)
+                except Exception as e:  # noqa: BLE001
+                    failed(pid, e, final=False)
+                if len(deferred) == n_deferred:  # a deferred card is counted when it is asked again
+                    done += 1
+                    progress()
+        for i, pid in enumerate(deferred):
+            if self.stop_flag:
+                failed_transient.extend(deferred[i:])
+                reasons["не успели"] = reasons.get("не успели", 0) + len(deferred) - i
+                break
+            time.sleep(CARD_PAUSE_S)
+            try:
+                _, out = fetch(pid, parallel=False)
+                save(pid, out)
+            except OfflineError as e:  # the link is gone: the rest waits for the next sync
+                failed(pid, e, final=True)
+                rest = deferred[i + 1:]
+                failed_transient.extend(rest)
+                if rest:
+                    reasons["нет ответа"] = reasons.get("нет ответа", 0) + len(rest)
+                break
+            except Exception as e:  # noqa: BLE001
+                failed(pid, e, final=True)
+            done += 1
+            progress()
+
+        self._save_retry_list(failed_transient)
         counts["patients"] = len(ids)
+        errors = sum(reasons.values())
         if errors:
             counts["patient_errors"] = errors
+            counts["patient_error_reasons"] = dict(sorted(reasons.items()))
+            log.warning("patient cards: %d of %d not loaded: %s; e.g. %s", errors, len(ids),
+                        ", ".join(f"{k} — {v}" for k, v in sorted(reasons.items())),
+                        "; ".join(f"{k}: {v}" for k, v in sorted(examples.items())))
+        if deferred:
+            counts["patient_retried_slowly"] = len(deferred)
+        if failed_transient:
+            counts["patient_retry_next_sync"] = len(failed_transient)
+        if retry_before:
+            counts["patient_retry_from_last_sync"] = len(retry_before)
         if disabled_extras:
             counts["extras_unavailable"] = sorted(disabled_extras)
+
+    def _retry_list(self) -> list[str]:
+        try:
+            v = json.loads(self.db.meta_get("patients_retry") or "[]")
+            return [str(x) for x in v if x][:RETRY_MAX] if isinstance(v, list) else []
+        except ValueError:
+            return []
+
+    def _save_retry_list(self, ids):
+        self.db.meta_set("patients_retry", json.dumps(sorted(set(ids))[:RETRY_MAX]))
 
     # ------------------------------------------------- documented extras --
     def _pull_more(self, c: DentistPlusClient, s: dict, counts: dict):
@@ -300,7 +397,10 @@ class SyncWorker(threading.Thread):
             self._set(phase="Расписание врачей…")
             try:
                 n = self._pull_schedule(c, today - timedelta(days=7), end)
-                counts["dp_schedule"] = n
+                counts["dp_schedule"] = n["received"]
+                counts["dp_schedule_saved"] = n["saved"]
+                if n["skipped"]:
+                    counts["dp_schedule_skipped"] = n["skipped"]
             except ApiError as e:
                 counts["schedule_error"] = str(e)
 
@@ -343,16 +443,20 @@ class SyncWorker(threading.Thread):
                 rows += fetch(doc, x, y)
                 x = y + timedelta(days=1)
         now = utcnow()
+        skipped = 0
         with self.db.tx() as cx:
             cx.execute("DELETE FROM dp_schedule WHERE day >= ? AND day <= ?", (a.isoformat(), b.isoformat()))
             for r in rows:
                 day, doc = str(r.get("day") or "")[:10], as_id(r.get("doctor_id"))
                 if not day or not doc or not r.get("time_from") or not r.get("time_to"):
+                    skipped += 1  # 3.7.1: counted, so «пришло» = «сохранено» + «пропущено» in the sync log
                     continue
                 cx.execute("INSERT OR REPLACE INTO dp_schedule VALUES(?,?,?,?,?,?,?)",
                            (doc, day, as_id(r.get("chair_id")) or "", as_id(r.get("branch_id")),
                             str(r["time_from"])[:5], str(r["time_to"])[:5], now))
-        return len(rows)
+            saved = cx.execute("SELECT COUNT(*) FROM dp_schedule WHERE day >= ? AND day <= ?",
+                               (a.isoformat(), b.isoformat())).fetchone()[0]
+        return {"received": len(rows), "saved": saved, "skipped": skipped}
 
 
 def diagnostics(s: dict) -> dict:

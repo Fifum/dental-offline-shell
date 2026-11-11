@@ -271,8 +271,8 @@ def _chat(messages, s=None) -> str:
     elif s["key_enc"]:
         headers["Authorization"] = f"Bearer {config.unprotect(s['key_enc'])}"
     key = (prov, base, model)
-    params = dict(_params.get(key) or {"temperature": 0.1, "max_tokens": 2000})
-    for _ in range(4):
+    params = dict(_params.get(key) or _first_params(prov, base, model))
+    for _ in range(6):
         reasoning = "max_completion_tokens" in params
         timeout = max(s.get("timeout", 30), 90) if reasoning else s.get("timeout", 30)
         send = dict(params)
@@ -285,7 +285,7 @@ def _chat(messages, s=None) -> str:
             raise ValueError("Ошибка сертификата при подключении к ИИ-сервису") from e
         except requests.RequestException as e:
             raise ValueError(f"ИИ-сервис недоступен: {e.__class__.__name__}") from e
-        fixed = _adapt(params, r) if r.status_code == 400 else None
+        fixed = _adapt(params, r) if r.status_code in (400, 422) else None
         if fixed is None:
             break
         params = fixed
@@ -307,23 +307,49 @@ def _chat(messages, s=None) -> str:
 _params: dict = {}  # request parameters that worked for (provider, address, model)
 
 
+_REASONING = re.compile(r"^(gpt-5|o\d)", re.I)
+
+
+def _first_params(prov: str, base: str, model: str) -> dict:
+    """3.7.1: OpenAI itself gets max_completion_tokens at once — its newer models refuse max_tokens, and every
+    current OpenAI chat model takes max_completion_tokens. Reasoning models (gpt-5, o-series) count their hidden
+    reasoning against the limit, so they get more room and a low effort. Other services (YandexGPT, GigaChat,
+    a model server of the clinic) keep the classic max_tokens."""
+    if prov == "openai" and "api.openai.com" in base.lower():
+        if _REASONING.match(model.split("/")[-1]):
+            return {"max_completion_tokens": 8000, "reasoning_effort": "low"}
+        return {"temperature": 0.1, "max_completion_tokens": 2000}
+    return {"temperature": 0.1, "max_tokens": 2000}
+
+
 def _adapt(params: dict, r) -> dict | None:
-    """Newer OpenAI models (gpt-5, o-series) reject max_tokens and a custom temperature. Read which
-    parameter the service complained about and return corrected parameters, or None if nothing to fix."""
+    """Newer OpenAI models (gpt-5, o-series) reject max_tokens and a custom temperature; older servers do not know
+    max_completion_tokens. Read which parameter the service complained about and return corrected parameters,
+    or None if nothing to fix."""
+    msg, param = "", ""
     try:
         err = r.json().get("error") or {}
-        msg, param = str(err.get("message") or ""), str(err.get("param") or "")
+        if isinstance(err, dict):
+            msg, param = str(err.get("message") or ""), str(err.get("param") or "")
+        else:
+            msg = str(err)
     except (ValueError, AttributeError):
-        msg, param = r.text or "", ""
+        pass
+    text = f"{msg} {param} {(r.text or '')[:2000]}"
     p = dict(params)
-    if "max_completion_tokens" in msg and "max_tokens" in p:
+    if "max_tokens" in p and "max_completion_tokens" in text:
         # reasoning models count their hidden reasoning against this limit, so give more room
         del p["max_tokens"]
         p["max_completion_tokens"] = 8000
         p.setdefault("reasoning_effort", "low")
         return p
-    for name in ("temperature", "reasoning_effort", "max_completion_tokens", "max_tokens"):
-        if name in p and (param == name or re.search(rf"\b{name}\b", msg)):
+    if "max_completion_tokens" in p and (param == "max_completion_tokens" or re.search(r"\bmax_completion_tokens\b", text)):
+        del p["max_completion_tokens"]  # a server that knows only the classic name
+        p.pop("reasoning_effort", None)
+        p["max_tokens"] = 2000
+        return p
+    for name in ("temperature", "reasoning_effort", "max_tokens"):
+        if name in p and (param == name or re.search(rf"\b{name}\b", text)):
             del p[name]
             return p
     return None

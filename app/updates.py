@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import subprocess
 import sys
 import threading
@@ -181,7 +182,35 @@ def _open(url, timeout=20, etag=""):
     if etag:
         headers["If-None-Match"] = etag
     req = urllib.request.Request(url, headers=headers)
-    return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310 — scheme checked above
+    ctx = ssl_context() if url.startswith("https://") else None
+    return urllib.request.urlopen(req, timeout=timeout, context=ctx)  # noqa: S310 — scheme checked above
+
+
+def ssl_context() -> ssl.SSLContext:
+    """3.7.1: certificates of the Windows store AND of certifi together. Python reads only the certificates that are
+    already in the Windows store, while Windows itself downloads a missing root on demand — so on some computers
+    github.com failed with «unable to get issuer certificate». certifi (comes with requests) carries the current
+    roots; the Windows store keeps what the clinic added itself (an antivirus that checks HTTPS, a corporate proxy)."""
+    ctx = ssl.create_default_context()  # verifies host names; on Windows loads the system store (load_default_certs)
+    try:
+        ctx.load_default_certs()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import certifi  # noqa: PLC0415
+        ctx.load_verify_locations(certifi.where())
+    except Exception as e:  # noqa: BLE001 — still the Windows store alone
+        log.info("certifi not available: %s", e)
+    return ctx
+
+
+CERT_ERROR = ("Не удалось проверить сертификат сервера обновлений. Проверьте дату и время на компьютере; "
+              "если антивирус проверяет HTTPS-соединения — разрешите программе доступ к github.com")
+
+
+def is_cert_error(e) -> bool:
+    reason = getattr(e, "reason", e)
+    return isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(e)
 
 
 def updates_dir():
@@ -202,6 +231,7 @@ class Updater:
         self._doc = None
         self._etag = ("", "")  # (address, ETag) of the last latest.json read
         self._lock = threading.Lock()
+        self._last_logged = ""
 
     def _fetch(self, src) -> bytes:
         etag = self._etag[1] if self._etag[0] == src and self._doc else ""
@@ -247,6 +277,7 @@ class Updater:
             if not self._doc or self._doc.get("sha256") != doc["sha256"]:
                 self.state["ready"] = ""  # another file than the one downloaded before
             self._doc = doc
+            self._last_logged = ""
             self.state.update(latest=doc["version"], available=newer, notes=notes[:4000],
                               size=int(doc.get("plain_size") or doc["size"]), date=str(doc.get("date") or ""), error="",
                               unpublished=False)
@@ -255,8 +286,10 @@ class Updater:
         except FileNotFoundError:  # 3.6.1: say so instead of «последняя версия» — nothing has been published yet
             self.state.update(error="", available=False, latest=None, unpublished=True)
         except (OSError, ValueError) as e:
-            msg = str(e) if isinstance(e, ValueError) else "Нет связи с сервером обновлений"
-            log.info("update check: %s", e)
+            msg = str(e) if isinstance(e, ValueError) else CERT_ERROR if is_cert_error(e) else "Нет связи с сервером обновлений"
+            if str(e) != self._last_logged:  # the check runs every minute: log a failure once, not 60 times an hour
+                log.info("update check: %s", e)
+                self._last_logged = str(e)
             self.state.update(error=msg)
         self.state["checked_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         return self.state
@@ -322,7 +355,8 @@ class Updater:
                 self.state["ready"] = self._download()
                 self.state["error"] = ""
             except (OSError, ValueError) as e:
-                self.state["error"] = str(e) if isinstance(e, ValueError) else f"Не удалось скачать обновление: {e}"
+                self.state["error"] = (str(e) if isinstance(e, ValueError) else CERT_ERROR if is_cert_error(e)
+                                      else f"Не удалось скачать обновление: {e}")
                 log.warning("update download: %s", e)
             finally:
                 self.state["downloading"] = False

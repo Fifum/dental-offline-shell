@@ -7,6 +7,7 @@ value that could identify a person with a placeholder such as «<текст, 13 
 """
 from __future__ import annotations
 
+import json
 import platform
 import re
 from collections import deque
@@ -150,6 +151,82 @@ def _push_summary(db) -> dict:
     return out
 
 
+def _q1(db, sql, args=()):
+    try:
+        return db.one(sql, args) or {}
+    except Exception:  # noqa: BLE001 — a table of an older/newer version
+        return {}
+
+
+def _meta_list(db, key) -> list:
+    try:
+        v = json.loads(db.meta_get(key) or "[]")
+        return v if isinstance(v, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _scrub_counts(v):
+    """sync_log counts: numbers stay, error texts are scrubbed, lists of ids are only counted."""
+    if isinstance(v, dict):
+        return {str(k): _scrub_counts(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return f"<список, {len(v)}>" if any(not isinstance(x, str) or x.isdigit() for x in v) else [scrub_text(str(x)) for x in v]
+    if isinstance(v, str):
+        return scrub_text(v)
+    return v
+
+
+def _sync_entry(row) -> dict | None:
+    if not row:
+        return None
+    try:
+        counts = json.loads(row.get("counts") or "{}")
+    except ValueError:
+        counts = {}
+    return {"started": row.get("started"), "finished": row.get("finished"), "ok": bool(row.get("ok")),
+            "message": scrub_text(row.get("message") or ""), "counts": _scrub_counts(counts)}
+
+
+def data_summary(db) -> dict:
+    """3.7.1: what the sync stored — only counts, date ranges, machine codes and Dentist Plus status names."""
+    out = {}
+    out["patients_without_card"] = _q1(db, "SELECT COUNT(*) n FROM patients WHERE detail IS NULL AND COALESCE(local,0)=0").get("n")
+    out["patients_retry_next_sync"] = len(_meta_list(db, "patients_retry"))
+    try:
+        out["services"] = {r["source"] or "?": r["n"] for r in db.q("SELECT source, COUNT(*) n FROM services GROUP BY source")}
+    except Exception:  # noqa: BLE001
+        out["services"] = None
+    p = _q1(db, "SELECT COUNT(*) n, MIN(date) a, MAX(date) b FROM dp_payments")
+    out["dp_payments"] = {"count": p.get("n"), "range": [p.get("a"), p.get("b")]}
+    try:
+        out["dp_payments"]["payment_types"] = {
+            str(r["t"] or "-")[:30]: r["n"]   # a dictionary of the clinic («Наличные», «Карта»), not a person
+            for r in db.q("SELECT payment_type t, COUNT(*) n FROM dp_payments GROUP BY payment_type")}
+    except Exception:  # noqa: BLE001
+        pass
+    sc = _q1(db, """SELECT COUNT(*) n, COUNT(DISTINCT doctor_id) docs, MIN(day) a, MAX(day) b,
+                    SUM(COALESCE(chair_id,'')='') no_chair FROM dp_schedule""")
+    days2 = _q1(db, """SELECT COUNT(*) n FROM (SELECT 1 FROM dp_schedule GROUP BY doctor_id, day HAVING COUNT(*) > 1)""")
+    out["dp_schedule"] = {"count": sc.get("n"), "doctors": sc.get("docs"), "range": [sc.get("a"), sc.get("b")],
+                          "without_chair": sc.get("no_chair"), "doctor_days_with_several_shifts": days2.get("n")}
+    statuses = _meta_list(db, "dp_record_statuses")
+    out["dp_chairs"] = {"count": len(_meta_list(db, "dp_chairs"))}
+    out["dp_record_statuses"] = {"count": len(statuses),
+                                 "titles": [str(x.get("title") or x.get("name") or "")[:40] for x in statuses
+                                            if isinstance(x, dict)][:30]}
+    try:
+        out["patient_edits"] = {(r["st"] or ("transferred" if r["tr"] else "none")): r["n"] for r in db.q(
+            "SELECT COALESCE(push_status,'') st, transferred tr, COUNT(*) n FROM patient_edits GROUP BY st, tr")}
+    except Exception:  # noqa: BLE001
+        out["patient_edits"] = None
+    last = _q1(db, "SELECT * FROM sync_log ORDER BY id DESC LIMIT 1")
+    out["last_sync"] = _sync_entry(last)
+    if last and not last.get("ok"):
+        out["last_sync_ok"] = _sync_entry(_q1(db, "SELECT * FROM sync_log WHERE ok=1 ORDER BY id DESC LIMIT 1"))
+    return out
+
+
 def build(db, sync_state: dict, settings: dict | None = None, probe_api: bool = True) -> dict:
     """The whole report as a JSON-ready dict. probe_api=False skips network calls (tests, offline)."""
     s = settings if settings is not None else config.load_settings()
@@ -171,6 +248,10 @@ def build(db, sync_state: dict, settings: dict | None = None, probe_api: bool = 
         "pending_transfer": db.pending_count(),
         "push_status": _push_summary(db),
     }
+    try:
+        report["data"] = data_summary(db)
+    except Exception as e:  # noqa: BLE001 — the report is still useful without this part
+        report["data"] = scrub_text(f"Ошибка: {e.__class__.__name__}: {e}")
     if s.get("demo"):
         report["api"] = "Включён демо-режим: к Dentist Plus программа не обращается."
     elif not (s.get("login") and s.get("pass_enc")):

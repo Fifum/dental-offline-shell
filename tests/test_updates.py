@@ -368,6 +368,89 @@ try:
 except SystemExit as e:
     check("publish: plain installer refused", "не зашифрован" in str(e), e)
 
+# ---- 3.7.1: HTTPS with the roots of certifi AND of the Windows store; a clear message when nothing helps.
+# A local HTTPS server with its own root certificate plays github.com (no real GitHub is called).
+import datetime as _dt  # noqa: E402
+import ipaddress  # noqa: E402
+import logging  # noqa: E402
+import ssl  # noqa: E402
+import certifi  # noqa: E402
+from cryptography import x509  # noqa: E402
+from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
+from cryptography.x509.oid import NameOID  # noqa: E402
+
+tls_dir = Path(tempfile.mkdtemp())
+now_ = _dt.datetime.now(_dt.timezone.utc)
+ca_key, srv_key = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
+ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test Root CA")])
+ca_cert = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name).public_key(ca_key.public_key())
+           .serial_number(x509.random_serial_number()).not_valid_before(now_ - _dt.timedelta(days=1))
+           .not_valid_after(now_ + _dt.timedelta(days=2))
+           .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+           .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=False,
+                                        data_encipherment=False, key_agreement=False, key_cert_sign=True, crl_sign=True,
+                                        encipher_only=False, decipher_only=False), critical=True)
+           .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+           .sign(ca_key, hashes.SHA256()))
+srv_cert = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")]))
+            .issuer_name(ca_name).public_key(srv_key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now_ - _dt.timedelta(days=1)).not_valid_after(now_ + _dt.timedelta(days=2))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), critical=False)
+            .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+            .sign(ca_key, hashes.SHA256()))
+(tls_dir / "ca.pem").write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+(tls_dir / "srv.pem").write_bytes(srv_cert.public_bytes(serialization.Encoding.PEM) + srv_key.private_bytes(
+    serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+# certifi's own roots plus the test root: like a certifi that knows the root Windows has not downloaded yet
+(tls_dir / "bundle.pem").write_bytes(Path(certifi.where()).read_bytes() + b"\n" + (tls_dir / "ca.pem").read_bytes())
+
+
+class TlsH(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+
+    def do_GET(self):
+        body = json.dumps({"hello": "tls"}).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+
+tls_srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TlsH)
+sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+sctx.load_cert_chain(str(tls_dir / "srv.pem"))
+tls_srv.socket = sctx.wrap_socket(tls_srv.socket, server_side=True)
+threading.Thread(target=tls_srv.serve_forever, daemon=True).start()
+tls_url = f"https://127.0.0.1:{tls_srv.server_port}/o/r/releases/latest/download/latest.json"
+
+real_where = certifi.where
+try:
+    certifi.where = lambda: str(tls_dir / "bundle.pem")
+    ctx = updates.ssl_context()
+    check("tls: context verifies certificates and host names", ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname)
+    try:
+        with updates._open(tls_url) as r:
+            check("tls: a root known only to certifi is trusted", json.loads(r.read()) == {"hello": "tls"})
+    except Exception as e:  # noqa: BLE001
+        FAIL.append(f"tls: certifi root not used: {e}")
+    certifi.where = real_where   # the test root is in neither store: the check fails with a clear message
+    records = []
+
+    class _Cap(logging.Handler):
+        def emit(self, rec): records.append(rec.getMessage())
+
+    logging.getLogger("updates").addHandler(_Cap())
+    config.save_settings({"update_url": tls_url})
+    up = updates.Updater()
+    st1 = dict(up.check()); up.check()
+    check("tls: unknown root -> message about the certificate", st1["error"] == updates.CERT_ERROR, st1["error"])
+    check("tls: a failing check is logged once, not every minute", len([m for m in records if "update check" in m]) == 1, records)
+    check("tls: the certificate error is recognised", updates.is_cert_error(
+        __import__("urllib.error").error.URLError(ssl.SSLCertVerificationError(1, "CERTIFICATE_VERIFY_FAILED"))))
+finally:
+    certifi.where = real_where
+    config.save_settings({"update_url": ""})
+    tls_srv.shutdown()
+
 print(f"OK: {OK[0]}  FAIL: {len(FAIL)}")
 for f in FAIL:
     print("FAIL:", f)

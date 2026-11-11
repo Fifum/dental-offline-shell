@@ -66,10 +66,11 @@ CREATE INDEX IF NOT EXISTS ix_va_start ON visits_archive(start);
 CREATE TABLE IF NOT EXISTS dp_payments(
     id TEXT PRIMARY KEY, date TEXT, sum REAL, patient_id TEXT, visit_id TEXT, payment_type TEXT, data TEXT, synced_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_dpp_date ON dp_payments(date);
--- ===== doctors' work schedule in Dentist Plus (GET /schedule): one row per doctor, day and chair
+-- ===== doctors' work schedule in Dentist Plus (GET /schedule): one row per doctor, day, chair and start
+-- (3.7.1: a doctor may have two shifts a day, and chair_id is often empty)
 CREATE TABLE IF NOT EXISTS dp_schedule(
     doctor_id TEXT, day TEXT, chair_id TEXT, branch_id TEXT, time_from TEXT, time_to TEXT, synced_at TEXT,
-    PRIMARY KEY(doctor_id, day, chair_id));
+    PRIMARY KEY(doctor_id, day, chair_id, time_from));
 CREATE INDEX IF NOT EXISTS ix_dps_day ON dp_schedule(day);
 -- ===== changes of a patient card made here (name, phone, birth date…) to send to Dentist Plus (PUT /patients/{id})
 CREATE TABLE IF NOT EXISTS patient_edits(
@@ -141,6 +142,21 @@ class DB:
         for col in ("kind TEXT", "link_id TEXT"):  # 2.12: '' payment, 'refund', 'deposit_use', 'insurance'; rows of one operation
             if col.split()[0] not in pcols:
                 self.conn.execute(f"ALTER TABLE payments ADD COLUMN {col}")
+        # 3.7.1: dp_schedule of 3.7.0 had the key (doctor, day, chair) — the second shift of a day replaced the first
+        pk = {r[1] for r in self.conn.execute("PRAGMA table_info(dp_schedule)") if r[5]}
+        if "time_from" not in pk:
+            self.conn.executescript("""
+                ALTER TABLE dp_schedule RENAME TO dp_schedule_370;
+                CREATE TABLE dp_schedule(
+                    doctor_id TEXT, day TEXT, chair_id TEXT, branch_id TEXT, time_from TEXT, time_to TEXT, synced_at TEXT,
+                    PRIMARY KEY(doctor_id, day, chair_id, time_from));
+                INSERT OR REPLACE INTO dp_schedule SELECT doctor_id, day, chair_id, branch_id, time_from, time_to, synced_at
+                    FROM dp_schedule_370;
+                DROP TABLE dp_schedule_370;
+                DROP INDEX IF EXISTS ix_dps_day;
+                CREATE INDEX IF NOT EXISTS ix_dps_day ON dp_schedule(day);
+                DELETE FROM meta WHERE key='dp_dicts_at';
+            """)
         if self.conn.execute("SELECT value FROM meta WHERE key='visits_archive'").fetchone() is None:
             self.conn.execute(_TO_ARCHIVE)  # first start: what is already in the mirror
             self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('visits_archive','1')")

@@ -43,6 +43,7 @@ VISITS = {100: visit(100, f"{today} 10:00"),
           104: visit(104, f"{today} 14:00", status="in_chair"),
           105: visit(105, f"{today} 16:00", description="")}
 NEXT = {"v": 200, "p": 800}
+CARD_FAIL = {}    # 3.7.1: patient id -> (HTTP code, how many times; -1 = always)
 
 
 def page(items, q):
@@ -164,6 +165,10 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, VISITS[vid]) if vid in VISITS else self.send(404, {"error": "Запись не найдена"})
         if p.startswith("patients/"):
             pid = int(p.split("/")[1])
+            fail = CARD_FAIL.get(pid)
+            if fail and fail[1] != 0:
+                CARD_FAIL[pid] = (fail[0], fail[1] - 1)
+                return self.send(fail[0], {"error": "Too Many Attempts." if fail[0] == 429 else "Server Error"}, {"Retry-After": "0"})
             return self.send(200, PATIENTS[pid]) if pid in PATIENTS else self.send(404, {"error": "Запись не найдена"})
         if p == "patients": return self.send(200, page(list(PATIENTS.values()), q))
         if p == "payments":
@@ -173,6 +178,12 @@ class H(BaseHTTPRequestHandler):
             a, b = date.fromisoformat(q["date_from"]), date.fromisoformat(q["date_to"])
             rows = []
             d = a
+            while d <= b and STATE.get("two_shifts"):   # 3.7.1: two shifts a day without a chair, one row without time
+                rows += [{"doctor_id": int(q["doctor_id"]), "chair_id": None, "branch_id": 1, "day": d.isoformat(),
+                          "time_from": f, "time_to": t} for f, t in (("09:00:00", "13:00:00"), ("15:00:00", "19:00:00"))]
+                rows.append({"doctor_id": int(q["doctor_id"]), "chair_id": None, "branch_id": 1, "day": d.isoformat(),
+                             "time_from": None, "time_to": None})
+                d += timedelta(days=1)
             while d <= b:
                 for chair in (4, 5, 6, 7)[:STATE["chairs"]]:   # 2 chairs: a 31-day window gives 62 rows; 4 chairs: 124, capped
                     rows.append({"doctor_id": int(q["doctor_id"]), "chair_id": chair, "branch_id": 1, "day": d.isoformat(),
@@ -337,6 +348,87 @@ check("pending edit listed in «Перенос»", any(x["kind"] == "patient_edi
 # manual mode: nothing is written to Dentist Plus
 LOG.clear(); w.sync_once()
 check("manual mode writes nothing", not [x for x in LOG if x[0] != "GET"])
+
+# ---- 4. 3.7.1: patient cards that did not load — the reason is kept, 429/5xx are asked again, not lost
+import logging  # noqa: E402
+import sync as syncmod  # noqa: E402
+syncmod.CARD_PAUSE_S = 0
+LOGGED = []
+
+
+class _Cap(logging.Handler):
+    def emit(self, rec): LOGGED.append(rec.getMessage())
+
+
+logging.getLogger("sync").addHandler(_Cap())
+for pid in (60, 61, 62):
+    PATIENTS[pid] = {"id": pid, "fname": f"П{pid}", "lname": "Карточкин", "date_of_birth": "1990-01-01"}
+for i, pid in enumerate((60, 61, 62, 63)):
+    VISITS[300 + i] = visit(300 + i, f"{today} 0{8 + i // 2}:{(i % 2) * 30:02d}", patient={"id": pid, "fname": "Т", "lname": "Т"})
+CARD_FAIL.update({61: (429, -1), 62: (500, 3)})   # 61: always «too many requests»; 62: the server fails 3 times
+w.sync_once()
+last = json.loads(d.one("SELECT counts FROM sync_log ORDER BY id DESC LIMIT 1")["counts"])
+check("card errors counted with their reasons", last.get("patient_errors") == 2
+      and last.get("patient_error_reasons") == {"HTTP 404": 1, "HTTP 429": 1}, last)
+check("a 5xx card is asked again one by one and loaded", d.one("SELECT detail FROM patients WHERE id='62'")["detail"]
+      and last.get("patient_retried_slowly", 0) >= 1, last)
+check("cards without errors loaded", d.one("SELECT detail FROM patients WHERE id='60'")["detail"] is not None)
+check("the 429 card waits for the next sync, the 404 one does not", json.loads(d.meta_get("patients_retry")) == ["61"]
+      and last.get("patient_retry_next_sync") == 1, d.meta_get("patients_retry"))
+check("the reason is in the log", any("HTTP 429" in m and "HTTP 404" in m for m in LOGGED), LOGGED)
+CARD_FAIL.clear()
+del VISITS[301]          # patient 61 is no longer among the visits: asked only because the last sync failed it
+w.sync_once()
+last = json.loads(d.one("SELECT counts FROM sync_log ORDER BY id DESC LIMIT 1")["counts"])
+check("the failed card is loaded by the next sync", d.one("SELECT detail FROM patients WHERE id='61'")["detail"]
+      and last.get("patient_retry_from_last_sync") == 1 and json.loads(d.meta_get("patients_retry")) == [], last)
+
+# ---- 5. 3.7.1: two shifts of a doctor a day without a chair — both kept; rows without time are counted
+STATE["two_shifts"] = True
+tm = T + timedelta(days=1)
+n = w._pull_schedule(c, tm, tm + timedelta(days=2))
+STATE["two_shifts"] = False
+rows = d.q("SELECT time_from, time_to FROM dp_schedule WHERE doctor_id='7' AND day=? ORDER BY time_from", (tm.isoformat(),))
+check("second shift of the day does not replace the first", rows == [{"time_from": "09:00", "time_to": "13:00"},
+                                                                     {"time_from": "15:00", "time_to": "19:00"}], rows)
+check("received = saved + skipped", n == {"received": 2 * 3 * 3, "saved": 2 * 2 * 3, "skipped": 2 * 3}, n)
+check("calendar spans both shifts", Shifts(d).day(tm.isoformat()).get("7") == {"start": "09:00", "end": "19:00", "source": "dp"})
+
+# the table of 3.7.0 (key without time_from) is migrated with its rows
+import sqlite3  # noqa: E402
+old_path = os.path.join(tempfile.mkdtemp(), "old.db")
+cx = sqlite3.connect(old_path)
+cx.executescript("""CREATE TABLE dp_schedule(doctor_id TEXT, day TEXT, chair_id TEXT, branch_id TEXT, time_from TEXT, time_to TEXT,
+                    synced_at TEXT, PRIMARY KEY(doctor_id, day, chair_id));
+                    INSERT INTO dp_schedule VALUES('7','2026-11-12','','1','09:00','13:00','x');""")
+cx.commit(); cx.close()
+d2 = dbm.DB(old_path)
+pk = [r[1] for r in d2.conn.execute("PRAGMA table_info(dp_schedule)") if r[5]]
+d2.conn.execute("INSERT INTO dp_schedule VALUES('7','2026-11-12','','1','15:00','19:00','x')")
+check("old dp_schedule migrated: key with time_from, rows kept", "time_from" in pk
+      and d2.one("SELECT COUNT(*) n FROM dp_schedule")["n"] == 2, pk)
+d2.conn.close()
+
+# ---- 6. 3.7.1: the developer's report shows what the sync stored, without personal data
+import devreport  # noqa: E402
+w.sync_once()
+rep = devreport.build(d, w.status(), config.load_settings(), probe_api=False)
+data = rep["data"]
+dump = json.dumps(rep, ensure_ascii=False)
+check("report: services, payments, schedule, dictionaries", data["services"].get("api") == 1 and data["dp_payments"]["count"] == 2
+      and data["dp_schedule"]["count"] > 0 and data["dp_chairs"]["count"] == 2
+      and data["dp_record_statuses"]["titles"] == ["Не подтверждена", "Подтверждена", "Пришел"], data)
+check("report: patient edits and the last sync", isinstance(data["patient_edits"], dict) and data["last_sync"]["ok"]
+      and "visits" in data["last_sync"]["counts"], data["last_sync"])
+check("report: no patient names or phones", not any(x in dump for x in ("Олег", "Старый", "Карточкин", "+7999", "Новикова")))
+d.conn.execute("INSERT INTO sync_log(started,finished,ok,message,counts) VALUES('a','b',0,'Ошибка API: HTTP 500',"
+               "'{\"payments_error\": \"Ошибка у Иванова Мария Петровна\", \"patient_error_reasons\": {\"HTTP 429\": 3}}')")
+d.conn.commit()
+data = devreport.data_summary(d)
+check("report: a failed last sync with its section errors, scrubbed, and the last good one",
+      not data["last_sync"]["ok"] and "payments_error" in data["last_sync"]["counts"]
+      and "Иванова" not in json.dumps(data, ensure_ascii=False) and data["last_sync_ok"]["ok"], data["last_sync"])
+
 srv.shutdown()
 print("FAILED:", fails) if fails else print("ALL OK")
 sys.exit(1 if fails else 0)

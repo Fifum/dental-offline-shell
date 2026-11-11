@@ -416,6 +416,63 @@ au = d.q("SELECT action, user_name FROM audit WHERE action='Согласие п�
 check("consent in the journal", au and au[-1]["user_name"] == "DOC", au)
 srv.stop()
 
+# ------------------------------------------------------------------ 3.7.1: max_completion_tokens for OpenAI
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+SEEN = []
+MODE = {"m": "new"}
+
+
+class OpenAIish(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        SEEN.append({k: v for k, v in body.items() if k != "messages"})
+        code, out = 200, {"choices": [{"message": {"content": "работает"}, "finish_reason": "stop"}]}
+        if MODE["m"] == "new" and "max_tokens" in body:      # a newer OpenAI model, word for word
+            code, out = 400, {"error": {"message": "Unsupported parameter: 'max_tokens' is not supported with this model. "
+                                        "Use 'max_completion_tokens' instead.", "type": "invalid_request_error",
+                                        "param": "max_tokens", "code": "unsupported_parameter"}}
+        elif MODE["m"] == "new" and body.get("temperature", 1) != 1:
+            code, out = 400, {"error": {"message": "Unsupported value: 'temperature' does not support 0.1 with this model. "
+                                        "Only the default (1) value is supported.", "param": "temperature"}}
+        elif MODE["m"] == "old" and "max_completion_tokens" in body:   # an older server that knows only max_tokens
+            code, out = 422, {"error": "Unrecognized request argument supplied: max_completion_tokens"}
+        b = json.dumps(out, indent=2).encode()
+        self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+
+
+osrv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), OpenAIish)
+threading.Thread(target=osrv.serve_forever, daemon=True).start()
+obase = f"http://127.0.0.1:{osrv.server_port}/v1"
+os_ = {**ai.DEFAULTS, "enabled": True, "provider": "openai", "base_url": obase, "model": "gpt-5-mini", "timeout": 5}
+check("openai: a newer model answers after max_tokens -> max_completion_tokens", ai._chat([{"role": "user", "content": "x"}], os_) == "работает", SEEN)
+check("openai: the last request has max_completion_tokens and no max_tokens",
+      "max_completion_tokens" in SEEN[-1] and "max_tokens" not in SEEN[-1] and "temperature" not in SEEN[-1], SEEN)
+n = len(SEEN)
+ai._chat([{"role": "user", "content": "x"}], os_)
+check("openai: the parameters that worked are reused", len(SEEN) == n + 1, SEEN[n:])
+check("openai.com gets max_completion_tokens at once",
+      "max_completion_tokens" in ai._first_params("openai", "https://api.openai.com/v1", "gpt-4o-mini")
+      and "max_tokens" not in ai._first_params("openai", "https://api.openai.com/v1", "gpt-5")
+      and ai._first_params("openai", "https://api.openai.com/v1", "gpt-5").get("reasoning_effort") == "low")
+check("YandexGPT, GigaChat and own servers keep max_tokens",
+      all("max_tokens" in ai._first_params(p, b, m) for p, b, m in (("yandex", ai.PROVIDERS["yandex"]["base_url"], "yandexgpt-lite"),
+                                                                     ("gigachat", ai.PROVIDERS["gigachat"]["base_url"], "GigaChat-2"),
+                                                                     ("openai", "http://localhost:11434/v1", "qwen2.5"))))
+MODE["m"] = "old"
+SEEN.clear()
+ai._params[("openai", obase, "old-model")] = {"temperature": 0.1, "max_completion_tokens": 2000}
+check("an older server: max_completion_tokens -> max_tokens (422, error as text)",
+      ai._chat([{"role": "user", "content": "x"}], {**os_, "model": "old-model"}) == "работает"
+      and "max_tokens" in SEEN[-1] and "max_completion_tokens" not in SEEN[-1], SEEN)
+SEEN.clear()
+check("an older server with max_tokens: one request", ai._chat([{"role": "user", "content": "x"}], {**os_, "model": "plain"}) == "работает"
+      and len(SEEN) == 1 and SEEN[0].get("max_tokens") == 2000, SEEN)
+osrv.shutdown()
+
 print(f"OK: {OK[0]}  FAIL: {len(FAIL)}")
 for f in FAIL:
     print(" -", f)
