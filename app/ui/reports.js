@@ -60,7 +60,8 @@ async function loadReports() {
   const body = $("#repBody");
   const fn = {revenue: repRevenue, doctors: repDoctors, services: repServices, visits: repVisits, debts: repDebts,
     patients: typeof repPatients === "function" ? repPatients : null, load: typeof repLoad === "function" ? repLoad : null,
-    conversion: typeof repConversion === "function" ? repConversion : null}[S.repTab] || repRevenue;
+    conversion: typeof repConversion === "function" ? repConversion : null,
+    plans: typeof repPlans === "function" ? repPlans : null}[S.repTab] || repRevenue;  // 3.6: plans by status
   await fn(body);
   bindPeriod(body, loadReports);
   const pr = $("#repPrint", body); if (pr) pr.onclick = () => printTable($("#repTabs button.on").textContent, "#repBody table.tbl");

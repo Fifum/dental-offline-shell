@@ -149,6 +149,7 @@ class CRM:
             db.conn.executescript(SCHEMA)
             db.conn.commit()
         self._gen_at = 0.0
+        self.plan_hook = None  # 3.6: plan_status.PlanStatus.after_task — a task «перезвонить по плану» was closed
 
     # ============================================================ settings --
     def settings(self):
@@ -349,7 +350,7 @@ class CRM:
                           (tid, title, "task", None, pid, lead, None, assignee, due, "open", None, comment, _now(), who, None, None, _now()))
         return tid
 
-    def task_done(self, tid, result="", comment="", who="", later=None):
+    def task_done(self, tid, result="", comment="", who="", later=None, login=""):
         """Close a task with a result; «Перезвонить позже» moves the due date instead."""
         t = self.db.one("SELECT * FROM crm_tasks WHERE id=?", (str(tid or ""),))
         if not t:
@@ -369,8 +370,44 @@ class CRM:
         # a call result also goes to the call journal, so the call lists show it too
         if t["patient_id"] and self.mk and result in ("Записался", "Дозвонились", "Не дозвонились", "Отказ", "Перезвонить позже"):
             self.mk.log_call({"patient_id": t["patient_id"], "list": "tasks", "result": {"Перезвонить позже": "Перезвонить"}.get(result, result),
-                              "comment": (t["title"] + (". " + note if note else ""))[:300]}, who)
+                              "comment": (t["title"] + (". " + note if note else ""))[:300], "plan_id": t["plan_id"],
+                              "call_on": due if result == "Перезвонить позже" else None}, who, login)
+        if self.plan_hook and t["plan_id"]:
+            try:
+                self.plan_hook(t, result, login, who)
+            except ValueError:
+                pass
         return True
+
+    # ------------------------------------------- 3.6: tasks of the call list «брошенные планы» --
+    def plan_task(self, plan_id, patient_id, due, assignee="", comment=""):
+        """«Перезвонить» on an abandoned plan: one task per plan (the same id on every computer), due on the day."""
+        tid = _auto_id("plan_call", plan_id)
+        title = "Перезвонить: брошенный план лечения"
+        with self.db.tx() as c:
+            if c.execute("SELECT 1 FROM crm_tasks WHERE id=?", (tid,)).fetchone():
+                c.execute("""UPDATE crm_tasks SET status='open', due=?, assignee=?, comment=?, result=NULL, done_at=NULL, done_by=NULL,
+                             updated_at=? WHERE id=?""", (due, assignee or "", comment[:500], _now(), tid))
+            else:
+                c.execute("""INSERT INTO crm_tasks(id, title, kind, rule, patient_id, lead_id, plan_id, assignee, due, status, result,
+                             comment, created_at, created_by, done_at, done_by, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          (tid, title, "auto", "plan_call", patient_id, None, plan_id, assignee or "", due, "open", None, comment[:500],
+                           _now(), "Программа", None, None, _now()))
+        return tid
+
+    def plan_task_later(self, plan_id):
+        """Not reached: an open «перезвонить» task of the plan moves to tomorrow."""
+        with self.db.tx() as c:
+            c.execute("UPDATE crm_tasks SET due=?, updated_at=? WHERE plan_id=? AND rule='plan_call' AND status='open' AND due<=?",
+                      ((date.today() + timedelta(days=1)).isoformat(), _now(), plan_id, date.today().isoformat()))
+
+    def close_plan_tasks(self, plan_id, result, who="", rules=("plan", "plan_call"), note=""):
+        """Close the plan's open tasks (the call was made in the call list, or the plan was abandoned)."""
+        marks = ",".join("?" * len(rules))
+        with self.db.tx() as c:
+            c.execute(f"""UPDATE crm_tasks SET status='done', result=?, done_at=?, done_by=?, updated_at=?,
+                          comment=TRIM(COALESCE(comment,'') || ' ' || ?) WHERE plan_id=? AND status='open' AND rule IN ({marks})""",
+                      (result, _now(), who or "Программа", _now(), note, plan_id, *rules))
 
     def task_reopen(self, tid):
         with self.db.tx() as c:

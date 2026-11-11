@@ -551,7 +551,7 @@ class Assistant:
                 lines.append(f"Долг: {_rub(-bal)}")
         if perms & {"billing", "payments"}:
             pl = self.db.one("SELECT COUNT(*) AS n, COALESCE(SUM(total),0) AS s FROM invoices WHERE patient_id=? AND kind='plan' "
-                             "AND COALESCE(plan_status,'Предварительный') IN ('Предварительный','Подтверждён','Активен')", (p["id"],))
+                             "AND COALESCE(plan_status,'Предварительный') IN ('Предварительный','Подтверждён','Активен','Брошен')", (p["id"],))
             if pl["n"]:
                 lines.append(f"Открытых планов лечения: {pl['n']} на {_rub(pl['s'])}")
         return {"text": p["name"], "lines": lines, "rows": [{"label": "Открыть карточку", "sub": "", "go": {"patient": p["id"]}}]}

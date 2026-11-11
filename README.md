@@ -54,7 +54,7 @@ working without it.
 | **Memberships** | Membership types (services × count, price, months); selling one bills an invoice; «by membership» lines cost 0 and use up visits, checked against the patient, the expiry and what is left |
 | **Cash drawer by shifts** | Open a shift with the cash in the drawer; expected cash = opening + cash payments − cash refunds + certificates sold for cash + cash in − cash out; cash in/out with reasons (a cash expense goes to accounting); closing with counted cash, card terminal and SBP reconciliation, the difference and a printable shift report |
 | **Voluntary health insurance (ДМС)** | Insurers, patients' policies and letters of guarantee with limits; an invoice paid by the insurer is not the patient's debt; monthly registries in Excel, «sent» and «paid» (refused invoices go back to the patient), insurers' debt in the debts report |
-| **Treatment plan options** | One plan with «economy / standard / premium» options: common items plus each option's own services, warranty, term and a note; the patient's choice confirms the plan and only the chosen option can be billed; analytics count an undecided plan once, at its cheapest option |
+| **Treatment plan options** | One plan with «economy / standard / premium» options: common items plus each option's own services, warranty, term and a note; the patient's choice confirms the plan and only the chosen option can be billed; analytics count an undecided plan once, at its cheapest option. 3.6: proposed / sold / in work / finished / abandoned / refused with history, a call list for abandoned plans and a report by status and doctor |
 | **Plan presentation** | A patient-facing page: clinic header, the tooth chart with plan teeth and stage numbers, options side by side, stages and prices, signatures; print, a real PDF (headless Edge, no extra software), save to the patient's documents, or send to the patient tablet where the patient picks an option and signs |
 | **Director's screen** | The director lands on it: today's and the month's payments against the same days of last month, a forecast from the pace of working days, plan completion, average check, new patients, cancellations and no-shows; doctors with plan, a «where we should be today» tick, forecast and load by the work schedule; plain-language hints (behind plan and by how much a day, free slots in the next days, the weekday and time of day with most no-shows, plans not started, debts) that open the right screen; the week ahead |
 | **Plan vs fact** | Monthly targets for payments, visits and new patients for the clinic and every doctor, fact, percent and forecast (visits count what is already booked), copy last month's plan; synced between laptops |
@@ -297,6 +297,32 @@ service costs.
 `app/stock_auto.py` holds the visit write-off and the cost, `app/stock.py` the places and transfers, `app/ui/stock-auto.js`
 the screens. The four new tables sync over the clinic network; staff are stored by login.
 
+## Treatment plan statuses (3.6)
+
+A treatment plan is a sale: it is proposed, sold, worked on and finished — or it is quietly abandoned. The program now tells
+these apart, finds the abandoned ones and gives the front desk a call list for them.
+
+* **Statuses.** «Предложен» (Предварительный), «Продан» (Подтверждён), «В работе» (Активен), «Завершён» (Лечение завершено),
+  the new «Брошен» and «Отказ». The stored names stay those of 2.9, so every report, segment and call list keeps working.
+* **Automatic, where the data allows** (on by default, the rules are a setting of «Отчёты»): a bill by the plan or a finished
+  Dentist Plus visit with a service of the plan → «В работе»; every billable item billed → «Завершён»; sold or in work with no
+  visit, bill or booking for 60 days → «Брошен» (a proposed plan only when the director sets its own number of days); a bill,
+  a visit or a booking brings an abandoned plan back. A status set by hand wins — the rules only look at what happened after it.
+* **History.** Every change is a row of `plan_status_log` with who (by login), when and why; the plan shows it, the
+  automatic pass writes one line to the action journal. An automatic row's id is made of the plan, the change and the row
+  before it, so two laptops that abandon the same plan offline keep one row after the sync.
+* **Call list («CRM» → «Обзвон» → «Брошенные планы»).** Who to call, the plan, the money left, the last visit and why the plan
+  is in the list; «к звонку» or all, by doctor and by how long ago. Results: reached, not reached (again tomorrow), call back
+  on a date (a CRM task due that day — the menu badge reminds), refused with a reason (the plan becomes «Отказ»), booked (back
+  to work as soon as the visit is in the schedule). Calls are rows of the existing call journal with the plan and the caller's
+  login; the plan's CRM tasks are closed by the call, and closing the «перезвонить» task on the tasks screen works the same.
+* **Report («Отчёты» → «Планы лечения»).** Plans made in the period by status and by doctor, the funnel «предложен → продан →
+  в работе → завершён», the money left in abandoned plans now, plans brought back by calls and by whom; a doctor without
+  «Отчёты» gets only own plans. A new motivation rule pays for an abandoned plan brought back after the employee's call.
+
+`app/plan_status.py` holds the statuses, the rules, the call list and the report; `app/ui/plan-status.js` the screens. Both
+new tables sync over the clinic network.
+
 ## Architecture
 
 ```
@@ -348,6 +374,8 @@ Dentist Plus partner API
 | `app/ui/stock-lots.js` | Lots in the material card, expired write-off, purchase list window and supplier requests |
 | `app/stock_auto.py` | 3.5: write-off by Dentist Plus visits (drafts or automatic, never twice, reversible), the place of a visit, the cost of services, materials for the P&L |
 | `app/ui/stock-auto.js` | «По приёмам», «Места хранения» and transfers, «Себестоимость» |
+| `app/plan_status.py` | 3.6: treatment plan statuses for sales — automatic rules, history, the call list for abandoned plans, the report |
+| `app/ui/plan-status.js` | Status and history in the plan, «Брошенные планы» in «Обзвон», «Планы лечения» in «Отчёты», the rules |
 | `app/backup.py` | Automatic backups: online copy, integrity check, rotation, second folder, restore with a safety copy |
 | `app/security.py` | Disk encryption state (BitLocker / Device Encryption) without admin rights |
 | `app/waitlist.py` | Waiting list: entries, filters by doctor and day, booked / removed |
@@ -478,6 +506,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_dp_transfer.py          # 129 checks: no double entry — sections and their settings, the text for Dentist Plus, the mark (kept / dropped), auto mark, «Не перенесено», the reminder, the day report line, reconciliation, sync of marks, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_finance_staff.py        # 150 checks: profit and loss by months, the cash flow by accounts, the administrators' motivation into the payroll and the profit, the timesheet against the schedule, the week and month report (fake SMTP and Telegram, when it is due), sync between computers, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_stock_auto.py           # 129 checks: services of a Dentist Plus visit in its shapes, drafts, the place by chair / branch, never twice (an invoice here, two computers offline), revert and skip, services by hand, the automatic mode from its day, places and transfers, the cost of services, materials in the P&L, sync, rights over HTTP, UI wiring
+.venv\Scripts\python tests\test_plan_status.py          # 116 checks: plan status history, the automatic rules (bill or Dentist Plus visit → in work, all billed → finished, 60 idle days → abandoned, back on a visit / bill / booking), a manual status wins, the call list and its results with CRM tasks, the report by status and doctor, the motivation, two computers offline, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 

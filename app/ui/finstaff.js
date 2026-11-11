@@ -88,7 +88,7 @@ async function accMotivation(body) {
   const item = it => {
     const f = title[it.rule] || {title: it.rule};
     const how = it.rule === "per_visit" ? `${it.count} из ${it.of} записей × ${money(it.rate)}`
-      : it.rule === "per_new" || it.rule === "lead_came" ? `${it.count} × ${money(it.rate)}`
+      : it.rule === "per_new" || it.rule === "lead_came" || it.rule === "plan_back" ? `${it.count} × ${money(it.rate)}`
       : it.rule === "plan_bonus" ? (it.plan ? `план ${money(it.plan)}, факт ${money(it.fact)} — ${it.done ? "выполнен" : "не выполнен"}` : "план клиники на месяц не задан")
       : `${fsH(it.rate)} % от ${money(it.base)}`;
     return `<div class="mot-it"><span>${esc(f.title)}</span><small class="muted">${esc(how)}</small><b>${money(it.amount)}</b></div>`;

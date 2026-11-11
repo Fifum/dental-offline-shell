@@ -10,7 +10,7 @@ async function openInvoice(o) {
     variants: inv && inv.variants ? inv.variants.map(v => ({...v})) : [], variant: (inv && inv.variant) || "", tab: ""};
   const pat = P && P.id === o.patient_id ? P : await api.patient(o.patient_id);
   const isPlan = inv ? inv.kind === "plan" : o.kind === "plan";
-  const PLAN_ST = ["Предварительный", "Подтверждён", "Активен", "Лечение завершено", "Отказ"];
+  const PLAN_ST = ["Предварительный", "Подтверждён", "Активен", "Лечение завершено", "Брошен", "Отказ"];  // 3.6: «Брошен»
   const box = modal(`<div class="m-h"><h3>${isPlan ? (inv ? "План лечения" : "Новый план лечения") : (inv ? "Счёт" : "Новый счёт")} · ${esc(pat.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b inv">
       <div class="inv-left">
@@ -21,7 +21,8 @@ async function openInvoice(o) {
       <div class="inv-right">
         <div class="allergy-bar" id="ivAllergy" hidden></div>
         ${isPlan ? `<div class="grid2"><label class="fl">Название плана<input class="input" id="ivTitle" value="${esc((inv && inv.title) || "План лечения от " + fmtDate(iso(new Date())))}"></label>
-          <label class="fl">Статус плана<select class="input" id="ivPSt">${PLAN_ST.map(s => `<option ${s === ((inv && inv.plan_status) || "Предварительный") ? "selected" : ""}>${s}</option>`).join("")}</select></label></div>
+          <label class="fl">Статус плана<select class="input" id="ivPSt">${typeof pstOptions === "function" ? pstOptions(inv && inv.plan_status) : PLAN_ST.map(s => `<option ${s === ((inv && inv.plan_status) || "Предварительный") ? "selected" : ""}>${s}</option>`).join("")}</select></label></div>
+          ${inv ? `<div id="ivPHist"></div>` : ""}
           <div class="pv-bar" id="pvBar"></div>` : ""}
         <div class="grid2"><label class="fl">Врач<select class="input" id="ivDoc"><option value="">—</option>${R.doctors.map(d => `<option value="${esc(d.id)}" ${d.id === ((inv && inv.doctor_id) || o.doctor_id) ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></label>
           <label class="fl">Скидка на счёт, %<input class="input" id="ivDisc" type="number" min="0" max="100" value="${st.discount || 0}"></label></div>
@@ -47,6 +48,7 @@ async function openInvoice(o) {
   if (typeof familyDiscountHint === "function") familyDiscountHint(box, pat);
   if (typeof finPayerInit === "function") finPayerInit(box, inv, pat, isPlan);
   if (isPlan && inv && typeof planLabOrders === "function") planLabOrders(box, inv, pat);
+  if (isPlan && inv && typeof planHistoryInto === "function") planHistoryInto($("#ivPHist", box), inv.id);  // 3.6
   const total = () => {
     let t = 0;
     st.items.forEach(it => { const s = (+it.price || 0) * (+it.qty || 1) * (1 - (+it.discount || 0) / 100); it.sum = Math.round(s * 100) / 100; t += s; });

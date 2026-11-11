@@ -316,6 +316,15 @@ class Director:
             out.append({"level": "info", "go": "conversion",
                         "text": f"Не начаты {d['plans_open']['count']} планов лечения на {rub(d['plans_open']['sum'])}. "
                                 "Список для звонков — «CRM» → «Обзвон» → «План не начат»."})
+        try:  # 3.6: abandoned plans — the money left in them and the call list
+            from plan_status import abandoned_summary
+            ab = abandoned_summary(self.db)
+            if ab["n"]:
+                out.append({"level": "warn", "go": "plans",
+                            "text": f"Брошено {ab['n']} {_plural(ab['n'], 'план', 'плана', 'планов')} лечения, в них осталось {rub(ab['left'])}. "
+                                    "Список для звонков — «CRM» → «Обзвон» → «Брошенные планы»."})
+        except Exception:  # noqa: BLE001 — a hint must never break the director's screen
+            pass
         try:  # CRM tasks nobody did on time
             late = self.db.one("SELECT COUNT(*) AS n FROM crm_tasks WHERE status='open' AND due < ?", (date.today().isoformat(),))["n"]
         except Exception:  # noqa: BLE001 — no CRM tables (tests of the director alone)
@@ -407,7 +416,7 @@ class Director:
                 lines.append(f"Меньше всего записей: {', '.join(_short(n) for n in low)} — предложите свободные окна пациентам "
                              "из листа ожидания и обзвона.")
         plans = self.db.q("""SELECT i.doctor_id, COUNT(*) AS n, COALESCE(SUM(i.total),0) AS s FROM invoices i WHERE i.kind='plan'
-                             AND COALESCE(i.plan_status,'Предварительный') IN ('Предварительный','Подтверждён','Активен')
+                             AND COALESCE(i.plan_status,'Предварительный') IN ('Предварительный','Подтверждён','Активен','Брошен')
                              AND i.created_at >= ? GROUP BY i.doctor_id ORDER BY s DESC""", ((t - timedelta(days=365)).isoformat(),))
         top = [p for p in plans if p["doctor_id"] in names and p["n"] >= 3][:3]
         if top:

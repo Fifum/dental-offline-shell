@@ -13,7 +13,8 @@ What is counted, for a month:
 - a new patient: the booking was the patient's first visit;
 - a CRM request with the stage «пришёл» closed in the month, of which the employee is in charge (or that he created);
 - own sales: payments in the month for invoices the employee made (`invoices.created_by`), plus gift certificates he sold;
-- a percent of the clinic's payments of the month, and a fixed bonus when the clinic's revenue plan is met.
+- a percent of the clinic's payments of the month, and a fixed bonus when the clinic's revenue plan is met;
+- 3.6: an abandoned treatment plan that came back to work after the employee's call (within 30 days of the call).
 """
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ RULES = [
     ("sales_pct", "От своих продаж (счета, абонементы, сертификаты)", "%"),
     ("revenue_pct", "От поступлений клиники за месяц", "%"),
     ("plan_bonus", "Премия за выполнение плана клиники по поступлениям", "₽"),
+    ("plan_back", "За брошенный план лечения, возвращённый звонком", "₽"),  # 3.6
 ]
 KEYS = [k for k, _, _ in RULES]
 CAME = ("done", "came")
@@ -62,6 +64,8 @@ class Motivation:
             db.conn.executescript(SCHEMA)
             if "created_by" not in {r[1] for r in db.conn.execute("PRAGMA table_info(invoices)")}:
                 db.conn.execute("ALTER TABLE invoices ADD COLUMN created_by TEXT")  # login of who made the invoice
+            if "plan_back" not in {r[1] for r in db.conn.execute("PRAGMA table_info(motivation_rules)")}:
+                db.conn.execute("ALTER TABLE motivation_rules ADD COLUMN plan_back REAL DEFAULT 0")  # 3.6
             db.conn.commit()
 
     # ------------------------------------------------------------ the log --
@@ -202,6 +206,9 @@ class Motivation:
                 items.append({"rule": "sales_pct", "base": base, "rate": rule["sales_pct"], "amount": _r(base * rule["sales_pct"] / 100)})
             if rule["revenue_pct"]:
                 items.append({"rule": "revenue_pct", "base": revenue, "rate": rule["revenue_pct"], "amount": _r(revenue * rule["revenue_pct"] / 100)})
+            if rule["plan_back"]:
+                n = self._plans_back(s["login"], a, b)
+                items.append({"rule": "plan_back", "count": n, "rate": rule["plan_back"], "amount": _r(n * rule["plan_back"])})
             if rule["plan_bonus"]:
                 done = bool(plan) and (fact or 0) >= plan
                 items.append({"rule": "plan_bonus", "plan": plan, "fact": fact, "done": done, "rate": rule["plan_bonus"],
@@ -239,6 +246,14 @@ class Motivation:
             return self.db.one("""SELECT COUNT(*) AS n FROM crm_leads WHERE stage='came' AND closed_at >= ? AND closed_at < ?
                                   AND (lower(COALESCE(assignee,''))=? OR (COALESCE(assignee,'')='' AND created_by=?))""",
                                (a, b, s["login"], s["name"]))["n"]
+        except sqlite3.OperationalError:
+            return 0
+
+    def _plans_back(self, login, a, b):
+        """3.6: abandoned plans that came back to work in the month after the employee's call (plan_status_log.credit)."""
+        try:
+            return self.db.one("""SELECT COUNT(*) AS n FROM plan_status_log WHERE old='Брошен' AND new NOT IN ('Брошен','Отказ')
+                                  AND credit=? AND at >= ? AND at < ?""", (login, a, b))["n"]
         except sqlite3.OperationalError:
             return 0
 

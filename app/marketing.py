@@ -22,7 +22,8 @@ DEFAULT_SOURCES = ["Рекомендация знакомых", "Яндекс К
 RESULTS = ["Дозвонились", "Записался", "Перезвонить", "Не дозвонились", "Отказ", "Написали"]
 LISTS = {"remind": "Напомнить о визите", "lost": "Давно не были", "plans": "План лечения не начат",
          "unfinished": "План лечения не завершён", "birthdays": "Дни рождения", "debts": "Долги",
-         "tasks": "Задача", "segment": "Рассылка", "reviews": "Оценка визита"}  # the last three: only marks in the call log
+         "tasks": "Задача", "segment": "Рассылка", "reviews": "Оценка визита",  # these three: only marks in the call log
+         "abandoned": "Брошенный план лечения"}  # 3.6: the call list of plan_status.py (calls with plan_id)
 
 
 def _now():
@@ -236,7 +237,9 @@ class Marketing:
                                     f" · исполнится {nxt.year - bd.year}"})
         return sorted(out, key=lambda x: (x["in_days"], x["name"] or ""))
 
-    def log_call(self, f, who=""):
+    def log_call(self, f, who="", login=""):
+        """A call (or a message). 3.6: `plan_id` — a call about that treatment plan, `call_on` — when to call back,
+        the caller's login is kept as well (staff are known by login on every computer of the clinic)."""
         pid = str(f.get("patient_id") or "")
         if not self.db.one("SELECT 1 AS x FROM patients WHERE id=?", (pid,)):
             raise ValueError("Пациент не найден")
@@ -244,9 +247,16 @@ class Marketing:
         if result not in RESULTS:
             raise ValueError("Выберите результат звонка")
         lst = f.get("list") if f.get("list") in LISTS else ""
+        cols = {r[1] for r in self.db.conn.execute("PRAGMA table_info(marketing_calls)")}
         with self.db.tx() as c:
-            c.execute("INSERT INTO marketing_calls(patient_id, list, result, comment, at, user_name) VALUES(?,?,?,?,?,?)",
-                      (pid, lst, result, str(f.get("comment") or "").strip()[:300], _now(), who))
+            if "plan_id" in cols:
+                c.execute("""INSERT INTO marketing_calls(patient_id, list, result, comment, at, user_name, plan_id, call_on, login)
+                             VALUES(?,?,?,?,?,?,?,?,?)""",
+                          (pid, lst, result, str(f.get("comment") or "").strip()[:300], _now(), who,
+                           str(f.get("plan_id") or "") or None, str(f.get("call_on") or "")[:10] or None, str(login or "").lower() or None))
+            else:
+                c.execute("INSERT INTO marketing_calls(patient_id, list, result, comment, at, user_name) VALUES(?,?,?,?,?,?)",
+                          (pid, lst, result, str(f.get("comment") or "").strip()[:300], _now(), who))
         if f.get("no_calls"):
             self.set_patient(pid, {"no_calls": True})
         return True

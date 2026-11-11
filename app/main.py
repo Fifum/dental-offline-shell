@@ -84,6 +84,10 @@ class Api:
         # 3.5: write-off by Dentist Plus visits, places of the stock (on Stock) and the cost of services
         from stock_auto import StockAuto
         self._sauto = StockAuto(db, self._stock, self._acc)
+        # 3.6: treatment plan statuses for sales, the call list for abandoned plans, the reports
+        from plan_status import PlanStatus
+        self._pst = PlanStatus(db, self._local, self._crm, self._mk, self._sauto)
+        self._crm.plan_hook = self._pst.after_task
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -394,7 +398,7 @@ class Api:
         return self._mk.call_list(kind, f)
 
     def log_call(self, f):
-        return self._mk.log_call(f, self._who())
+        return self._mk.log_call(f, self._who(), self._login())
 
     def set_patient_marketing(self, pid, f):
         return self._mk.set_patient(pid, f or {})
@@ -416,7 +420,7 @@ class Api:
         return self._crm.task_save(f or {}, self._who())
 
     def crm_task_done(self, tid, result="", comment="", later=None):
-        return self._crm.task_done(tid, result, comment, self._who(), later)
+        return self._crm.task_done(tid, result, comment, self._who(), later, self._login())
 
     def crm_task_reopen(self, tid):
         return self._crm.task_reopen(tid)
@@ -652,7 +656,10 @@ class Api:
                 r = self._forms.sign_document(t["document_id"], t["signer"], data.get("image"), "patient", place, ip, "")
                 result = {"signature_id": r["id"]}
             elif t["kind"] == "plan":
+                before = self._pst.status_of(t.get("plan_id"))
                 result = self._plans.sign_on_tablet(t, data.get("variant"), data.get("image"), place, ip)
+                self._pst.record(t.get("plan_id"), before, self._pst.status_of(t.get("plan_id")), "пациент выбрал и подписал на планшете",
+                                 "", "Пациент (" + place + ")")
             elif t["kind"] == "nps":
                 r = self._crm.review_save({"patient_id": t["patient_id"], "visit_id": t.get("visit_id"), "score": data.get("score"),
                                            "comment": data.get("comment"), "channel": "tablet"}, place)
@@ -911,6 +918,7 @@ class Api:
 
     def save_invoice(self, inv):
         is_inv = (inv.get("kind") or "invoice") != "plan"
+        before = self._pst.status_of(inv.get("id")) if not is_inv and inv.get("id") else None
         if is_inv:
             self._fin.check_uses(inv)  # lines «по абонементу» cost 0 and need visits left on the membership
             if inv.get("insurer_id"):
@@ -922,6 +930,13 @@ class Api:
             if "insurer_id" in inv:
                 self._fin.set_payer(iid, inv.get("insurer_id"), inv.get("ins_doc_id"))
         self._stock.on_invoice(iid, self._who())  # materials of billed services leave the stock
+        if not is_inv:  # 3.6: the history of the plan's status
+            after = self._pst.status_of(iid)
+            if before is None and not inv.get("id"):
+                self._pst.record(iid, "", after, "план составлен", self._login(), self._who())
+            elif after != before:
+                why = "пациент выбрал вариант" if before == "Предварительный" and after == "Подтверждён" and inv.get("variant") else "вручную"
+                self._pst.record(iid, before, after, why, self._login(), self._who())
         return iid
 
     def invoice(self, iid):
@@ -941,14 +956,21 @@ class Api:
         return inv
 
     def plan_to_invoice(self, plan_id, item_indexes=None, visit_id=None):
+        before = self._pst.status_of(plan_id)
         iid = self._local.plan_to_invoice(plan_id, item_indexes, visit_id)
         self._mot.stamp_invoice(iid, self._me())
         self._stock.on_invoice(iid, self._who())
+        self._pst.record(plan_id, before, self._pst.status_of(plan_id), "счёт по плану", self._login(), self._who())
+        self._pst.evaluate([plan_id])  # 3.6: everything billed → «Лечение завершено»
         return iid
 
     def plan_choose(self, plan_id, variant):
         """The patient chose «эконом / стандарт / премиум» ('' cancels the choice)."""
-        return self._plans.choose(plan_id, variant)
+        before = self._pst.status_of(plan_id)
+        out = self._plans.choose(plan_id, variant)
+        self._pst.record(plan_id, before, out.get("plan_status"), "выбран вариант" if variant else "выбор варианта отменён",
+                         self._login(), self._who())
+        return out
 
     def plan_pdf(self, html, name=""):
         """The plan presentation as a real PDF (headless Edge). The UI saves it with «Сохранить как…»."""
@@ -957,10 +979,43 @@ class Api:
             raise ValueError("Слишком большой документ")
         return plans.pdf_payload(html, name)
 
-    def set_plan_status(self, plan_id, status):
-        with self._db.tx() as c:
-            c.execute("UPDATE invoices SET plan_status=?, transferred=0 WHERE id=? AND kind='plan'", (status, plan_id))
+    def set_plan_status(self, plan_id, status, reason=""):
+        """A status set by hand (3.6: checked, with the reason and the history; the automatic rules then look only at what
+        happens after it)."""
+        self._pst.set_status(plan_id, status, str(reason or "").strip()[:200] or "вручную", self._login(), self._who())
         return True
+
+    # ------------------------------------------- 3.6: plan statuses, the call list for abandoned plans, reports --
+    def plan_status_meta(self):
+        return self._pst.meta()
+
+    def plan_history(self, plan_id):
+        return self._pst.history(plan_id)
+
+    def plan_status_settings_save(self, f):
+        return self._pst.save_settings(f)
+
+    def plan_calls(self, f=None):
+        return self._pst.calls(f if isinstance(f, dict) else {})
+
+    def plan_call(self, f):
+        return self._pst.call(f if isinstance(f, dict) else {}, self._login(), self._who())
+
+    def plan_report(self, date_from=None, date_to=None, f=None):
+        """Everything for the director and «Отчёты»; a doctor with «Счета и планы» only — own plans."""
+        f = f if isinstance(f, dict) else {}
+        perms, u = self._my_perms()
+        doctor = f.get("doctor_id") or None
+        if not (u is None or u.get("role") == "director" or "reports" in perms):
+            import auth
+            if not (u or {}).get("doctor_id"):
+                if auth.role_base(u.get("role")) != "doctor":
+                    raise ValueError("Отчёт по планам лечения видят директор и сотрудники с правом «Отчёты»")
+                raise ValueError("Ваша учётная запись не связана с врачом — попросите директора указать врача в «Сотрудниках»")
+            doctor = u["doctor_id"]
+        out = self._pst.report(date_from, date_to, doctor, f.get("status") or None)
+        out["own"] = bool(doctor and not f.get("doctor_id"))
+        return out
 
     def delete_invoice(self, iid):
         for p in self._db.q("SELECT id FROM payments WHERE invoice_id=?", (iid,)):
@@ -1549,6 +1604,14 @@ class Api:
                 st["stock_alerts"] = sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"])
         except Exception:  # noqa: BLE001
             pass
+        try:  # 3.6: the automatic plan statuses (at most every 10 minutes) and the abandoned plans to call about
+            self._pst.tick()
+            from auth import _current, Auth
+            u = getattr(_current, "user", None)
+            if u is None or "marketing" in Auth.effective_perms(u):
+                st["plan_calls"] = self._pst.due_count()
+        except Exception:  # noqa: BLE001
+            log.exception("status 3.6")
         try:  # 3.5: the automatic write-off by visits (at most every 5 minutes, only in the mode «сразу») and the drafts
             self._sauto.tick()
             from auth import _current, Auth

@@ -105,6 +105,9 @@ TABLES = [
     T("motivation_rules", key=("person",), title="Правило мотивации"),
     T("staff_bookings", title="Запись, сделанная сотрудником"),
     T("period_reports", key=("key",), title="Отчёт за неделю или месяц"),
+    # 3.6: the history of plan statuses (automatic rows have the same id on every computer) and their settings
+    T("plan_status_log", title="Статус плана лечения"),
+    T("plan_settings", key=("k",), title="Настройка статусов планов"),
     T("audit", intpk=True, refs={"user_id": "users"}, title="Журнал действий"),
 ]
 BY_NAME = {t.name: t for t in TABLES}

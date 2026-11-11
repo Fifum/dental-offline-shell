@@ -110,3 +110,12 @@
 /* sources with advertising payback: ten columns fit 1280 px */
 .src-tbl th,.src-tbl td{padding-left:10px;padding-right:10px}
 .src-tbl td.bar-cell{min-width:70px;width:9%}
+/* 3.6: treatment plan statuses — the history in the plan, the call list for abandoned plans, the report */
+.pst-hist{margin:2px 0 10px;font-size:13px}
+.pst-hist summary{cursor:pointer;color:var(--ink2);padding:2px 0 6px}
+.pst-hist .ev-row{flex-wrap:wrap;gap:8px}
+.pc-tbl td{vertical-align:top}
+.rp-grid{margin-bottom:12px}
+.rp-grid .pbody{margin:0}
+.rp-st tr.on td{background:var(--line2);font-weight:600}
+#pcMore{margin-top:10px}

@@ -215,6 +215,7 @@ async function refreshStatus() {
   if (typeof addonStatus === "function") addonStatus(st);
   if (typeof crmStatus === "function") crmStatus(st);
   if (typeof stockAutoStatus === "function") stockAutoStatus(st);  // 3.5: visits waiting for the write-off
+  if (typeof planCallsStatus === "function") planCallsStatus(st);  // 3.6: abandoned plans to call about
   if (st.me_perms && ME && st.me_perms.join() !== ME.perms.join()) {  // 2.14: the director changed this person's position
     ME.perms = st.me_perms; applyPerms();
     toast("Директор изменил ваши права — меню обновлено");
@@ -891,7 +892,7 @@ function renderPatient(tab) {
         const vs = i.variants || [], ch = vs.find(v => v.key === i.variant);
         const vline = vs.length ? `<small class="muted" style="display:block">${ch ? "Выбран вариант «" + esc(ch.name) + "»" : "Варианты: " + vs.map(v => esc(v.name)).join(" / ")}</small>` : "";
         return `<tr data-inv="${esc(i.id)}"><td class="lnk"><b>${esc(i.title || "План лечения")}</b>${vline}</td><td>${Object.entries(st).map(([k, t]) => `<div>● Этап ${esc(k)} [ ${esc([...new Set(t.flatMap(x => String(x || "").split(/\s*,\s*/)).filter(Boolean))].join(", "))} ]</div>`).join("")}</td>
-          <td>${esc(i.doctor_name || "")}</td><td>${fmtDate(i.created_at)}</td><td>${money(i.total)}</td><td><span class="pill ${/Актив/.test(i.plan_status) ? "st-cancel" : /заверш/.test(i.plan_status) ? "st-ok" : ""}">${esc(i.plan_status || "")}</span></td></tr>`; }).join("")}</tbody></table>`
+          <td>${esc(i.doctor_name || "")}</td><td>${fmtDate(i.created_at)}</td><td>${money(i.total)}</td><td>${typeof pstPill === "function" ? pstPill(i.plan_status || "Предварительный") : `<span class="pill ${/Актив/.test(i.plan_status) ? "st-cancel" : /заверш/.test(i.plan_status) ? "st-ok" : ""}">${esc(i.plan_status || "")}</span>`}</td></tr>`; }).join("")}</tbody></table>`
       : `<div class="empty"><b>Планов лечения нет</b><span>Составьте план, распечатайте его пациенту и выставляйте счета по этапам</span></div>`);
   } else if (tab === "docs") {
     body = addBtn("tAddDoc", "Создать документ") + (p.documents.length ? `<table class="tbl"><thead><tr><th>Документ</th><th>Создан</th><th>DP</th></tr></thead><tbody>${

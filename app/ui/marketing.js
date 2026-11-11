@@ -2,7 +2,8 @@
 /* Marketing: call lists (visit reminders, lapsed patients, unstarted plans, debts), birthdays and patient sources. */
 S.mkTab = "calls";
 S.mkList = "remind";
-const MK_LISTS = [["remind", "Напомнить о визите"], ["lost", "Давно не были"], ["plans", "План не начат"], ["unfinished", "План не завершён"], ["debts", "Должники"]];
+const MK_LISTS = [["remind", "Напомнить о визите"], ["lost", "Давно не были"], ["plans", "План не начат"], ["unfinished", "План не завершён"],
+  ["abandoned", "Брошенные планы"], ["debts", "Должники"]];  // 3.6: «Брошенные планы» — plan-status.js
 const CALL_CLS = {"Записался": "st-done", "Дозвонились": "st-ok", "Перезвонить": "st-come", "Не дозвонились": "", "Отказ": "st-cancel", "Написали": "st-ok"};
 
 /* ---- visit reminders by WhatsApp / Telegram: the chat opens with the text ready, the administrator presses «send» */
@@ -77,11 +78,12 @@ function bindCalls(r, reload) {
 }
 
 async function mkCalls(body) {
+  if (S.mkList === "abandoned" && typeof planCalls === "function") return planCalls(body);
   const f = {day: S.mkDay || null, months: S.mkMonths || 6};
   const r = await api.call_list(S.mkList, f);
   const extra = S.mkList === "remind" ? `<label class="inline-f">На дату<input type="date" class="input" id="mkDay" value="${r.day || ""}"></label><button class="btn ghost small" id="mkRmTpl">Текст напоминания</button>`
     : S.mkList === "lost" ? `<label class="inline-f">Не были больше<select class="input sm-sel" id="mkMonths">${[3, 6, 9, 12, 18, 24].map(n => `<option value="${n}" ${n === +f.months ? "selected" : ""}>${n} мес.</option>`).join("")}</select></label>` : "";
-  body.innerHTML = `<div class="tab-tools rep-tools"><div class="seg sm" id="mkLists">${MK_LISTS.map(([k, t]) => `<button data-l="${k}" class="${k === S.mkList ? "on" : ""}">${t}</button>`).join("")}</div>${extra}
+  body.innerHTML = `<div class="tab-tools rep-tools"><div class="seg sm" id="mkLists">${MK_LISTS.map(([k, t]) => `<button data-l="${k}" class="${k === S.mkList ? "on" : ""}">${t}${k === "abandoned" ? ` <i class="cnt" id="mkPlanCnt" ${S.planCallsDue ? "" : "hidden"}>${S.planCallsDue || ""}</i>` : ""}</button>`).join("")}</div>${extra}
       <span class="grow"></span><span class="muted">${r.rows.length ? `Обзвонено ${r.done} из ${r.rows.length}` : ""}</span><button class="icon-btn" title="Скачать в Excel" data-xls="#mkBody table.tbl" data-xls-title="#mkTabs button.on"><svg viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="m8.5 8.5 7 7M15.5 8.5l-7 7"/></svg></button><button class="icon-btn" id="mkPrint" title="Печать списка">${PRINT_ICON}</button></div>
     <div class="pbody">${callTable(r)}</div>
     <div class="muted note-line">${{remind: "Записи на выбранный день, кроме отменённых. Отметка звонка видна всем администраторам.",
