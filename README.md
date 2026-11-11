@@ -215,6 +215,31 @@ for installations updated from older versions, and only the director switches it
 `app/addon.py` holds the lists and the setting, `app/ui/addon.js` the labels; the labels are always in the page and
 CSS shows them only under `body.addon`, so the mode switches live (the 3-second status carries it) without a reload.
 
+## No double entry (3.3)
+
+The partner API of Dentist Plus does not accept medical records, so a record written here — by hand, from a visit
+template, by dictation or with the AI — is pasted into Dentist Plus by the doctor. 3.3 makes that a few clicks and keeps
+it from being forgotten.
+
+* **«Скопировать для DP».** One click puts the whole record on the clipboard in the order of the Dentist Plus form —
+  Жалобы, Анамнез, Объективно, Диагноз (МКБ-10), Лечение, Рекомендации; «по разделам» copies one field at a time.
+  Diagnoses go with their ICD-10 code and tooth, prescriptions with dose and schedule. It works from the patient card,
+  the record editor (unsaved text too) and the list. Sections, their order and names are a clinic setting
+  (`dp_settings`, synced like the rest of the clinic data).
+* **The mark «перенесено в Dentist Plus».** Who and when (`records.transferred_by` / `transferred_at`); the row travels
+  to the other computers over the clinic network and the mark goes to the action journal. Saving a record again
+  unchanged keeps the mark, a real change drops it. Optionally the copy marks the record by itself.
+* **«Не перенесено».** «Перенос» → «Медкарта» lists unmarked records by day and doctor with a 30-day counter on the menu;
+  at 20:00 (configurable) a doctor with records of today left gets a reminder; the day report (Telegram and e-mail)
+  has a line per doctor.
+* **«Сверка».** Records, invoices, payments and documents of a period against the marks, and finished Dentist Plus
+  visits (from the synced schedule and its archive) that have no record here — matched by the visit, a visit changed
+  here, or patient + day. Dentist Plus payments are not in its API, and the screen says «нет данных из Dentist Plus».
+* **Rights.** The director and staff with «Отчёты» or «Перенос в Dentist Plus» see everyone; a doctor sees and marks only
+  the records of the doctor his account is linked to. Everything works offline.
+
+`app/dp_transfer.py` holds the rules, `app/ui/dp.js` the screens.
+
 ## Architecture
 
 ```
@@ -387,6 +412,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_p2p.py                  # 48 checks: three computers (processes) find each other, pairing with the director's approval, both-way sync, staff approval, files, conflicts converge, LAN + cloud without duplicates
 .venv\Scripts\python tests\test_updates.py              # 58 checks: encrypted installer and notes, signing a release, a fake GitHub (302, ETag/304, 404), download and install, another build's key, worker once a minute, rights, publishing order
 .venv\Scripts\python tests\test_addon_mode.py           # 107 checks: the add-on mode — default for old installs, the director's switch, official / draft / internal documents, hiding, SaaS kept callable, UI wiring, addon.js in node
+.venv\Scripts\python tests\test_dp_transfer.py          # 129 checks: no double entry — sections and their settings, the text for Dentist Plus, the mark (kept / dropped), auto mark, «Не перенесено», the reminder, the day report line, reconciliation, sync of marks, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 

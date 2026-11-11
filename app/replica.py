@@ -93,6 +93,7 @@ TABLES = [
     T("patient_consents", title="Согласие пациента"),
     T("staff_roles", key=("key",), title="Должность"),
     T("day_reports", key=("day",), title="Отчёт за день"),
+    T("dp_settings", key=("k",), title="Настройка переноса в Dentist Plus"),
     T("audit", intpk=True, refs={"user_id": "users"}, title="Журнал действий"),
 ]
 BY_NAME = {t.name: t for t in TABLES}

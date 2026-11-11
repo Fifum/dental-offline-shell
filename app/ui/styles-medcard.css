@@ -142,3 +142,39 @@
 .ex-row{display:flex;align-items:center;gap:14px;padding:8px 16px;border-top:1px solid var(--line2)}
 .ex-row:first-of-type{border-top:0}
 .ex-row>span{flex:1;min-width:0}
+
+/* 3.3 «Без двойного ввода»: copy for Dentist Plus, the mark «перенесено», «Не перенесено», «Сверка» */
+.dp-rt{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--line2);font-size:12.5px}
+.dp-mk{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--ink2)}
+.dp-mk input{width:15px;height:15px;accent-color:var(--accent)}
+.dp-modal{display:flex;flex-direction:column;gap:10px}
+.dp-sec{border:1px solid var(--line);border-radius:var(--r,6px);padding:10px 12px;background:var(--panel)}
+.dp-sec.empty{opacity:.6;padding:8px 12px}
+.dp-sec-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.dp-sec-h .btn.done{color:var(--ok);border-color:var(--ok-line)}
+.dp-sec-t{margin-top:6px;white-space:pre-wrap;font-size:13px;color:var(--ink2);max-height:160px;overflow:auto}
+.dp-raw{width:100%;font:13px/1.5 inherit;white-space:pre-wrap}
+.dp-filter{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 16px;padding:12px 16px}
+.dp-filter .fl{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted)}
+.dp-filter .input{height:32px;min-width:0}
+.dp-filter .switch-row{margin:0 0 6px}
+.dp-docs{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 10px}
+.dp-doc-h{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 16px 2px;font-size:12.5px;font-weight:600;color:var(--muted)}
+.j-row.dp-row{grid-template-columns:24px 92px minmax(0,1fr) auto;cursor:default}
+.dp-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.dp-row .j-what .lnk{cursor:pointer}
+.dp-check td small{display:block;margin-top:2px;font-size:11.5px}
+.dp-nodata{color:var(--muted);font-style:italic}
+.dp-line{display:grid;grid-template-columns:120px minmax(120px,1.2fr) minmax(90px,1fr) minmax(0,2fr) auto;gap:10px;align-items:center;padding:7px 16px;border-top:1px solid var(--line2);font-size:13px}
+.dp-line .lnk{cursor:pointer}
+.dp-none{padding:6px 16px 10px;font-size:12.5px}
+.dp-secs-set{display:flex;flex-direction:column;gap:6px;margin:8px 0 12px}
+.dp-ss{display:grid;grid-template-columns:46px minmax(0,320px) 32px 32px;gap:8px;align-items:center}
+.dp-ss .switch-row{margin:0}
+.dp-ss .input{height:32px}
+@media (max-width:760px){
+  .j-row.dp-row{grid-template-columns:24px minmax(0,1fr)}
+  .j-row.dp-row .j-kind{display:none}
+  .dp-acts{grid-column:1/-1;justify-content:flex-start}
+  .dp-line{grid-template-columns:1fr 1fr}
+}

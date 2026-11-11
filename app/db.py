@@ -101,6 +101,15 @@ class DB:
             self.conn.execute("ALTER TABLE local_visits ADD COLUMN push_force INTEGER DEFAULT 0")
         if "series_id" not in lv:  # recurring visits: every visit of one series shares the id
             self.conn.execute("ALTER TABLE local_visits ADD COLUMN series_id TEXT")
+        # 3.3: who marked a record «перенесено в Dentist Plus» and when it was last copied for Dentist Plus
+        # (the columns travel to the other computers with the row, see replica.read_row)
+        rcols = {r[1] for r in self.conn.execute("PRAGMA table_info(records)")}
+        for col in ("transferred_by TEXT", "dp_copied_at TEXT", "dp_copied_by TEXT"):
+            if col.split()[0] not in rcols:
+                self.conn.execute(f"ALTER TABLE records ADD COLUMN {col}")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_records_date ON records(date)")
+        # 3.3: the clinic's settings of the transfer to Dentist Plus (sections, reminder) — the same on every computer
+        self.conn.execute("CREATE TABLE IF NOT EXISTS dp_settings(k TEXT PRIMARY KEY, v TEXT, updated_at TEXT)")
         if "plan_id" not in {r[1] for r in self.conn.execute("PRAGMA table_info(invoices)")}:
             self.conn.execute("ALTER TABLE invoices ADD COLUMN plan_id TEXT")  # invoice billed from a treatment plan
         icols = {r[1] for r in self.conn.execute("PRAGMA table_info(invoices)")}

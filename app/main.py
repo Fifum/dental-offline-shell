@@ -1301,8 +1301,89 @@ class Api:
         return True
 
     def mark_transferred(self, table, ids, done=True):
-        self._local.mark_transferred(table, ids, done)
+        self._local.mark_transferred(table, ids, done, self._who())
         return True
+
+    # ------------------------------------------- 3.3: no double entry (medical records → Dentist Plus) --
+    def _dp_scope(self):
+        """Everything for the director and staff with «Отчёты» or «Перенос в Dentist Plus»; a doctor — own records."""
+        perms, u = self._my_perms()
+        if u is None or u.get("role") == "director" or perms & {"reports", "transfer"}:
+            return {"all": True, "doctor_id": (u or {}).get("doctor_id")}
+        return {"all": False, "doctor_id": (u or {}).get("doctor_id")}
+
+    def _dp_can_mark(self, rids):
+        import dp_transfer
+        perms, _ = self._my_perms()
+        if not perms & {"transfer", "medcard_edit"}:
+            raise ValueError("Отмечать перенос может врач или сотрудник с правом «Перенос в Dentist Plus»")
+        scope = self._dp_scope()
+        if scope["all"]:
+            return
+        if not scope["doctor_id"]:
+            raise ValueError("Ваша учётная запись не связана с врачом — попросите директора указать врача в «Сотрудниках»")
+        for rid in rids:
+            r = self._db.one("SELECT doctor_id FROM records WHERE id=?", (str(rid),))
+            if r and not dp_transfer.can_see(scope, r["doctor_id"]):
+                raise ValueError("Отмечать можно только свои записи медкарты")
+
+    def dp_transfer_settings(self):
+        import dp_transfer
+        return dp_transfer.settings(self._db)
+
+    def dp_transfer_settings_save(self, f):
+        import dp_transfer
+        return dp_transfer.save_settings(self._db, f)
+
+    def dp_text(self, form):
+        """The text of an unsaved record (the editor, dictation, the AI) by the sections of Dentist Plus."""
+        import dp_transfer
+        return dp_transfer.build(dp_transfer.from_form(form), dp_transfer.settings(self._db))
+
+    def dp_copy(self, rid, section=None):
+        """The text of a saved record for Dentist Plus — whole or one section; remembers who copied it and, with
+        «отмечать после копирования» on, marks the whole record transferred."""
+        import dp_transfer
+        s = dp_transfer.settings(self._db)
+        r = self._local.record(str(rid or ""))
+        if not r:
+            raise ValueError("Запись медкарты не найдена")
+        b = dp_transfer.build(r["data"], s)
+        out = {**b, "record_id": r["id"], "section": None, "marked": False, "auto_mark": s["auto_mark"]}
+        if section:
+            sec = next((x for x in b["sections"] if x["key"] == section), None)
+            if not sec:
+                raise ValueError("Этот раздел выключен в настройках переноса")
+            out.update(text=sec["text"], section=sec["key"], title=sec["title"], empty=not sec["text"])
+        can_mark = True
+        try:
+            self._dp_can_mark([r["id"]])
+        except ValueError:
+            can_mark = False
+        out.update(dp_transfer.copied(self._db, r["id"], self._who(), auto=can_mark and not section, s=s))
+        return out
+
+    def dp_mark(self, ids, done=True):
+        """Mark records «перенесено в Dentist Plus» (or take the mark off). Goes to the action journal."""
+        import dp_transfer
+        ids = [str(i) for i in (ids if isinstance(ids, (list, tuple)) else [ids]) if i]
+        self._dp_can_mark(ids)
+        n = dp_transfer.mark(self._db, ids, bool(done), self._who())
+        return {"changed": n, "pending": dp_transfer.count(self._db, self._dp_scope())}
+
+    def dp_pending(self, date_from=None, date_to=None, doctor_id=None, show_done=False):
+        import dp_transfer
+        scope = self._dp_scope()
+        out = dp_transfer.pending(self._db, scope, date_from, date_to, doctor_id, bool(show_done))
+        out["doctors"] = self._db.doctors() if scope["all"] else []
+        out["linked"] = bool(scope["all"] or scope["doctor_id"])
+        return out
+
+    def dp_reconcile(self, date_from=None, date_to=None, doctor_id=None):
+        import dp_transfer
+        out = dp_transfer.reconcile(self._db, date_from, date_to, doctor_id or None)
+        out["doctors"] = self._db.doctors()
+        return out
 
     # ------------------------------------------------------------ status --
     def status(self):
@@ -1373,6 +1454,13 @@ class Api:
             self._daily.tick(self._cash_for)  # the day report at the set time, at most every 5 minutes
         except Exception:  # noqa: BLE001
             log.exception("status 2.14")
+        try:  # 3.3: records not transferred to Dentist Plus (the counter) and the reminder at the end of the day
+            import dp_transfer
+            perms, u = self._my_perms()
+            if u is None or perms & {"transfer", "reports", "medcard_edit"}:
+                st["dp"] = dp_transfer.status(self._db, self._dp_scope(), u)
+        except Exception:  # noqa: BLE001
+            log.exception("status 3.3")
         try:  # 3.0: a new computer asks to join the clinic network — the director answers on any of his computers
             from auth import _current
             import p2p

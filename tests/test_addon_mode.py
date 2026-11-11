@@ -54,7 +54,7 @@ def ui(name):
 # ------------------------------------------------------------------ the setting and its default
 check("default on", config.DEFAULT_SETTINGS.get("addon_mode") is True)
 check("docs default mark", config.DEFAULT_SETTINGS.get("addon_docs") == "mark")
-check("version 3.2.0", config.VERSION == "3.2.0", config.VERSION)
+check("version 3.2.0 or later", tuple(map(int, config.VERSION.split("."))) >= (3, 2, 0), config.VERSION)
 # an existing installation: settings.json written by 3.1 without the new keys
 config.SETTINGS_PATH.write_text(json.dumps({"demo": True, "login": "", "transfer_mode": "manual"}), encoding="utf-8")
 check("old install: on", addon.enabled() is True)
@@ -140,7 +140,7 @@ check("no user (desktop window) may switch", raises(api.save_settings, {"addon_m
 
 # ------------------------------------------------------------------ UI wiring
 html = ui("index.html")
-check("addon.js loaded", '<script src="addon.js?v=3.2.0"></script>' in html)
+check("addon.js loaded", f'<script src="addon.js?v={config.VERSION}"></script>' in html)
 check("addon.js before settings-nav", html.index("addon.js") < html.index("settings-nav.js"))
 check("cache keys bumped", "?v=3.0.0" not in html)
 check("settings panel", 'id="addonPanel"' in html and 'id="addonBody"' in html)

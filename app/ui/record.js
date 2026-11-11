@@ -48,6 +48,7 @@ async function openRecord(o) {
     </div>
     <div class="m-f">${rec ? '<button class="btn ghost small danger" id="rDel">Удалить</button>' : ""}<span class="muted"></span>
       <button class="btn ghost" data-close>Отмена</button>
+      <button class="btn ghost" id="rDpCopy" title="Текст по разделам формы Dentist Plus — вставьте в медкарту Dentist Plus">Скопировать для DP ▾</button>
       <button class="btn ghost" id="rSavePrint">Сохранить и документ ▾</button>
       <button class="btn" id="rSave">Сохранить</button></div>`, {wide: true});
 
@@ -257,6 +258,7 @@ async function openRecord(o) {
     [...REC_FIELDS, ...REC_FIELDS2].forEach(([k]) => f[k] = $("#rf_" + k, box).value.trim());
     return api.save_record(f);
   };
+  $("#rDpCopy", box).onclick = e => { e.stopPropagation(); if (typeof dpEditorCopy === "function") dpEditorCopy(e.currentTarget, formNow); };  // 3.3
   $("#rSave", box).onclick = async () => { try { await save(); closeModal(); toast("Запись в медкарту сохранена"); afterChange(); } catch (e) { toast(errText(e), true); } };
   $("#rSavePrint", box).onclick = e => {
     e.stopPropagation();

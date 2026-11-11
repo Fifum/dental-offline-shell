@@ -246,9 +246,16 @@ class Daily:
                 stock = Stock(self.db).day_docs(day)
             except Exception:  # noqa: BLE001 — a bare database without the stock
                 stock = None
+        dp = None
+        if shifts:  # 3.3: medical records of the day not transferred to Dentist Plus
+            try:
+                import dp_transfer  # noqa: PLC0415
+                dp = dp_transfer.day_summary(self.db, day)
+            except Exception:  # noqa: BLE001 — a bare database without records
+                dp = None
         return {"day": day, "rows": rows, "total": round(doc + nodoc, 2), "doc": doc, "nodoc": nodoc,
                 "by_category": dict(sorted(by_cat.items(), key=lambda x: -x[1])), "by_user": by_user, "cash": cash or {}, "shifts": day_shifts,
-                "stock": stock}
+                "stock": stock, "dp": dp}
 
     def text(self, rep) -> str:
         c = rep["cash"] or {}
@@ -283,6 +290,11 @@ class Daily:
                              + (", без документа" if r["nodoc"] else "")
                              + (f" — {r['supplier_name']}" if r["supplier_name"] else f" — {r['reason']}" if r["reason"] else "")
                              + (f" ({r['user_name']})" if r["user_name"] else ""))
+        if rep.get("dp"):
+            import dp_transfer  # noqa: PLC0415
+            dl = dp_transfer.report_lines(rep["dp"])
+            if dl:
+                lines += ["", *dl]
         lines += ["", "Отчёт отправлен программой автоматически. Файл Excel — во вложении."]
         return "\n".join(lines)
 
@@ -298,6 +310,11 @@ class Daily:
         if st and st["rows"]:
             rows += [[], ["Склад"]] + [["", ("Приход" if r["kind"] == "receipt" else "Списание") + (f" № {r['number']}" if r["number"] else ""), r["total"] or 0,
                                          r["supplier_name"] or r["reason"] or "", "нет" if r["nodoc"] else "есть", "", r["user_name"] or ""] for r in st["rows"]]
+        dp = rep.get("dp")
+        if dp and (dp["total"] or dp["window"]):
+            rows += [[], ["", "Медкарта: записей за день", dp["total"]], ["", "Не перенесено в Dentist Plus", dp["pending"]]]
+            rows += [["", x["doctor_name"], x["n"]] for x in dp["by_doctor"]]
+            rows += [["", f"Не перенесено за {dp['days']} дн.", dp["window"]]]
         return xlsx.build(f"Расходы {_fmt(rep['day'])}", ["Время", "Статья", "Сумма", "Как оплачено", "Документ", "Комментарий", "Кто внёс"], rows)
 
     # ------------------------------------------------------------ sending --

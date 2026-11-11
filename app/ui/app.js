@@ -151,7 +151,7 @@ const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", set
 
 /* ---------------------------------------------------------------- views */
 const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: ["cash_report", "expenses_day"],
-  journal: "transfer", refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment", "sterilization"],
+  journal: ["transfer", "reports", "medcard_edit"], refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment", "sterilization"],
   reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"],
   lab: ["lab", "accounting"], director: "reports"};
 const canView = v => { const p = VIEW_PERM[v]; return !p || (Array.isArray(p) ? canAny(...p) : can(p)); };
@@ -221,6 +221,7 @@ async function refreshStatus() {
   }
   if (st.backup_warn && st.backup_warn !== S.backupWarned) { S.backupWarned = st.backup_warn; toast(st.backup_warn + " Настройки → «Резервные копии».", true); }
   for (const id of ["#pendingBadge", "#pendingBadge2"]) { const pb = $(id); pb.hidden = !st.pending; pb.textContent = st.pending || ""; }
+  if (typeof dpStatus === "function") dpStatus(st);  // 3.3: records not transferred, the reminder at the end of the day
   // data changed -> refresh current screen
   if (S.lastLoaded !== st.last_ok && !st.running) {
     const first = S.lastLoaded === null; S.lastLoaded = st.last_ok;
@@ -869,7 +870,8 @@ function renderPatient(tab) {
       return `<div class="rec" data-r="${esc(r.id)}"><div class="rec-h"><b>${fmtDate(r.date)}</b><span class="muted">${esc(r.doctor_name || "")}</span>${tr(r)}${srcT ? `<span class="pill src-pill" title="Как создана запись">${esc(srcT)}</span>` : ""}</div>
         ${dd.complaints ? `<div><span class="muted">Жалобы:</span> ${esc(dd.complaints)}</div>` : ""}
         ${dg ? `<div><span class="muted">Диагноз:</span> ${esc(dg)}</div>` : ""}
-        ${dd.treatment ? `<div><span class="muted">Лечение:</span> ${esc(dd.treatment)}</div>` : ""}</div>`;
+        ${dd.treatment ? `<div><span class="muted">Лечение:</span> ${esc(dd.treatment)}</div>` : ""}
+        ${typeof dpRecTools === "function" ? dpRecTools(r) : ""}</div>`;
     }).join("") : `<div class="empty"><b>Лечений, проведённых в программе, пока нет</b><span>История из Dentist Plus — во вкладке «Персональные данные»</span></div>`);
   } else if (tab === "payments") {
     const pays = invs.flatMap(i => i.payments.map(x => ({...x, inv: i}))).concat((p.free_payments || []).map(x => ({...x, inv: null})))
@@ -994,6 +996,7 @@ function renderPatient(tab) {
     if (b.dataset.act === "doc") openDocPicker({patient_id: p.id, visit_id: v.id, doctor_id: v.doctor_id}); });
   $$("#patientCard [data-receipt]").forEach(b => b.onclick = e => { e.stopPropagation(); openDocFill({...ctx, template_id: "doc_receipt", invoice_id: b.dataset.receipt}); });
   $$("#patientCard .rec").forEach(el => el.onclick = () => openRecord({patient_id: p.id, id: el.dataset.r}));
+  if (typeof dpBindRecTools === "function") dpBindRecTools($("#patientCard"), () => openPatient(p.id, S.prevView, "records"));
   $$("#patientCard tr[data-doc]").forEach(el => el.onclick = () => openDocument(el.dataset.doc));
   $$("#patientCard tr[data-inv]").forEach(el => el.onclick = () => openInvoice({patient_id: p.id, id: el.dataset.inv}));
   $$("#patientCard [data-milk]").forEach(b => b.onclick = () => { S.milk = b.dataset.milk === "1"; renderPatient("formula"); });
@@ -1028,6 +1031,7 @@ async function loadSettings() {
   if (typeof loadMoneySettings === "function") loadMoneySettings();
   if (typeof loadPlatformSettings === "function") loadPlatformSettings();
   if (typeof loadAddonPanel === "function") { loadAddonPanel(); applyAddon(); }
+  if (typeof loadDpSettings === "function") loadDpSettings();  // 3.3: the sections of the copy for Dentist Plus, the reminder
   if (typeof loadDaySettings === "function") loadDaySettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = (typeof netClinicHtml === "function" ? netClinicHtml(n.clinic) : "")

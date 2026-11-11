@@ -175,9 +175,17 @@ class Local:
         if src:  # 13.7: «created by dictation / with the AI» — shown on the record
             data["source"] = sorted(set(src))
         with self.db.tx() as c:
-            exists = c.execute("SELECT 1 FROM records WHERE id=?", (rid,)).fetchone()
+            exists = c.execute("SELECT doctor_id, date, data FROM records WHERE id=?", (rid,)).fetchone()
             if exists:
-                c.execute("""UPDATE records SET doctor_id=?, date=?, data=?, updated_at=?, transferred=0, transferred_at=NULL
+                try:
+                    old = json.loads(exists["data"] or "{}")
+                except (TypeError, ValueError):
+                    old = None
+                same = (old == json.loads(json.dumps(data, ensure_ascii=False)) and str(exists["doctor_id"] or "") == str(f.get("doctor_id") or "")
+                        and str(exists["date"] or "") == str(f.get("date") or ""))
+                # 3.3: the mark «перенесено в Dentist Plus» goes only when the record really changed (saved again as is — kept)
+                reset = "" if same else ", transferred=0, transferred_at=NULL, transferred_by=NULL"
+                c.execute(f"""UPDATE records SET doctor_id=?, date=?, data=?, updated_at=?{reset}
                              WHERE id=?""", (f.get("doctor_id"), f.get("date"), json.dumps(data, ensure_ascii=False), ts, rid))
             else:
                 c.execute("""INSERT INTO records(id, patient_id, visit_id, doctor_id, date, data, created_at, updated_at)
@@ -550,9 +558,13 @@ class Local:
         items.sort(key=lambda x: x["at"] or "")
         return items
 
-    def mark_transferred(self, table: str, ids: list, done=True):
+    def mark_transferred(self, table: str, ids: list, done=True, who=""):
         if table not in self.db.LOCAL_TABLES + ("patients",):
             raise ValueError("bad table")
+        if table == "records":  # 3.3: who marked it, the first mark kept (the same as «Не перенесено»)
+            import dp_transfer
+            dp_transfer.mark(self.db, list(ids or []), done, who)
+            return
         extra = " AND local=1" if table == "patients" else ""
         with self.db.tx() as c:
             for i in ids:

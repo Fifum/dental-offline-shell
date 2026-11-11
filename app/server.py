@@ -60,6 +60,8 @@ def _brief(args) -> str:
             for k in ("id", "patient_id", "title", "start", "amount", "method", "status"):
                 if a.get(k) not in (None, ""):
                     parts.append(f"{k}={str(a[k])[:40]}")
+        elif isinstance(a, bool):  # 3.3: «да» / «нет», not True / False
+            parts.append("да" if a else "нет")
         elif isinstance(a, (str, int, float)):
             parts.append(str(a)[:40])
         elif isinstance(a, list):

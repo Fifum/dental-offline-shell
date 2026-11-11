@@ -2,7 +2,20 @@
 /* Everything done in this app, to re-enter into Dentist Plus. */
 const J_ICON = {patient: "Пациент", visit: "Запись", record: "Медкарта", document: "Документ", invoice: "Счёт", payment: "Оплата"};
 
+/* 3.3: tabs — «Всё» (everything to re-enter, «Перенос в Dentist Plus»), «Медкарта: не перенесено» (a doctor sees own
+   records), «Сверка» («Отчёты» / «Перенос») */
+const J_TABS = {all: () => can("transfer"), med: () => canAny("transfer", "reports", "medcard_edit"), check: () => canAny("reports", "transfer")};
+const J_SUB = {all: "Всё, что сделано в этой программе. Внесите в Dentist Plus и отметьте галочкой",
+  med: "Записи медкарты: скопируйте для Dentist Plus, вставьте и отметьте «перенесено»",
+  check: "Что есть в программе, что отмечено перенесённым и что известно из Dentist Plus"};
+$$("#jTabs [data-jt]").forEach(b => b.onclick = () => { S.jTab = b.dataset.jt; loadJournal(); });
 async function loadJournal() {
+  if (!S.jTab || !(J_TABS[S.jTab] || (() => false))()) S.jTab = Object.keys(J_TABS).find(k => J_TABS[k]()) || "med";
+  $$("#jTabs [data-jt]").forEach(b => b.classList.toggle("on", b.dataset.jt === S.jTab));
+  $("#jAllTools").hidden = S.jTab !== "all";
+  $("#jSub").textContent = J_SUB[S.jTab];
+  if (S.jTab === "med") return dpLoadPending($("#journalBody"));
+  if (S.jTab === "check") return dpLoadCheck($("#journalBody"));
   const items = await api.journal($("#jDone").checked);
   S.journal = items;
   if (!items.length) {
