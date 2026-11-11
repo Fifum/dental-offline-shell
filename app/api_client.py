@@ -84,7 +84,7 @@ class DentistPlusClient:
             self.token = None
             self.auth()
 
-    def request(self, path: str, params=None, _retry=True):
+    def request(self, path: str, params=None, _retry=2):
         self._ensure_token()
         if params and "per_page" in params:
             params = {**params, "per_page": min(MAX_PER_PAGE, max(1, int(params["per_page"])))}
@@ -98,9 +98,13 @@ class DentistPlusClient:
                 time.sleep(2 * (attempt + 1))
                 continue
             if r.status_code == 401 and _retry:
+                # the token was dropped (another login with the same account, or the server's own limit):
+                # a fresh token, twice at most, the second time after a pause
+                if _retry < 2:
+                    time.sleep(3)
                 self.token = None
                 self.auth()
-                return self.request(path, params, _retry=False)
+                return self.request(path, params, _retry=_retry - 1)
             if r.status_code == 429 and attempt < 3:   # rate limit: honour Retry-After, else 3/8/15 s
                 ra = r.headers.get("Retry-After", "")
                 time.sleep(min(30, int(ra)) if ra.isdigit() else (3, 8, 15)[attempt])

@@ -14,7 +14,7 @@ new computer collects it and from then on is a trusted computer of the clinic.
 
     POST /p2p/pair_request   {node, name, pub}       open: a new computer asks to join
     POST /p2p/pair_poll      {node}                  open: … and waits for the answer
-    POST /p2p/hello|pull|notify|blob                 sealed with the clinic key
+    POST /p2p/hello|pull|notify|blob|dp_mirror       sealed with the clinic key (dp_mirror: dp_main.py, 3.7.2)
 """
 from __future__ import annotations
 
@@ -189,7 +189,8 @@ def handle(method, body: dict, ip: str) -> dict:
     if not k or not NODE:
         raise P2PError("Компьютер ещё не в сети клиники", 409)
     node, ts, payload = open_request(k, method, body)
-    fn = {"hello": NODE.on_hello, "pull": NODE.on_pull, "notify": NODE.on_notify, "blob": NODE.on_blob}.get(method)
+    fn = {"hello": NODE.on_hello, "pull": NODE.on_pull, "notify": NODE.on_notify, "blob": NODE.on_blob,
+          "dp_mirror": NODE.on_dp_mirror}.get(method)
     if not fn:
         raise P2PError("Не найдено", 404)
     ans = fn(node, payload, ip)
@@ -460,6 +461,15 @@ class Node(threading.Thread):
         if not p.exists():
             raise P2PError("Файл не найден", 404)
         return {"data": _b64(p.read_bytes())}
+
+    def on_dp_mirror(self, node, f, ip):
+        """3.7.2: the copy of Dentist Plus for a computer that does not talk to Dentist Plus itself (dp_main.py)."""
+        import dp_main
+        self.seen(node, ip, f.get("port"), f.get("name", ""), f.get("host", ""))
+        try:
+            return dp_main.snapshot(self.db, str(f.get("since") or ""), bool(f.get("full")))
+        except dp_main.DpMainError as e:
+            raise P2PError(str(e), 409) from None
 
     # ------------------------------------------------------------ client --
     def discover(self):

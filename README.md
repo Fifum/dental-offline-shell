@@ -1,4 +1,4 @@
-# Dental Desk — offline shell for Dentist Plus
+﻿# Dental Desk — offline shell for Dentist Plus
 
 A Windows desktop app that keeps a dental clinic working when the internet or the power goes down —
 an offline shell over the clinic's cloud system, **Dentist Plus**.
@@ -332,7 +332,15 @@ The integration follows the partner documentation of Dentist Plus (`https://api-
 OpenAPI `partner-doc.json`): base `https://api2.dentist-plus.com/partner`, `POST /auth {login, pass}` →
 `{token, expires_at}`, `Authorization: Bearer`, pages `?page&per_page` (at most 200) with `{meta, data}`.
 
-* **Token.** Renewed two minutes before `expires_at`, and once more on a 401.
+* **Token.** Renewed two minutes before `expires_at`, and on a 401 up to twice (the second time after a pause).
+* **One computer talks to Dentist Plus (3.7.2).** A clinic has one API login and a new token invalidates the previous
+  one, so in the clinic network only the computer named in `dp_settings` k=`dp_main` (replicated) calls the API: the
+  first computer with a login takes the role, the director moves it in Settings. The others take a copy of the mirror
+  (`branches`, `doctors`, `visits`, `patients` from Dentist Plus, `patient_extras`, `dp_payments`, `dp_schedule`,
+  `visits_archive`) every minute over the sealed p2p method `dp_mirror` (zlib, sent only when the main computer has a
+  newer sync) and never log in — neither «Проверить подключение» nor the diagnostics. In the automatic mode the main
+  computer sends the rows of every computer. A computer outside a clinic network works on its own. See `app/dp_main.py`,
+  `tests/test_dp_main.py`.
 * **Visits.** Asked with `with_deleted=1`: a cancelled visit (`is_cancelled`) shows as «Отменён» instead of vanishing.
   Status codes become words: `not_confirmed` «Не подтверждён», `confirmed` «Подтверждён», `came` «Пришёл»,
   `in_chair` «В кресле», `did_not_come` «Не пришёл» — so reports count arrivals and no-shows correctly.
@@ -510,6 +518,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 ```powershell
 .venv\Scripts\python tests\test_api_all_functions.py     # 112 checks over every app function
 .venv\Scripts\python tests\test_push_to_dentist_plus.py  # automatic sending against a fake API
+.venv\Scripts\python tests\test_dp_main.py               # 30 checks: two computers of one clinic network and a fake Dentist Plus — only the main one calls the API, the other takes the copy, swap of the role, sending for the whole clinic
 .venv\Scripts\python tests\test_dp_partner_api.py        # 38 checks: a fake server as the partner documentation says — token expiry, per_page cap, status codes and cancelled visits, payments, schedule cap, required fields of every write, cancel, patient edit, a record into its visit, 429
 .venv\Scripts\python tests\test_sync_api_formats.py      # sync against 4 differently shaped APIs
 .venv\Scripts\python tests\test_server_auth.py           # 45 checks: accounts, approval, permissions over HTTP

@@ -1600,6 +1600,13 @@ class Api:
         st["counts"] = self._db.counts()
         st["pending"] = self._db.pending_count()
         st["transfer_mode"] = s.get("transfer_mode", "manual")
+        try:
+            import dp_main
+            st["dp_main"] = dp_main.status(self._db)
+            if st["dp_main"]["role"] == "follower":
+                st["configured"] = True  # the data comes from the computer that talks to Dentist Plus
+        except Exception:  # noqa: BLE001
+            log.exception("status dp_main")
         st["version"] = config.VERSION
         st["brand"] = config.BRAND
         import addon
@@ -1701,6 +1708,29 @@ class Api:
     def sync_now(self):
         self._worker.trigger()
         return True
+
+    # ------------------------------------- 3.7.2: one computer talks to Dentist Plus --
+    def dp_main_status(self):
+        import dp_main
+        return dp_main.status(self._db)
+
+    def dp_main_claim(self):
+        self._director("Выбирать компьютер для обмена с Dentist Plus")
+        import dp_main
+        if not dp_main._in_network():
+            raise ValueError("Компьютер не в сети клиники: он и так обменивается с Dentist Plus сам")
+        s = config.load_settings()
+        if not (s.get("login") and s.get("pass_enc")):
+            raise ValueError("Сначала укажите на этом компьютере логин и пароль API Dentist Plus")
+        dp_main.claim(self._db)
+        try:
+            import p2p
+            if p2p.NODE:
+                p2p.NODE.wake(full=True)
+        except Exception:  # noqa: BLE001
+            pass
+        self._worker.trigger()
+        return dp_main.status(self._db)
 
     # ---------------------------------------------------- dictation and AI --
     def speech_status(self):
@@ -2342,6 +2372,10 @@ class Api:
         c = DentistPlusClient(base_url or s["base_url"], login or s["login"], password or config.unprotect(s.get("pass_enc", "")))
         if not c.login or not c.password:
             return {"ok": False, "message": "Укажите логин и пароль API"}
+        import dp_main
+        why = dp_main.blocked_reason(self._db)
+        if why:  # 3.7.2: a new token here would log out the computer that talks to Dentist Plus
+            return {"ok": False, "message": why}
         try:
             c.auth()
             return {"ok": True, "message": "Подключение успешно, токен получен"}
@@ -2351,7 +2385,7 @@ class Api:
     def diagnostics(self):
         from sync import diagnostics
         try:
-            return json.dumps(diagnostics(config.load_settings()), ensure_ascii=False, indent=2)
+            return json.dumps(diagnostics(config.load_settings(), self._db), ensure_ascii=False, indent=2)
         except Exception as e:  # noqa: BLE001
             return f"Ошибка: {e}"
 

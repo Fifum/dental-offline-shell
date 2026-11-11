@@ -206,7 +206,8 @@ async function refreshStatus() {
     dot.classList.add("err"); title.textContent = "Ошибка обновления"; sub.textContent = st.last_error;
     banner.hidden = false; banner.classList.add("err");
     banner.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>${esc(st.last_error)} · сохранённые данные на ${esc(fmtDT(st.last_ok))}`;
-  } else { dot.classList.add("on"); title.textContent = "Онлайн"; sub.textContent = `Обновлено ${ago(st.last_ok)}`; }
+  } else { dot.classList.add("on"); title.textContent = "Онлайн";
+    sub.textContent = `Обновлено ${ago(st.last_ok)}` + (st.dp_main && st.dp_main.role === "follower" ? ` · через «${st.dp_main.name}»` : ""); }
   $("#syncBtn").disabled = !!st.running;
   const sb = $("#stockBadge"); if (sb) { const n = st.stock_alerts ?? st.stock_low; sb.hidden = !n; sb.textContent = n || "";
     sb.title = [st.stock_low ? `Заканчиваются: ${st.stock_low}` : "", st.stock_exp ? `Истекает срок: ${st.stock_exp}` : ""].filter(Boolean).join(" · "); }
@@ -1045,6 +1046,7 @@ async function loadSettings() {
   $("#sWriteMap").value = s.write_map && Object.keys(s.write_map).length ? JSON.stringify(s.write_map, null, 1) : "";
   (s.transfer_mode === "auto" ? $("#tmAuto") : $("#tmManual")).checked = true;
   $$(".mode-card").forEach(c => c.classList.toggle("on", c.querySelector("input").checked));
+  loadDpMain();
   $("#dataDir").textContent = "Данные: " + s.data_dir;
   $("#verLbl").textContent = "Версия " + (S.status.version || "");
   loadFiscalSettings();
@@ -1067,6 +1069,25 @@ async function loadSettings() {
   $("#histTable tbody").innerHTML = s.history.map(h => `<tr><td>${fmtDT(h.finished)}</td><td class="${h.ok ? "ok-t" : "bad-t"}">${esc(h.message)}</td><td>${h.counts.visits ?? "—"}</td><td>${h.counts.patients ?? "—"}</td></tr>`).join("")
     || `<tr><td colspan="4" class="muted">Ещё не было</td></tr>`;
 }
+/* 3.7.2: only one computer of the clinic talks to Dentist Plus (one API login: a new login logs the other one out) */
+async function loadDpMain() {
+  const box = $("#dpMainBox"); if (!box) return;
+  let m; try { m = await api.dp_main_status(); } catch (e) { box.innerHTML = ""; return; }
+  if (!m.in_network) { box.innerHTML = ""; return; }
+  let html;
+  if (m.role === "main") html = `<div class="ok-line">С Dentist Plus обменивается <b>этот компьютер</b>. Остальные компьютеры клиники получают данные Dentist Plus от него по сети клиники и сами к API не подключаются.</div>`;
+  else if (m.role === "follower") html = `<div class="warn-line">С Dentist Plus обменивается компьютер <b>«${esc(m.name)}»</b>${m.online === false ? " — сейчас он не в сети клиники, поэтому данные Dentist Plus здесь не обновляются" : ""}. Этот компьютер получает данные от него и сам к API не подключается: у клиники один логин API, и второй вход отключил бы первый компьютер.</div>
+    <div class="row"><button class="btn ghost" id="dpMainClaim">Обмен с Dentist Plus ведёт этот компьютер</button></div>`;
+  else html = `<div class="hint">Обмениваться с Dentist Plus будет первый компьютер сети клиники, на котором указан логин API.</div>`;
+  box.innerHTML = html;
+  const b = $("#dpMainClaim");
+  if (b) b.onclick = async () => {
+    if (!(await ask("Перенести обмен с Dentist Plus на этот компьютер?", {ok: "Перенести",
+      text: `Компьютер «${m.name}» перестанет подключаться к Dentist Plus, а этот начнёт и будет передавать данные остальным. Выбирайте компьютер, который включён весь рабочий день. На этом компьютере должны быть указаны логин и пароль API.`}))) return;
+    try { await api.dp_main_claim(); toast("Обмен с Dentist Plus теперь ведёт этот компьютер"); } catch (e) { toast(e.message || String(e), "bad"); }
+    loadDpMain(); refreshStatus();
+  };
+}
 $$('input[name="tmode"]').forEach(r => r.onchange = async () => {
   const mode = r.value;
   if (mode === "auto" && !(await ask("Включить автоматическую отправку в Dentist Plus?", {icon: "warn", ok: "Включить", text: "Новые пациенты и записи (создание, перенос, статус, отмена) будут уходить в Dentist Plus сами, как только появится интернет.\n\nСначала проверьте на одной тестовой записи, что всё приходит правильно."}))) {
@@ -1078,7 +1099,30 @@ $$('input[name="tmode"]').forEach(r => r.onchange = async () => {
   toast(mode === "auto" ? "Автоматическая отправка включена" : "Перенос вручную по списку");
   refreshStatus();
 });
-$("#sWriteMapDef").onclick = async () => { $("#sWriteMap").value = JSON.stringify(await api.write_map_default(), null, 1); };
+/* 3.7.2: the demo switch acts at once (before, it waited for «Сохранить и синхронизировать» and seemed not to work) */
+$("#sDemo").onchange = async () => {
+  const box = $("#sDemo"), demo = box.checked;
+  if (demo === !!S.settings.demo) return;
+  if (!demo && !$("#sLogin").value.trim()) { box.checked = true; return msg("Чтобы выключить демо-режим, укажите логин API", false); }
+  if (!(await ask(demo ? "Включить демо-режим?" : "Выключить демо-режим?", {icon: "warn", ok: demo ? "Включить" : "Выключить",
+    text: demo ? "Сохранённые реальные данные будут удалены с этого компьютера (заметки останутся). Программа перестанет подключаться к Dentist Plus." : "Тестовые данные будут удалены, начнётся загрузка из Dentist Plus."}))) {
+    box.checked = !demo; return;
+  }
+  box.disabled = true;
+  try {
+    await api.save_settings(demo ? {demo} : {demo, login: $("#sLogin").value.trim(), password: $("#sPass").value});
+    msg(demo ? "Демо-режим включён" : "Демо-режим выключен, загружаем данные из Dentist Plus", true);
+    toast(demo ? "Демо-режим включён" : "Демо-режим выключен");
+    S.lastLoaded = "x";
+    await loadSettings(); refreshStatus();
+  } catch (e) {
+    box.checked = !demo;
+    const t = String(e.message || e).replace(/^Error:\s*/, "");
+    msg("Не удалось: " + t, false); toast(t, true);
+  }
+  box.disabled = false;
+};
+$("#sWriteMapDef").onclick =async () => { $("#sWriteMap").value = JSON.stringify(await api.write_map_default(), null, 1); };
 function msg(t, ok) { const m = $("#sMsg"); m.textContent = t; m.className = "msg " + (ok ? "ok" : "bad"); }
 $("#sSave").onclick = async () => {
   let extras;

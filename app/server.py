@@ -52,6 +52,9 @@ def discovery_ports(port) -> list:
     return sorted({port + 1, 8766, *extra})
 
 
+SECRET_ARGS = {"test_connection"}
+
+
 def _brief(args) -> str:
     """Short description of what was changed, for the action journal (ids, titles — not whole records)."""
     parts = []
@@ -166,8 +169,8 @@ class ClinicServer:
                 result["records"] = []
             if not perms.intersection({"billing", "payments"}):
                 result["invoices"] = []
-        if name in AUDITED:
-            self.auth.log(user, AUDITED[name], _brief(args), ip)
+        if name in AUDITED:  # 3.7.2: the arguments of a connection check are a login and a password — never written
+            self.auth.log(user, AUDITED[name], "" if name in SECRET_ARGS else _brief(args), ip)
         return result
 
     # --------------------------------------------------------------- start --

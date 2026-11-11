@@ -126,9 +126,13 @@ class Pusher:
     # ------------------------------------------------------------ helpers
     def _own(self, rows, table):
         """With the clinic network or the cloud, every computer sends to Dentist Plus only what was created on it —
-        never twice (3.0: «created on it» = the node id in the row's first version)."""
+        never twice (3.0: «created on it» = the node id in the row's first version). 3.7.2: in the clinic network
+        only the computer that talks to Dentist Plus sends, and it sends everything (dp_main.py)."""
         import config
+        import dp_main
         import replica
+        if dp_main.role(self.db) == "main":
+            return list(rows)  # 3.7.2: this computer sends for the whole clinic — the others never call the API
         dev = config.node_id()
         foreign = replica.foreign_ids(self.db, table, dev) if dev else set()
         return [r for r in rows if r["id"] not in foreign]

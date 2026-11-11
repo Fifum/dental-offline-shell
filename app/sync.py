@@ -47,6 +47,7 @@ class SyncWorker(threading.Thread):
         self.db = db
         self.wake = threading.Event()
         self.stop_flag = False
+        self.follower = False
         self.lock = threading.Lock()
         self.state = {
             "running": False, "online": None, "phase": "", "progress": 0,
@@ -78,6 +79,8 @@ class SyncWorker(threading.Thread):
             ok = self.sync_once(s)
             # while offline: re-check every 30 s, sync immediately when the link is back
             wait = max(1, int(s.get("interval_min", 5))) * 60 if ok else 30
+            if self.follower:  # the copy from the main computer is cheap (the clinic network): every minute
+                wait = 60
             self.wake.wait(wait)
             self.wake.clear()
 
@@ -95,10 +98,17 @@ class SyncWorker(threading.Thread):
                 simulate_demo(self.db)
             self._set(online=None, phase="Демо-режим", running=False, last_ok=self.db.meta_get("last_ok"))
             return True
+        import dp_main
+        role = dp_main.role(self.db)
+        self.follower = role == "follower"
+        if self.follower:  # 3.7.2: another computer of the clinic talks to Dentist Plus — take the copy from it
+            return self._follow()
         password = config.unprotect(s.get("pass_enc", ""))
         if not s.get("login") or not password:
             self._set(phase="Укажите логин и пароль API в настройках", online=None)
             return True
+        if role == "solo" and dp_main._in_network():
+            dp_main.claim(self.db)  # the first computer of the clinic network with a login talks to Dentist Plus
 
         started = utcnow()
         self._set(running=True, phase="Проверка связи…", progress=0, last_attempt=started)
@@ -143,6 +153,34 @@ class SyncWorker(threading.Thread):
             log.error("sync failed\n%s", traceback.format_exc())
             self._fail(started, f"Сбой синхронизации: {e}", counts)
             return False
+
+    def _follow(self) -> bool:
+        """3.7.2: the copy of the Dentist Plus data from the computer that talks to Dentist Plus (dp_main.py)."""
+        import dp_main
+        started = utcnow()
+        self._set(running=True, phase="Данные Dentist Plus с компьютера клиники…", online=None, last_attempt=started)
+        try:
+            r = dp_main.pull(self.db)
+        except dp_main.DpMainError as e:
+            msg = str(e)
+            self.db.meta_set("last_error", msg)
+            self._set(running=False, phase=msg, last_error=msg)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.error("dp mirror failed\n%s", traceback.format_exc())
+            msg = f"Сбой получения данных Dentist Plus: {e}"
+            self.db.meta_set("last_error", msg)
+            self._set(running=False, phase=msg, last_error=msg)
+            return True
+        err = f"{r['error']} (на компьютере «{r['name']}»)" if r["error"] else ""
+        if r["stamp"]:
+            self.db.meta_set("last_ok", r["stamp"])
+        self.db.meta_set("last_error", err)
+        if r["changed"]:
+            self.db.log_sync(started, True, f"Данные Dentist Plus с компьютера «{r['name']}»", {**r["counts"], "via": r["name"]})
+        self._set(running=False, phase=f"Данные Dentist Plus — через компьютер «{r['name']}»", progress=100,
+                  last_ok=r["stamp"] or self.db.meta_get("last_ok"), last_error=err)
+        return True
 
     def _fail(self, started, msg, counts):
         self.db.meta_set("last_error", msg)
@@ -459,8 +497,13 @@ class SyncWorker(threading.Thread):
         return {"received": len(rows), "saved": saved, "skipped": skipped}
 
 
-def diagnostics(s: dict) -> dict:
+def diagnostics(s: dict, db=None) -> dict:
     """Sample every endpoint once — used in Settings to see real field names."""
+    if db is not None:
+        import dp_main
+        why = dp_main.blocked_reason(db)
+        if why:
+            return {"auth": why}
     password = config.unprotect(s.get("pass_enc", ""))
     if not s.get("login") or not password:
         return {"auth": "Сначала укажите логин и пароль API и нажмите «Сохранить»"}

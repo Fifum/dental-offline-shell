@@ -1,4 +1,4 @@
-"""Paths, settings and Windows DPAPI password protection."""
+﻿"""Paths, settings and Windows DPAPI password protection."""
 from __future__ import annotations
 
 import base64
@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "3.7.1"
+VERSION = "3.7.2"
 
 # Updates: latest.json signed with Ed25519 (tools/update_sign.py). The secret key stays with the developer outside
 # every repository; this public key only checks signatures. The address can also come from brand.json or settings

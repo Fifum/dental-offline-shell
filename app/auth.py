@@ -298,6 +298,7 @@ METHOD_PERMS = {
     "cloud_leave": "settings", "cloud_revoke": "settings", "cloud_conflicts": "settings",
     "cloud_conflict_seen": "settings", "cloud_conflict_restore": "settings",
     # 3.0: the clinic network (accepting a computer and merging laptops are checked for the director in Api)
+    "dp_main_status": ANY_USER, "dp_main_claim": "settings",
     "p2p_status": "settings", "p2p_accept": "settings", "p2p_reject": "settings", "p2p_sync": ANY_USER,
     "p2p_join_other": "settings",
     "update_status": ANY_USER, "update_check": ANY_USER, "update_download": ANY_USER, "update_install": ANY_USER,
@@ -320,6 +321,7 @@ AUDITED = {
     "save_visit_series": "Повторяющиеся записи", "cancel_series": "Отмена серии записей",
     "waitlist_save": "Лист ожидания", "waitlist_done": "Запись из листа ожидания", "waitlist_remove": "Удаление из листа ожидания",
     "reminder_template_save": "Текст напоминания о визите",
+    "dp_main_claim": "Обмен с Dentist Plus перенесён на этот компьютер",
     "create_patient": "Новый пациент", "patient_edit": "Изменение карточки пациента", "add_note": "Примечание", "delete_note": "Удаление примечания",
     "save_record": "Лечение в медкарте", "delete_record": "Удаление лечения",
     "save_template": "Шаблон", "delete_template": "Удаление шаблона", "reset_template": "Сброс шаблона",
@@ -441,6 +443,8 @@ class Auth:
         for col in ("pin_hash TEXT", "pin_fails INTEGER DEFAULT 0"):  # quick sign-in on a shared computer
             if col.split()[0] not in have:
                 db.conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        # 3.7.2: before, «Проверка подключения» wrote the API login and password into the journal — wipe them
+        db.conn.execute("UPDATE audit SET detail='' WHERE action='Проверка подключения' AND COALESCE(detail, '')<>''")
         db.conn.commit()
         self._fails: dict[str, list] = {}
         self._flock = threading.Lock()

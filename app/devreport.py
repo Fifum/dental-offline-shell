@@ -259,9 +259,16 @@ def build(db, sync_state: dict, settings: dict | None = None, probe_api: bool = 
     elif probe_api:
         from sync import diagnostics
         try:
-            report["api"] = _mask_diagnostics(diagnostics(s))
+            import dp_main
+            why = dp_main.blocked_reason(db)  # 3.7.2: another computer talks to Dentist Plus — do not log it out
+            report["api"] = {"auth": why} if why else _mask_diagnostics(diagnostics(s))
         except Exception as e:  # noqa: BLE001
             report["api"] = scrub_text(f"Ошибка: {e.__class__.__name__}: {e}")
+    try:  # 3.7.2: which computer of the clinic talks to Dentist Plus
+        import dp_main
+        report["dp_main"] = {k: v for k, v in dp_main.status(db).items() if k in ("role", "name", "online", "in_network")}
+    except Exception as e:  # noqa: BLE001
+        report["dp_main"] = scrub_text(f"Ошибка: {e.__class__.__name__}")
     report["log_tail"] = _log_tail()
     return report
 
