@@ -206,7 +206,7 @@ async function aiPatientCard(p, tab) {
 const ADV_ICON_AI = '<svg viewBox="0 0 24 24"><path d="M9 4.5h6M9.5 3h5v3h-5zM6.5 5.5h11v15h-11z"/><path d="m9 13 2 2 4-4"/></svg>';
 function aiMedcheck(p, mc) {
   const box = modal(`<div class="m-h"><h3>Проверка карты · ${esc(p.name)}</h3><button class="x" data-close>×</button></div>
-    <div class="m-b"><p class="hint">Чего не хватает для проверки качества и для страховой компании. Проверяют простые правила программы — без ИИ.</p>
+    <div class="m-b">${typeof dpDraft === "function" ? dpDraft("Подсказки перед переносом в Dentist Plus: проверка смотрит записи этой программы") : ""}<p class="hint">Чего не хватает для проверки качества и для страховой компании. Проверяют простые правила программы — без ИИ.</p>
       <ul class="advice mc-list">${mc.items.map((x, i) => `<li class="adv-${x.level === "warn" ? "warn" : "info"}" data-i="${i}" role="button" tabindex="0"><span class="adv-ic">${x.level === "warn" ? ADV_ICON.warn : ADV_ICON.info}</span><span>${esc(x.text)}</span></li>`).join("")}</ul></div>
     <div class="m-f"><span class="muted">Щёлкните по строке, чтобы исправить</span><button class="btn ghost" data-close>Закрыть</button></div>`);
   $$("[data-i]", box).forEach(li => li.onclick = () => {

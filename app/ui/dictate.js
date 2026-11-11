@@ -109,7 +109,7 @@ function reviewDictation(res, patientId, apply) {
   el.className = "ask-wrap";
   const draw = r => `<div class="ask dict-review">
       <div class="ask-ic edit">${MIC}</div>
-      <div class="ask-c"><h3>${r.mode === "visit" ? "Проверьте запись приёма" : "Проверьте диктовку"}</h3>
+      <div class="ask-c"><h3>${r.mode === "visit" ? "Проверьте запись приёма" : "Проверьте диктовку"}</h3>${typeof dpDraft === "function" ? dpDraft() : ""}
         <p>Можно поправить текст и нажать «Разобрать заново». В медкарту ничего не попадёт, пока вы не нажмёте «Вставить».${r.ai_error ? `<br><span class="bad-t">ИИ недоступен (${esc(r.ai_error)}), разобрано правилами программы.</span>` : ""}${r.voice_note ? `<br><span class="muted">${esc(r.voice_note)}</span>` : ""}</p>
         <textarea class="input dict-text" id="dtText" rows="${r.mode === "visit" ? 9 : 4}">${esc(r.text)}</textarea>
         <div class="dict-prev">

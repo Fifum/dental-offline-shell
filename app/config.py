@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 
 # Updates: latest.json signed with Ed25519 (tools/update_sign.py). The secret key stays with the developer outside
 # every repository; this public key only checks signatures. The address can also come from brand.json or settings
@@ -77,6 +77,8 @@ DEFAULT_SETTINGS = {
     "day_end": 21,
     "transfer_mode": "manual",   # "manual": staff re-enter via journal; "auto": send to Dentist Plus when online
     "write_map": {},            # overrides for pusher.DEFAULT_WRITE_MAP (endpoints / field names)
+    "addon_mode": True,         # 3.2: «Надстройка над Dentist Plus» (addon.py); on for existing installations too
+    "addon_docs": "mark",       # 3.2: official document templates in that mode: "mark" (signed) or "hide"
 }
 
 _lock = threading.Lock()

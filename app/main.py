@@ -682,7 +682,8 @@ class Api:
         return True
 
     def templates(self, kind=None):
-        return self._local.templates(kind)
+        import addon
+        return addon.mark_templates(self._local.templates(kind))
 
     def save_template(self, t):
         return self._local.save_template(t)
@@ -1314,6 +1315,8 @@ class Api:
         st["transfer_mode"] = s.get("transfer_mode", "manual")
         st["version"] = config.VERSION
         st["brand"] = config.BRAND
+        import addon
+        st["addon"] = addon.info(s)  # 3.2: the director may switch the mode while others work
         try:
             from auth import _current, Auth
             u = getattr(_current, "user", None)
@@ -1701,8 +1704,9 @@ class Api:
         s = config.load_settings()
         import fiscal
         fs = fiscal.settings()
+        import addon
         return {**{k: s.get(k) for k in ("day_start", "day_end", "slot_min", "show_empty_doctors", "demo", "transfer_mode")},
-                "fiscal_enabled": fs["enabled"], "fiscal_auto": fs["auto"], "fiscal_test": fs["driver"] == "emulator"}
+                **addon.info(s), "fiscal_enabled": fs["enabled"], "fiscal_auto": fs["auto"], "fiscal_test": fs["driver"] == "emulator"}
 
     # ------------------------------------------------------------ backups --
     def backup_status(self):
@@ -1977,6 +1981,8 @@ class Api:
         s["data_dir"] = str(config.data_dir())
         s["autostart"] = self._autostart_get()
         s["history"] = self._db.sync_history()
+        import addon
+        s.update(addon.info(s))  # 3.2: the page keeps S.settings = get_settings() — the mode must stay in it
         return s
 
     def save_settings(self, new: dict):
@@ -1984,6 +1990,12 @@ class Api:
                    "per_page", "visit_from_param", "visit_to_param", "sync_all_patients", "patient_extras",
                    "day_start", "day_end", "clinic", "show_empty_doctors", "slot_min", "transfer_mode", "write_map"}
         upd = {k: v for k, v in new.items() if k in allowed}
+        import addon
+        mode = addon.clean(new)  # 3.2: «Надстройка над Dentist Plus» — the director's decision
+        cur = config.load_settings()
+        if any(cur.get(k, config.DEFAULT_SETTINGS[k]) != v for k, v in mode.items()):
+            self._director("Переключать режим «Надстройка над Dentist Plus»")
+            upd.update(mode)
         if "write_map" in upd and isinstance(upd["write_map"], str):
             upd["write_map"] = json.loads(upd["write_map"] or "{}")
         if "patient_extras" in upd and isinstance(upd["patient_extras"], str):

@@ -21,6 +21,7 @@ async function openRecord(o) {
   const box = modal(`
     <div class="m-h"><h3>Запись в медкарту · ${esc(pat.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b rec-grid">
+      ${typeof dpDraft === "function" ? dpDraft("Диагнозы, лечение, рецепты и направления отсюда перенесите в медкарту Dentist Plus") : ""}
       <div class="allergy-bar" id="rAllergy" hidden></div>
       ${dictationBar()}
       <div class="ex-bar"><button class="btn ghost small" id="rExam">Шаблон приёма</button><span class="muted">Терапия, хирургия, ортопедия, ортодонтия, пародонтология, детская — заполнит поля, диагноз, зуб и назначения</span></div>

@@ -19,6 +19,7 @@ async function loadCloudPanel() {
   const box = $("#cloudBody"); if (!box) return;
   let st;
   try { st = await api.cloud_status(); } catch (e) { box.innerHTML = `<div class="warn-line bad">${esc(errText(e))}</div>`; return; }
+  const cp = $("#cloudPanel"); if (cp) cp.classList.toggle("saas-keep", !!st.configured);  // 3.2: a computer already in the cloud keeps the panel
   if (!st.configured) {
     box.innerHTML = `
       <div class="form">
@@ -262,7 +263,7 @@ let IMP = null;
 function loadImportPanel() {
   const box = $("#importBody"); if (!box) return;
   box.innerHTML = `
-    <div class="row"><label class="btn ghost pl-file">Выбрать файл Excel или CSV…<input type="file" id="impFile" accept=".xlsx,.csv,.txt,.xls" hidden></label>
+    <div class="row"><label class="btn ghost pl-file" data-saas>Выбрать файл Excel или CSV…<input type="file" id="impFile" accept=".xlsx,.csv,.txt,.xls" hidden></label>
       <button class="btn ghost" id="impDp">Загрузить всех пациентов из Dentist Plus</button><span class="msg" id="impMsg"></span></div>
     <div id="impPrev"></div>`;
   $("#impFile").onchange = e => { const f = e.target.files[0]; if (f) readImport(f); e.target.value = ""; };

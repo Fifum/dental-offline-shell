@@ -195,6 +195,26 @@ and opens the new version. Laptops of a clinic work on their own, so any employe
   the key), then after each build `.\publish-update.ps1`: signs, encrypts and uploads a draft release, adds
   `latest.json` last and only then marks the release latest.
 
+## Add-on over Dentist Plus (3.2)
+
+Dentist Plus is the clinic's official, certified system: the medical record and every document an inspector may ask
+for live there. Since 3.2 the program says so out loud. The mode «Надстройка над Dentist Plus» is on by default, also
+for installations updated from older versions, and only the director switches it (Settings → Dentist Plus → «Режим работы»).
+
+* **Where the data comes from.** Patients, appointments, doctors and services carry a discreet «из Dentist Plus».
+* **Drafts.** The medical record, visit templates, dictation, visit recording, the AI record check, prescriptions and
+  referrals carry «Черновик для Dentist Plus — официальная запись в Dentist Plus».
+* **Official documents.** The contract, consents, refusal, 043/у, the record extract, the visit note and the tax
+  deduction certificate say «Не для контролирующих органов — официальный документ печатайте из Dentist Plus» on
+  screen and at the bottom of the printed sheet, or are hidden altogether (a second switch). Internal papers — the
+  health questionnaire, memo, plan presentation, receipt — stay as they are.
+* **What is put away.** The cloud for many clinics with its subscription and moving a base in from IDENT are hidden
+  in the UI and the settings search; a computer already in the cloud keeps its panel. Nothing is deleted and no method
+  is blocked: switching the mode off brings everything back. The clinic network and updates work in both modes.
+
+`app/addon.py` holds the lists and the setting, `app/ui/addon.js` the labels; the labels are always in the page and
+CSS shows them only under `body.addon`, so the mode switches live (the 3-second status carries it) without a reload.
+
 ## Architecture
 
 ```
@@ -366,6 +386,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_stock_grey.py           # 43 checks: stock without documents — receipts, write-offs and counts, balance by documents and who sees it over HTTP, act numbers, receipt as an expense of the day, the stock block of the day report
 .venv\Scripts\python tests\test_p2p.py                  # 48 checks: three computers (processes) find each other, pairing with the director's approval, both-way sync, staff approval, files, conflicts converge, LAN + cloud without duplicates
 .venv\Scripts\python tests\test_updates.py              # 58 checks: encrypted installer and notes, signing a release, a fake GitHub (302, ETag/304, 404), download and install, another build's key, worker once a minute, rights, publishing order
+.venv\Scripts\python tests\test_addon_mode.py           # 107 checks: the add-on mode — default for old installs, the director's switch, official / draft / internal documents, hiding, SaaS kept callable, UI wiring, addon.js in node
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 

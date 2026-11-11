@@ -18,7 +18,7 @@ async function loadRefs() {
     body.innerHTML = `<div class="pb-head" style="padding:0 0 10px"><span class="muted">Встроенные тексты — общие черновики. Проверьте их с юристом клиники и поправьте под себя.</span>
       <button class="btn small" id="tNew">+ Новый шаблон</button></div>
       <div class="pbody"><table class="tbl"><thead><tr><th>Раздел</th><th>Название</th><th></th></tr></thead><tbody>${
-      list.map(t => `<tr data-t="${esc(t.id)}"><td class="muted">${esc(t.category)}</td><td><b>${esc(t.title)}</b></td><td class="muted">${t.builtin ? "встроенный" : "свой"}</td></tr>`).join("")}</tbody></table></div>`;
+      list.map(t => `<tr data-t="${esc(t.id)}"><td class="muted">${esc(t.category)}</td><td><b>${esc(t.title)}</b>${typeof docKindTag === "function" ? docKindTag(t.id) : ""}</td><td class="muted">${t.builtin ? "встроенный" : "свой"}</td></tr>`).join("")}</tbody></table></div>`;
     $("#tNew").onclick = () => editDocTemplate({kind: "document", category: "Прочее", title: "Новый документ", body: "<h2 style=\"text-align:center\">Заголовок</h2>\n<p>Пациент: {{patient.fio}}</p>"});
     $$("#refsBody tr[data-t]").forEach(tr => tr.onclick = () => editDocTemplate(list.find(x => x.id === tr.dataset.t)));
   } else if (REF_TAB === "phrases") {
@@ -34,7 +34,7 @@ async function loadRefs() {
     const [list, R] = [await api.templates("exam"), await ref(true)];
     const parse = t => { try { return JSON.parse(t.body || "{}"); } catch (e) { return {}; } };
     const specs = [...new Set(["Терапия", "Хирургия", "Ортопедия", "Ортодонтия", "Пародонтология", "Детская", ...list.map(x => x.category)])];
-    body.innerHTML = `<div class="pb-head" style="padding:0 0 10px"><span class="muted">Шаблон заполняет запись медкарты: поля, диагноз, состояние зуба и назначения. {зуб} в тексте заменяется номером выбранного зуба. Встроенные тексты — черновики, проверьте их с врачами.</span>
+    body.innerHTML = `${typeof dpDraft === "function" ? dpDraft("Шаблон приёма заполняет черновик медкарты в этой программе") : ""}<div class="pb-head" style="padding:0 0 10px"><span class="muted">Шаблон заполняет запись медкарты: поля, диагноз, состояние зуба и назначения. {зуб} в тексте заменяется номером выбранного зуба. Встроенные тексты — черновики, проверьте их с врачами.</span>
       <button class="btn ghost small" id="exBack">Вернуть встроенные</button><button class="btn small" id="exNew">+ Новый шаблон</button></div>
       ${specs.filter(sp => list.some(x => x.category === sp)).map(sp => `<div class="pbody ph-group"><div class="pb-head"><b>${esc(sp)}</b></div>
         ${list.filter(x => x.category === sp).map(x => { const d = parse(x); return `<div class="ex-row"><span><b>${esc(x.title)}</b>
@@ -100,7 +100,7 @@ async function loadRefs() {
       if (await ask(x.builtin ? "Скрыть лекарство из списка?" : "Удалить лекарство?", {danger: true, ok: x.builtin ? "Скрыть" : "Удалить", text: "В уже сделанных записях назначения останутся."})) { await api.delete_template(x.id); REF = null; loadRefs(); } });
   } else if (REF_TAB === "price") {
     const list = await api.services("");
-    body.innerHTML = `<div class="pb-head" style="padding:0 0 10px"><span class="muted">${list.length} услуг. Если Dentist Plus отдаёт прайс через API, он подтянется сам; иначе импортируйте выгрузку из Excel (CSV: код; название; цена; раздел).</span>
+    body.innerHTML = `<div class="pb-head" style="padding:0 0 10px"><span class="muted">${typeof dpSrc === "function" ? dpSrc("Услуги и цены") + " " : ""}${list.length} услуг. Если Dentist Plus отдаёт прайс через API, он подтянется сам; иначе импортируйте выгрузку из Excel (CSV: код; название; цена; раздел).</span>
       <label class="btn ghost small">Импорт CSV<input type="file" id="pCsv" accept=".csv,.txt" hidden></label><button class="btn small" id="pNew">+ Услуга</button></div>
       <div class="pbody"><table class="tbl compact"><thead><tr><th>Раздел</th><th>Код</th><th>Название</th><th>Цена</th><th></th></tr></thead><tbody>${
       list.map(s => `<tr><td class="muted">${esc(s.category)}</td><td>${esc(s.code)}</td><td>${esc(s.title)}</td><td><b>${money(s.price)}</b></td>

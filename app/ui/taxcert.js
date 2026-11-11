@@ -5,6 +5,7 @@ async function openTaxCert(p) {
   let year = y0 - 1;
   const box = modal(`<div class="m-h"><h3>Справка для налогового вычета · ${esc(p.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b tax-form">
+      ${typeof addonDocKind === "function" && addonDocKind("taxcert") === "official" ? dpOfficial() : ""}
       <div class="grid3"><label class="fl">За год<select class="input" id="txY">${[0, 1, 2, 3].map(i => `<option ${y0 - i === year ? "selected" : ""}>${y0 - i}</option>`).join("")}</select></label>
         <span></span><button class="btn ghost small" id="txReg" type="button">Реестр справок за год</button></div>
       <div id="txPays" class="tax-pays">…</div>
@@ -44,7 +45,7 @@ async function openTaxCert(p) {
         payer_same: $("#txSame", box).checked, payer_fio: v("#txF"), payer_inn: v("#txI"), payer_birth: v("#txB"), payer_doc: v("#txD"),
         sum1: v("#txS1"), sum2: v("#txS2"), responsible: v("#txR")});
       closeModal(); toast(`Справка № ${r.number} за ${r.year} год выдана и сохранена в документах пациента`);
-      printDoc(r.html);
+      printDoc(r.html, "taxcert");
       if (S.view === "patient" && P && P.id === p.id) { P = await api.patient(p.id); renderPatient(S.patientTab); }
     } catch (e) { toast(errText(e), true); }
   };

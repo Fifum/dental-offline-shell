@@ -3,28 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
-<script src="theme.js?v=3.0.0"></script>
+<script src="theme.js?v=3.2.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=3.0.0">
-<link rel="stylesheet" href="styles-v2.css?v=3.0.0">
-<link rel="stylesheet" href="styles-brand.css?v=3.0.0">
-<link rel="stylesheet" href="styles-auth.css?v=3.0.0">
-<link rel="stylesheet" href="styles-motion.css?v=3.0.0">
-<link rel="stylesheet" href="styles-stock.css?v=3.0.0">
-<link rel="stylesheet" href="styles-office.css?v=3.0.0">
-<link rel="stylesheet" href="styles-medcard.css?v=3.0.0">
-<link rel="stylesheet" href="styles-theme.css?v=3.0.0">
-<link rel="stylesheet" href="styles-teeth.css?v=3.0.0">
-<link rel="stylesheet" href="styles-voice.css?v=3.0.0">
-<link rel="stylesheet" href="styles-platform.css?v=3.0.0">
-<link rel="stylesheet" href="styles-director.css?v=3.0.0">
-<link rel="stylesheet" href="styles-plans.css?v=3.0.0">
-<link rel="stylesheet" href="styles-crm.css?v=3.0.0">
-<link rel="stylesheet" href="styles-finance.css?v=3.0.0">
-<link rel="stylesheet" href="styles-ai.css?v=3.0.0">
-<link rel="stylesheet" href="styles-settings.css?v=3.0.0">
-<link rel="stylesheet" href="styles-staff.css?v=3.0.0">
-<link rel="stylesheet" href="styles-responsive.css?v=3.0.0">
+<link rel="stylesheet" href="styles.css?v=3.2.0">
+<link rel="stylesheet" href="styles-v2.css?v=3.2.0">
+<link rel="stylesheet" href="styles-brand.css?v=3.2.0">
+<link rel="stylesheet" href="styles-auth.css?v=3.2.0">
+<link rel="stylesheet" href="styles-motion.css?v=3.2.0">
+<link rel="stylesheet" href="styles-stock.css?v=3.2.0">
+<link rel="stylesheet" href="styles-office.css?v=3.2.0">
+<link rel="stylesheet" href="styles-medcard.css?v=3.2.0">
+<link rel="stylesheet" href="styles-theme.css?v=3.2.0">
+<link rel="stylesheet" href="styles-teeth.css?v=3.2.0">
+<link rel="stylesheet" href="styles-voice.css?v=3.2.0">
+<link rel="stylesheet" href="styles-platform.css?v=3.2.0">
+<link rel="stylesheet" href="styles-director.css?v=3.2.0">
+<link rel="stylesheet" href="styles-plans.css?v=3.2.0">
+<link rel="stylesheet" href="styles-crm.css?v=3.2.0">
+<link rel="stylesheet" href="styles-finance.css?v=3.2.0">
+<link rel="stylesheet" href="styles-ai.css?v=3.2.0">
+<link rel="stylesheet" href="styles-settings.css?v=3.2.0">
+<link rel="stylesheet" href="styles-staff.css?v=3.2.0">
+<link rel="stylesheet" href="styles-responsive.css?v=3.2.0">
 </head>
 <body>
 <div class="app">
@@ -91,7 +91,7 @@
         <button class="pill-btn wait-btn" id="waitBtn" data-perm-any="schedule_view,schedule_edit" title="Лист ожидания: кто хочет записаться, если освободится время"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span class="wb-l">Ожидание</span><i class="badge sm" id="waitBadge" hidden></i></button>
         <button class="btn" id="newVisitBtn" data-perm="schedule_edit"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M12 9.5v7M8.5 13h7"/></svg>Новый визит</button>
       </header>
-      <div class="cal-sub"><h1 id="dayTitle">Расписание</h1><span class="muted" id="daySub"></span></div>
+      <div class="cal-sub"><h1 id="dayTitle">Расписание</h1><span class="dp-src" title="Записи на приём и врачи приходят из Dentist Plus — официальной системы клиники. Новые записи и переносы уходят в Dentist Plus">из Dentist Plus</span><span class="muted" id="daySub"></span></div>
       <div class="week" id="weekStrip" hidden></div>
       <div class="sched-wrap">
         <div id="grid" class="grid"></div>
@@ -107,7 +107,7 @@
     <!-- ===================== PATIENTS ===================== -->
     <section class="view" id="view-patients" hidden>
       <header class="top">
-        <div class="title-block"><h1>Пациенты</h1><span class="muted" id="patCount"></span></div>
+        <div class="title-block"><h1>Пациенты<span class="dp-src" title="Пациенты приходят из Dentist Plus — официальной системы клиники. Новые пациенты из программы уходят в Dentist Plus">из Dentist Plus</span></h1><span class="muted" id="patCount"></span></div>
       </header>
       <div class="search-row">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
@@ -271,7 +271,7 @@
           <div id="tabletBody">…</div>
         </div>
 
-        <div class="panel" data-sec="data" id="cloudPanel">
+        <div class="panel" data-sec="data" id="cloudPanel" data-saas>
           <h3>Облако и подписка</h3>
           <p class="hint">Все компьютеры клиники обмениваются данными через облако: каждый работает сам по себе, а когда появляется интернет, изменения сходятся. Данные шифруются на компьютерах клиники — сервер их прочитать не может.</p>
           <div id="cloudBody">…</div>
@@ -284,7 +284,7 @@
 
         <div class="panel" data-sec="data" id="importPanel">
           <h3>Перенос базы пациентов</h3>
-          <p class="hint">Из IDENT, Dentist Plus или любой таблицы: выгрузите список пациентов в Excel (.xlsx) или CSV и выберите файл. Программа сама найдёт колонки (ФИО, телефон, дата рождения, номер карты), покажет, что загрузит, и пропустит пациентов, которые уже есть.</p>
+          <p class="hint" id="importHint">Из IDENT, Dentist Plus или любой таблицы: выгрузите список пациентов в Excel (.xlsx) или CSV и выберите файл. Программа сама найдёт колонки (ФИО, телефон, дата рождения, номер карты), покажет, что загрузит, и пропустит пациентов, которые уже есть.</p>
           <div id="importBody">…</div>
         </div>
 
@@ -293,6 +293,11 @@
           <p class="hint">У каждого компьютера клиники своя база. Компьютеры, которые видят друг друга в одной сети Wi-Fi, сами обмениваются изменениями — раз в минуту и сразу после каждого изменения. Новый компьютер: установите программу, она найдёт клинику сама, а директор нажмёт «Принять». Планшет для анкет открывается по одному из адресов ниже.</p>
           <div class="net-box" id="netBox">…</div>
           <div class="row"><button class="btn ghost" id="netFw">Разрешить подключения в брандмауэре Windows</button><span class="msg" id="netMsg"></span></div>
+        </div>
+
+        <div class="panel" data-sec="dp" id="addonPanel">
+          <h3>Режим работы</h3>
+          <div id="addonBody">…</div>
         </div>
 
         <div class="panel" data-sec="dp">
@@ -404,43 +409,44 @@
   <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
   <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=3.0.0"></script>
-<script src="booking.js?v=3.0.0"></script>
-<script src="calendar-dnd.js?v=3.0.0"></script>
-<script src="waitlist.js?v=3.0.0"></script>
-<script src="steril.js?v=3.0.0"></script>
-<script src="files.js?v=3.0.0"></script>
-<script src="perio.js?v=3.0.0"></script>
-<script src="sign.js?v=3.0.0"></script>
-<script src="taxcert.js?v=3.0.0"></script>
-<script src="lab.js?v=3.0.0"></script>
-<script src="money.js?v=3.0.0"></script>
-<script src="finance.js?v=3.0.0"></script>
-<script src="record.js?v=3.0.0"></script>
-<script src="docs.js?v=3.0.0"></script>
-<script src="billing.js?v=3.0.0"></script>
-<script src="plans.js?v=3.0.0"></script>
-<script src="journal.js?v=3.0.0"></script>
-<script src="refs.js?v=3.0.0"></script>
-<script src="tpl-editor.js?v=3.0.0"></script>
-<script src="staff.js?v=3.0.0"></script>
-<script src="stock.js?v=3.0.0"></script>
-<script src="stock-lots.js?v=3.0.0"></script>
-<script src="fiscal.js?v=3.0.0"></script>
-<script src="backup.js?v=3.0.0"></script>
-<script src="reports.js?v=3.0.0"></script>
-<script src="director.js?v=3.0.0"></script>
-<script src="accounting.js?v=3.0.0"></script>
-<script src="finmodel.js?v=3.0.0"></script>
-<script src="marketing.js?v=3.0.0"></script>
-<script src="crm.js?v=3.0.0"></script>
-<script src="shifts.js?v=3.0.0"></script>
-<script src="dictate.js?v=3.0.0"></script>
-<script src="ai.js?v=3.0.0"></script>
-<script src="settings-nav.js?v=3.0.0"></script>
-<script src="daily.js?v=3.0.0"></script>
-<script src="platform.js?v=3.0.0"></script>
-<script src="motion.js?v=3.0.0"></script>
-<script src="responsive.js?v=3.0.0"></script>
+<script src="app.js?v=3.2.0"></script>
+<script src="booking.js?v=3.2.0"></script>
+<script src="calendar-dnd.js?v=3.2.0"></script>
+<script src="waitlist.js?v=3.2.0"></script>
+<script src="steril.js?v=3.2.0"></script>
+<script src="files.js?v=3.2.0"></script>
+<script src="perio.js?v=3.2.0"></script>
+<script src="sign.js?v=3.2.0"></script>
+<script src="taxcert.js?v=3.2.0"></script>
+<script src="lab.js?v=3.2.0"></script>
+<script src="money.js?v=3.2.0"></script>
+<script src="finance.js?v=3.2.0"></script>
+<script src="record.js?v=3.2.0"></script>
+<script src="docs.js?v=3.2.0"></script>
+<script src="billing.js?v=3.2.0"></script>
+<script src="plans.js?v=3.2.0"></script>
+<script src="journal.js?v=3.2.0"></script>
+<script src="refs.js?v=3.2.0"></script>
+<script src="tpl-editor.js?v=3.2.0"></script>
+<script src="staff.js?v=3.2.0"></script>
+<script src="stock.js?v=3.2.0"></script>
+<script src="stock-lots.js?v=3.2.0"></script>
+<script src="fiscal.js?v=3.2.0"></script>
+<script src="backup.js?v=3.2.0"></script>
+<script src="reports.js?v=3.2.0"></script>
+<script src="director.js?v=3.2.0"></script>
+<script src="accounting.js?v=3.2.0"></script>
+<script src="finmodel.js?v=3.2.0"></script>
+<script src="marketing.js?v=3.2.0"></script>
+<script src="crm.js?v=3.2.0"></script>
+<script src="shifts.js?v=3.2.0"></script>
+<script src="dictate.js?v=3.2.0"></script>
+<script src="ai.js?v=3.2.0"></script>
+<script src="addon.js?v=3.2.0"></script>
+<script src="settings-nav.js?v=3.2.0"></script>
+<script src="daily.js?v=3.2.0"></script>
+<script src="platform.js?v=3.2.0"></script>
+<script src="motion.js?v=3.2.0"></script>
+<script src="responsive.js?v=3.2.0"></script>
 </body>
 </html>

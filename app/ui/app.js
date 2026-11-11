@@ -212,6 +212,7 @@ async function refreshStatus() {
     sb.title = [st.stock_low ? `Заканчиваются: ${st.stock_low}` : "", st.stock_exp ? `Истекает срок: ${st.stock_exp}` : ""].filter(Boolean).join(" · "); }
   const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
   if (typeof platformStatus === "function") platformStatus(st);
+  if (typeof addonStatus === "function") addonStatus(st);
   if (typeof crmStatus === "function") crmStatus(st);
   if (st.me_perms && ME && st.me_perms.join() !== ME.perms.join()) {  // 2.14: the director changed this person's position
     ME.perms = st.me_perms; applyPerms();
@@ -479,7 +480,7 @@ async function openVisit(id) {
   $("#drawer").innerHTML = `<div class="dw-h"><button class="x" onclick="closeDrawer()">×</button>
       <span class="pill ${stClass(v.status)}">${esc(v.status || "Без статуса")}</span>
       <h3>${esc(v.patient_name || "Пациент #" + (v.patient_id || "?"))}</h3>
-      <div class="muted">${fmtDate(v.start)}, ${hm(v.start)}–${hm(v.end)}</div></div>
+      <div class="muted">${fmtDate(v.start)}, ${hm(v.start)}–${hm(v.end)}${!v.local && typeof dpSrc === "function" ? dpSrc("Запись на приём") : ""}</div></div>
     <div class="dw-b"><dl class="kv" style="grid-template-columns:1fr">
       ${kvRow("Врач", v.doctor_name)}${kvRow("Филиал", v.branch_name)}${kvRow("Телефон пациента", v.patient_phone)}${kvRow("Услуга / комментарий", v.title)}${kvRow("Комментарий", v.comment)}
     </dl>${Object.keys(raw).length ? `<div class="raw">${rawTree(raw, 0, ["id", "patient_id", "doctor_id", "branch_id", "start", "end", "status", "title"])}</div>` : ""}</div>
@@ -862,7 +863,7 @@ function renderPatient(tab) {
       <span class="muted">Формула собирается из лечений и данных Dentist Plus. Щёлкните по зубу, чтобы провести лечение.</span></div>${formulaHtml(tmap, S.milk, {plan: planTeeth(plans), surf: p.surf_local || {}})}
       ${formulaLegend(true)}`;
   } else if (tab === "records") {
-    body = addBtn("tAddRec", "Провести лечение") + (p.records.length ? p.records.map(r => {
+    body = addBtn("tAddRec", "Провести лечение") + (typeof dpDraft === "function" ? dpDraft("Перенесите запись в медкарту Dentist Plus — отметка «в DP» появится после переноса") : "") + (p.records.length ? p.records.map(r => {
       const dd = r.data || {}, dg = (dd.diagnoses || []).map(x => `${x.tooth ? x.tooth + ": " : ""}${x.code} ${x.title}`).join("; ");
       const src = dd.source || [], srcT = [src.includes("visit") ? "по записи приёма" : src.includes("dictation") ? "по диктовке" : "", src.includes("voice_formula") ? "формула голосом" : "", src.includes("ai") ? "с помощью ИИ" : ""].filter(Boolean).join(", ");
       return `<div class="rec" data-r="${esc(r.id)}"><div class="rec-h"><b>${fmtDate(r.date)}</b><span class="muted">${esc(r.doctor_name || "")}</span>${tr(r)}${srcT ? `<span class="pill src-pill" title="Как создана запись">${esc(srcT)}</span>` : ""}</div>
@@ -933,10 +934,10 @@ function renderPatient(tab) {
     <div class="crumbs"><button class="linkbtn plain" id="backBtn">${back}</button> / <span>${esc(p.name)}</span>
       <div class="crumb-acts">
         <button class="pill-btn" id="aAnketa">${ICON.doc}Анкета</button>
-        <button class="pill-btn" id="aContract">${ICON.doc}Договор</button>
+        <button class="pill-btn" id="aContract" data-official-doc title="${typeof addonDocKind === "function" && addonDocKind("doc_contract") === "official" ? esc(addonNote("official")) : "Договор"}">${ICON.doc}Договор</button>
         <button class="pill-btn" id="aPay">${ICON.inv}Оплата</button>
         <div class="dd right" id="ddPrint"><button class="dd-btn pill-btn">Печать<svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
-          <div class="dd-menu"><button data-tpl="doc_card043">Медкарта 043/у</button><button data-tpl="doc_extract">Выписка из медкарты</button><button data-tpl="doc_consent_treatment">Согласие на лечение</button><button data-tpl="doc_consent_pd">Согласие на обработку ПД</button><button data-tpl="">Другой документ…</button><button id="aTax">Справка для налогового вычета</button></div></div>
+          <div class="dd-menu"><button data-tpl="doc_card043" data-official-doc>Медкарта 043/у<i class="dp-doc-tag">из DP</i></button><button data-tpl="doc_extract" data-official-doc>Выписка из медкарты<i class="dp-doc-tag">из DP</i></button><button data-tpl="doc_consent_treatment" data-official-doc>Согласие на лечение<i class="dp-doc-tag">из DP</i></button><button data-tpl="doc_consent_pd" data-official-doc>Согласие на обработку ПД<i class="dp-doc-tag">из DP</i></button><button data-tpl="">Другой документ…</button><button id="aTax" data-official-doc>Справка для налогового вычета<i class="dp-doc-tag">из DP</i></button></div></div>
         <div class="dd right" id="ddAdd"><button class="dd-btn btn">Добавить<svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
           <div class="dd-menu"><button data-add="visit">Визит</button><button data-add="rec">Лечение (запись в медкарту)</button><button data-add="plan">План лечения</button><button data-add="inv">Счёт</button><button data-add="doc">Документ</button><button data-add="note">Примечание</button></div></div>
       </div></div>
@@ -1026,6 +1027,7 @@ async function loadSettings() {
   if (typeof loadTabletSettings === "function") loadTabletSettings();
   if (typeof loadMoneySettings === "function") loadMoneySettings();
   if (typeof loadPlatformSettings === "function") loadPlatformSettings();
+  if (typeof loadAddonPanel === "function") { loadAddonPanel(); applyAddon(); }
   if (typeof loadDaySettings === "function") loadDaySettings();
   api.network_info().then(n => {
     $("#netBox").innerHTML = (typeof netClinicHtml === "function" ? netClinicHtml(n.clinic) : "")
@@ -1126,6 +1128,7 @@ async function startApp(user) {
   applyPerms();
   $("#ucServer").hidden = !(window.pywebview && window.pywebview.api && window.pywebview.api.open_setup);
   try { Object.assign(S.settings, await api.ui_settings()); } catch (e) {}
+  if (typeof applyAddon === "function") applyAddon();  // 3.2: «Надстройка над Dentist Plus»
   REF = null;
   await refreshStatus();
   show(ME.role === "director" && can("reports") ? "director" : can("schedule_view") ? "schedule" : firstView());

@@ -3,7 +3,7 @@
    in any section by its words. The chosen section is remembered on this computer. */
 const SET_SECS = [
   ["general", "Общие", "Оформление, сеть клиники, обновления"],
-  ["dp", "Dentist Plus", "Подключение, перенос, что хранить"],
+  ["dp", "Dentist Plus", "Режим надстройки, подключение, перенос"],
   ["ai", "Голос и ИИ", "Диктовка, голоса, ИИ на компьютере"],
   ["money", "Касса и оплаты", "Касса (ККТ), бонусы, сертификаты, СБП"],
   ["patients", "Снимки и планшет", "Визиограф, планшет для пациентов"],
@@ -22,7 +22,10 @@ const SET_ICON = {
 let setSec = "general";
 try { setSec = localStorage.getItem("dd.setSec") || setSec; } catch (e) { /* private mode */ }
 
-function setPanels() { return $$("#view-settings .settings > [data-sec]"); }
+function setPanels() {  // 3.2: hidden SaaS panels are not found by the search either
+  const addon = document.body.classList.contains("addon");
+  return $$("#view-settings .settings > [data-sec]").filter(p => !(addon && p.matches("[data-saas]:not(.saas-keep)")));
+}
 function setDraw() {
   const q = $("#setSearch").value.trim().toLowerCase().replace(/ё/g, "е");
   const words = q.split(/\s+/).filter(Boolean);
