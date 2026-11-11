@@ -173,4 +173,14 @@ class Shifts:
     def day(self, day):
         """{doctor_id: {start, end}} for the calendar; None when nobody has a shift that day (schedules not used)."""
         rows = self.db.q('SELECT person, start, "end" FROM work_shifts WHERE date=? AND person LIKE \'d:%\'', (str(day)[:10],))
-        return {r["person"][2:]: {"start": r["start"], "end": r["end"]} for r in rows} or None
+        out = {r["person"][2:]: {"start": r["start"], "end": r["end"]} for r in rows}
+        # 3.7: the doctor's schedule in Dentist Plus (GET /schedule) where no shift was set here — one span per day
+        # over all chairs. A shift set in this program wins.
+        try:
+            dp = self.db.q("""SELECT doctor_id, MIN(time_from) AS a, MAX(time_to) AS b FROM dp_schedule
+                              WHERE day=? GROUP BY doctor_id""", (str(day)[:10],))
+        except sqlite3.OperationalError:
+            dp = []
+        for r in dp:
+            out.setdefault(str(r["doctor_id"]), {"start": r["a"], "end": r["b"], "source": "dp"})
+        return out or None

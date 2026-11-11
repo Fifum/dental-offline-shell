@@ -8,11 +8,23 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
+import json
+
 import config
 from api_client import ApiError, DentistPlusClient, OfflineError
-from normalize import utcnow, visit_fields
+from normalize import as_id, get, utcnow, visit_fields
 
 log = logging.getLogger("sync")
+
+HOURLY = 60 * 60   # dictionaries (chairs, visit statuses) and the doctors' schedule change rarely
+SCHEDULE_LIMIT = 100   # GET /schedule returns at most 100 rows: a fuller answer is asked again in halves
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 class SyncWorker(threading.Thread):
@@ -89,6 +101,9 @@ class SyncWorker(threading.Thread):
                 pushed = Pusher(self.db, client, s).run()
                 counts["pushed"] = pushed
             self._pull(client, s, counts)
+            self._pull_more(client, s, counts)
+            from pusher import apply_patient_edits
+            apply_patient_edits(self.db)
             self.db.purge(int(s["days_back"]))
             self.db.cleanup_transferred(started)
             from pusher import merge_pushed_patients
@@ -140,13 +155,13 @@ class SyncWorker(threading.Thread):
         except ApiError as e:
             counts["doctors_error"] = str(e)
 
-        # price list, if the partner API exposes it (endpoint name not documented)
+        # price list (GET /services; deleted services are not returned without with_deleted=1)
         try:
             from normalize import get as g
             svc = list(c.paged("services", per_page=per_page, max_pages=50))
             with self.db.tx() as cx:
                 for it in svc:
-                    if not isinstance(it, dict) or it.get("id") is None:
+                    if not isinstance(it, dict) or it.get("id") is None or it.get("deleted") in (True, 1):
                         continue
                     price = g(it, "price", "cost", "amount", "sum", default=0)
                     try:
@@ -176,7 +191,8 @@ class SyncWorker(threading.Thread):
         total_visits = 0
         for i, (a, b) in enumerate(chunks):
             self._set(phase=f"Записи {a:%d.%m}–{b:%d.%m}…", progress=8 + int(52 * i / len(chunks)))
-            params = {s["visit_from_param"]: a.isoformat(), s["visit_to_param"]: b.isoformat()}
+            # with_deleted=1: cancelled visits come too (is_cancelled) and are shown as «Отменён» instead of vanishing
+            params = {s["visit_from_param"]: a.isoformat(), s["visit_to_param"]: b.isoformat(), "with_deleted": 1}
             rows = []
             for raw in c.paged("visits", params, per_page=per_page):
                 if not isinstance(raw, dict):
@@ -254,6 +270,89 @@ class SyncWorker(threading.Thread):
             counts["patient_errors"] = errors
         if disabled_extras:
             counts["extras_unavailable"] = sorted(disabled_extras)
+
+    # ------------------------------------------------- documented extras --
+    def _pull_more(self, c: DentistPlusClient, s: dict, counts: dict):
+        """Dictionaries for the automatic transfer, Dentist Plus payments for «Сверка», the doctors' schedule.
+        Each part is optional: an error is noted in the sync log and the rest goes on."""
+        today = date.today()
+        start = today - timedelta(days=int(s["days_back"]))
+        end = today + timedelta(days=int(s["days_forward"]))
+        hourly = self._due("dp_dicts_at")
+        if hourly:
+            for key, path in (("dp_chairs", "chairs"), ("dp_record_statuses", "record_statuses")):
+                try:
+                    items = [x for x in c.paged(path, per_page=200, max_pages=10) if isinstance(x, dict)]
+                    self.db.meta_set(key, json.dumps(items, ensure_ascii=False))
+                except ApiError as e:
+                    counts[f"{path}_error"] = str(e)
+            self.db.meta_set("dp_dicts_at", str(int(time.time())))
+
+        self._set(phase="Оплаты Dentist Plus…")
+        try:
+            pays = list(c.paged("payments", {"date_from": start.isoformat(), "date_to": end.isoformat()}, per_page=200))
+            self._save_payments(start.isoformat(), end.isoformat(), pays)
+            counts["dp_payments"] = len(pays)
+        except ApiError as e:
+            counts["payments_error"] = str(e)
+
+        if hourly or not self.db.one("SELECT 1 AS x FROM dp_schedule LIMIT 1"):
+            self._set(phase="Расписание врачей…")
+            try:
+                n = self._pull_schedule(c, today - timedelta(days=7), end)
+                counts["dp_schedule"] = n
+            except ApiError as e:
+                counts["schedule_error"] = str(e)
+
+    def _due(self, key):
+        try:
+            return time.time() - int(self.db.meta_get(key) or 0) >= HOURLY
+        except ValueError:
+            return True
+
+    def _save_payments(self, a, b, pays):
+        now = utcnow()
+        end = (date.fromisoformat(b) + timedelta(days=1)).isoformat()
+        with self.db.tx() as cx:
+            cx.execute("DELETE FROM dp_payments WHERE date >= ? AND date < ?", (a, end))
+            for p in pays:
+                if not isinstance(p, dict) or p.get("id") is None:
+                    continue
+                cx.execute("INSERT OR REPLACE INTO dp_payments VALUES(?,?,?,?,?,?,?,?)",
+                           (str(p["id"]), str(p.get("date") or "")[:19], _num(get(p, "sum", "amount", default=0)),
+                            as_id(get(p, "client_id", "patient_id")), as_id(p.get("visit_id")),
+                            str(p.get("payment_type") or ""), json.dumps(p, ensure_ascii=False), now))
+
+    def _pull_schedule(self, c: DentistPlusClient, a: date, b: date) -> int:
+        """GET /schedule per doctor in windows of up to 31 days (the answer is capped at 100 rows)."""
+        doctors = [d["id"] for d in self.db.q("SELECT id FROM doctors")]
+        rows = []
+
+        def fetch(doc, x, y):
+            items = c.request("schedule", {"doctor_id": doc, "date_from": x.isoformat(), "date_to": y.isoformat()})
+            items = items if isinstance(items, list) else (c._items(items)[0] if isinstance(items, dict) else [])
+            if len(items) >= SCHEDULE_LIMIT and x < y:
+                mid = x + (y - x) // 2
+                return fetch(doc, x, mid) + fetch(doc, mid + timedelta(days=1), y)
+            return [i for i in items if isinstance(i, dict)]
+
+        for doc in doctors:
+            x = a
+            while x <= b:
+                y = min(b, x + timedelta(days=30))
+                rows += fetch(doc, x, y)
+                x = y + timedelta(days=1)
+        now = utcnow()
+        with self.db.tx() as cx:
+            cx.execute("DELETE FROM dp_schedule WHERE day >= ? AND day <= ?", (a.isoformat(), b.isoformat()))
+            for r in rows:
+                day, doc = str(r.get("day") or "")[:10], as_id(r.get("doctor_id"))
+                if not day or not doc or not r.get("time_from") or not r.get("time_to"):
+                    continue
+                cx.execute("INSERT OR REPLACE INTO dp_schedule VALUES(?,?,?,?,?,?,?)",
+                           (doc, day, as_id(r.get("chair_id")) or "", as_id(r.get("branch_id")),
+                            str(r["time_from"])[:5], str(r["time_to"])[:5], now))
+        return len(rows)
 
 
 def diagnostics(s: dict) -> dict:

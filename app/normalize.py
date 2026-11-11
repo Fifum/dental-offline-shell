@@ -1,7 +1,7 @@
 """Tolerant extraction of common fields from Dentist Plus JSON objects.
 
-The partner API field names are not fully public, so every field is looked up
-by a list of candidate names. Raw JSON is always kept, nothing is lost.
+The names of the partner documentation (fname/lname/mname, date_of_birth, start/end «YYYY-MM-DD HH:MM:SS»,
+status codes, is_cancelled) come first; older candidate names stay as a fallback. Raw JSON is always kept.
 """
 from __future__ import annotations
 
@@ -99,6 +99,23 @@ def phone(o: dict) -> str:
     return str(p or "")
 
 
+# visit status codes of the partner API -> the words used on the screens (and by reports.status_kind / stClass)
+DP_STATUS = {"not_confirmed": "Не подтверждён", "confirmed": "Подтверждён", "came": "Пришёл",
+             "in_chair": "В кресле", "did_not_come": "Не пришёл"}
+CANCELLED = "Отменён"
+
+
+def visit_status(v: dict) -> str:
+    """Screen word for a visit's status: «Отменён» for a cancelled one (is_cancelled, loaded with with_deleted=1),
+    a documented code translated, anything else as Dentist Plus gave it."""
+    if v.get("is_cancelled") in (True, 1, "1", "true"):
+        return CANCELLED
+    status = get(v, "status.title", "status.name", "status_name", "status_title", "status", "state")
+    if status is None or isinstance(status, (dict, list)):
+        return ""
+    return DP_STATUS.get(str(status).strip().lower(), str(status))
+
+
 def visit_fields(v: dict) -> dict:
     start = parse_dt(get(v, "start", "date_start", "start_at", "started_at", "datetime_start",
                          "time_start", "begin", "from", "datetime"))
@@ -132,7 +149,6 @@ def visit_fields(v: dict) -> dict:
         d0 = v["doctors"][0]
         doctor = d0 if isinstance(d0, dict) else {"id": d0}
 
-    status = get(v, "status.title", "status.name", "status_name", "status_title", "status", "state")
     return {
         "id": as_id(v.get("id")),
         "patient_id": as_id(get(v, "patient_id", "patientId", "client_id", "patient.id")),
@@ -140,8 +156,9 @@ def visit_fields(v: dict) -> dict:
         "branch_id": as_id(get(v, "branch_id", "branchId", "clinic_id", "filial_id", "branch.id")),
         "start": fmt(start),
         "end": fmt(end),
-        "status": str(status) if status is not None and not isinstance(status, (dict, list)) else "",
-        "title": str(get(v, "title", "description", "comment", "note", "notes", "reason", default="") or ""),
+        "chair_id": as_id(get(v, "chair_id", "chair.id")),
+        "status": visit_status(v),
+        "title": str(get(v, "description", "title", "comment", "note", "notes", "reason", default="") or ""),
         "patient": patient,
         "doctor": doctor,
     }

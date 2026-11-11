@@ -337,7 +337,7 @@ function renderGrid(res) {
       const first = c.items.map(x => x.start).sort()[0], lastE = c.items.map(x => x.end || x.start).sort().slice(-1)[0];
       const shift = !c.chair && p.shifts ? p.shifts[c.id] : undefined;  // work schedule, when the clinic keeps one
       const sub = c.chair ? [...new Set(c.items.map(x => x.doctor_name).filter(Boolean))].slice(0, 2).join(", ")
-        : p.shifts ? (shift ? `смена ${shift.start} – ${shift.end}` : "выходной по графику") : (first ? `${hm(first)} – ${hm(lastE)}` : "нет записей");
+        : p.shifts ? (shift ? `смена ${shift.start} – ${shift.end}${shift.source === "dp" ? " · Dentist Plus" : ""}` : "выходной по графику") : (first ? `${hm(first)} – ${hm(lastE)}` : "нет записей");
       html += `<div class="g-head" style="--dc:${color}"><div class="gh-band"><span class="gh-av">${esc(initials(c.name))}</span><span class="gh-n">${esc(c.name)}<small>${esc(sub)}</small></span></div>
         <div class="gh-meta">${c.items.length} ${plural(c.items.length, "запись", "записи", "записей")}${pos.position ? " · " + esc(pos.position) : ""}</div></div>`;
     }
@@ -473,6 +473,27 @@ function openNewPatient(q = "") {
     openBooking({patient_id: p.id, patient_name: p.name, start: `${S.day} ${pad(Math.min(20, new Date().getHours() + 1))}:00`}); };
 }
 $("#tbAddPatient").onclick = () => openNewPatient();
+/* 3.7: change the card of a patient. A Dentist Plus patient: the change goes to «Перенос» (or by itself with the
+   automatic transfer, PUT /patients/{id}); a patient created here: the card itself is changed. */
+function openEditPatient(p, d) {
+  const g = String(d.gender || "").toLowerCase(), gv = /^(male|м)/.test(g) ? "М" : /^(female|ж)/.test(g) ? "Ж" : "";
+  const birth = String(d.birth_date || d.date_of_birth || p.birth || "").slice(0, 10);
+  const box = modal(`<div class="m-h"><h3>Изменить карточку</h3><button class="x" data-close>×</button></div><div class="m-b">
+    <div class="grid3"><label class="fl">Фамилия<input class="input" id="epL" value="${esc(d.lname || "")}"></label>
+      <label class="fl">Имя*<input class="input" id="epF" value="${esc(d.fname || "")}"></label><label class="fl">Отчество<input class="input" id="epM" value="${esc(d.mname || "")}"></label></div>
+    <div class="grid3"><label class="fl">Телефон<input class="input" id="epPh" value="${esc(d.phone || p.phone || "")}"></label>
+      <label class="fl">Дата рождения<input class="input" type="date" id="epB" value="${esc(birth)}"></label><label class="fl">Пол<select class="input" id="epG"><option value="">—</option><option ${gv === "М" ? "selected" : ""}>М</option><option ${gv === "Ж" ? "selected" : ""}>Ж</option></select></label></div>
+    <div class="grid2"><label class="fl">Адрес<input class="input" id="epA" value="${esc(d.address || "")}"></label><label class="fl">Email<input class="input" id="epE" value="${esc(d.email || "")}"></label></div></div>
+    <div class="m-f"><span class="muted">${p.local ? "" : "Изменение попадёт в «Перенос» для Dentist Plus"}</span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="epSave">Сохранить</button></div>`);
+  $("#epSave", box).onclick = async () => {
+    if (!$("#epF", box).value.trim()) { toast("Укажите имя", true); return; }
+    try {
+      await api.patient_edit(p.id, {lname: $("#epL", box).value, fname: $("#epF", box).value, mname: $("#epM", box).value, phone: $("#epPh", box).value,
+        birth_date: $("#epB", box).value, gender: $("#epG", box).value, address: $("#epA", box).value, email: $("#epE", box).value});
+    } catch (e) { toast(errText(e), true); return; }
+    closeModal(); toast("Карточка изменена"); refreshStatus(); openPatient(p.id, S.prevView);
+  };
+}
 $("#tbJournal").onclick = () => show("journal");
 
 /* ---------------------------------------------------------- visit drawer */
@@ -937,6 +958,7 @@ function renderPatient(tab) {
   $("#patientCard").innerHTML = `
     <div class="crumbs"><button class="linkbtn plain" id="backBtn">${back}</button> / <span>${esc(p.name)}</span>
       <div class="crumb-acts">
+        ${can("patients_edit") ? `<button class="pill-btn" id="aEditP" title="Изменить ФИО, телефон, дату рождения">Изменить</button>` : ""}
         <button class="pill-btn" id="aAnketa">${ICON.doc}Анкета</button>
         <button class="pill-btn" id="aContract" data-official-doc title="${typeof addonDocKind === "function" && addonDocKind("doc_contract") === "official" ? esc(addonNote("official")) : "Договор"}">${ICON.doc}Договор</button>
         <button class="pill-btn" id="aPay">${ICON.inv}Оплата</button>
@@ -989,6 +1011,7 @@ function renderPatient(tab) {
   on("#aAnketa", () => typeof openQuestionnaire === "function" ? openQuestionnaire(p) : openDocFill({...ctx, template_id: "doc_anketa"}));
   on("#aContract", () => openDocFill({...ctx, template_id: "doc_contract"}));
   on("#aSource", () => editPatientSource(p, () => openPatient(p.id, S.prevView)));
+  on("#aEditP", () => openEditPatient(p, d));
   on("#aPay", () => { const unpaid = invs.find(i => i.status !== "Оплачен"); openInvoice(unpaid ? {patient_id: p.id, id: unpaid.id} : ctx); });
   on("#tAddVisit", book); on("#tAddRec", actions.rec); on("#tAddInv", actions.inv); on("#tAddPlan", actions.plan); on("#tAddDoc", actions.doc);
   $$("#patientCard tr[data-v]").forEach(el => el.onclick = e => { if (!e.target.closest(".ia")) openVisit(el.dataset.v); });

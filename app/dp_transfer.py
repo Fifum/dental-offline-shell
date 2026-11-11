@@ -1,6 +1,7 @@
 """3.3 «Без двойного ввода» — stage 1 of the add-on over Dentist Plus.
 
-The API of Dentist Plus does not take medical records, so a record made here (by hand, a visit template, dictation
+The partner API takes a record only as fields of a Dentist Plus visit (PUT /visits/{id}: complaints, objectively, …):
+with the automatic transfer a record linked to a Dentist Plus visit is sent by pusher.py; otherwise a record made here (by hand, a visit template, dictation
 or the AI) is typed into Dentist Plus by the doctor. This module makes that quick and keeps it from being forgotten:
 
 - the text of a record split into the sections of the Dentist Plus record form, in its order: one copy for the whole
@@ -11,8 +12,8 @@ or the AI) is typed into Dentist Plus by the doctor. This module makes that quic
 - the list «Не перенесено» by day and doctor with a counter for the last N days (30 by default), the reminder at the
   end of the day (20:00 by default) and a line in the day report;
 - «Сверка»: what is in the program against what is marked transferred, and finished Dentist Plus visits that have no
-  record here (from the visits already synced from Dentist Plus). Payments of Dentist Plus are not in its API:
-  the screen says «нет данных из Dentist Plus».
+  record here (from the visits already synced from Dentist Plus), and 3.7: Dentist Plus payments of the period (GET
+  /payments, mirror dp_payments). Invoices of Dentist Plus are not in its API: the screen says «нет данных из Dentist Plus».
 
 Who sees what (scope): the director and staff with «Отчёты» or «Перенос в Dentist Plus» — everything; a doctor —
 only the records of the doctor his account is linked to (users.doctor_id). Everything works offline.
@@ -367,6 +368,23 @@ def _dp_span(db):
     return (str(r["a"])[:10], str(r["b"])[:10]) if r and r["a"] else None
 
 
+def _dp_payments(db, a_s, end, doctor_id=None):
+    """Dentist Plus payments of the period (mirror dp_payments, filled by the sync) — None when none were loaded."""
+    try:
+        if not db.one("SELECT 1 AS x FROM dp_payments LIMIT 1"):
+            return None
+        w, args = ("", [])
+        if doctor_id:
+            w = " AND visit_id IN (SELECT id FROM visits WHERE doctor_id=? UNION SELECT id FROM visits_archive WHERE doctor_id=?)"
+            args = [str(doctor_id)] * 2
+        r = db.one(f"SELECT COUNT(*) AS n, COALESCE(SUM(sum),0) AS s FROM dp_payments WHERE date >= ? AND date < ?{w}",
+                   [a_s, end, *args])
+    except Exception:  # noqa: BLE001 — an old database without the mirror
+        return None
+    total = round(float(r["s"] or 0), 2)
+    return {"count": r["n"], "sum": total, "text": f"{r['n']} · {total:,.2f} ₽".replace(",", " ").replace(".", ",")}
+
+
 def _row(key, title, dd, marked, dp=NO_DP, note="", total=None):
     row = {"key": key, "title": title, "dd": dd, "marked": marked, "left": max(0, dd - marked), "dp": dp, "note": note}
     if total is not None:
@@ -433,8 +451,14 @@ def reconcile(db, date_from=None, date_to=None, doctor_id=None) -> dict:
     pw, pargs = (" AND pay.invoice_id IN (SELECT id FROM invoices WHERE doctor_id=?)", [str(doctor_id)]) if doctor_id else ("", [])
     pays = db.q(f"""SELECT pay.amount, pay.transferred FROM payments pay WHERE COALESCE(pay.kind,'') != 'deposit_use'
                     AND pay.created_at >= ? AND pay.created_at < ?{pw}""", [a_s, end, *pargs])
-    rows.append(_row("payments", "Оплаты", len(pays), sum(1 for x in pays if x["transferred"]), total=sum(x["amount"] or 0 for x in pays),
-                     note="Оплаты Dentist Plus в API нет — сверьте с кассой Dentist Plus вручную"))
+    dp_pay = _dp_payments(db, a_s, end, doctor_id)
+    prow = _row("payments", "Оплаты", len(pays), sum(1 for x in pays if x["transferred"]), total=sum(x["amount"] or 0 for x in pays),
+                dp=dp_pay["text"] if dp_pay else NO_DP,
+                note="Справа — оплаты по данным Dentist Plus (GET /payments) за загруженный период" if dp_pay
+                else "Оплаты Dentist Plus ещё не загружены — сверьте с кассой Dentist Plus вручную")
+    if dp_pay:
+        prow.update(dp_ok=True, dp_sum=dp_pay["sum"], dp_count=dp_pay["count"])
+    rows.append(prow)
     if not doctor_id:
         docs_ = db.q("SELECT transferred FROM documents WHERE created_at >= ? AND created_at < ?", [a_s, end])
         rows.append(_row("documents", "Документы", len(docs_), sum(1 for x in docs_ if x["transferred"]),
@@ -443,4 +467,4 @@ def reconcile(db, date_from=None, date_to=None, doctor_id=None) -> dict:
     return {"from": a_s, "to": b_s, "no_dp": NO_DP, "dp_span": {"from": span[0], "to": span[1]} if span else None,
             "covered": covered, "rows": rows, "not_transferred": left[:MAX_LIST], "not_transferred_total": len(left),
             "visits_without_record": without[:MAX_LIST], "visits_without_record_total": len(without),
-            "payments_dp": NO_DP}
+            "payments_dp": dp_pay["text"] if dp_pay else NO_DP}

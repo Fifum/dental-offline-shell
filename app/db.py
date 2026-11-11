@@ -62,6 +62,20 @@ CREATE TABLE IF NOT EXISTS visits_archive(
     id TEXT PRIMARY KEY, patient_id TEXT, doctor_id TEXT, branch_id TEXT, start TEXT, "end" TEXT,
     status TEXT, title TEXT, chair TEXT, updated_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_va_start ON visits_archive(start);
+-- ===== mirror of Dentist Plus payments (GET /payments) for «Сверка»; replaced by date window on every sync
+CREATE TABLE IF NOT EXISTS dp_payments(
+    id TEXT PRIMARY KEY, date TEXT, sum REAL, patient_id TEXT, visit_id TEXT, payment_type TEXT, data TEXT, synced_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_dpp_date ON dp_payments(date);
+-- ===== doctors' work schedule in Dentist Plus (GET /schedule): one row per doctor, day and chair
+CREATE TABLE IF NOT EXISTS dp_schedule(
+    doctor_id TEXT, day TEXT, chair_id TEXT, branch_id TEXT, time_from TEXT, time_to TEXT, synced_at TEXT,
+    PRIMARY KEY(doctor_id, day, chair_id));
+CREATE INDEX IF NOT EXISTS ix_dps_day ON dp_schedule(day);
+-- ===== changes of a patient card made here (name, phone, birth date…) to send to Dentist Plus (PUT /patients/{id})
+CREATE TABLE IF NOT EXISTS patient_edits(
+    id TEXT PRIMARY KEY, patient_id TEXT, data TEXT, created_at TEXT, updated_at TEXT,
+    transferred INTEGER DEFAULT 0, transferred_at TEXT, remote_id TEXT, push_status TEXT, push_error TEXT, push_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_pe_patient ON patient_edits(patient_id);
 """
 
 # chair of a synced visit, from the raw Dentist Plus record (same fields as DB.CHAIR)
@@ -104,7 +118,9 @@ class DB:
         # 3.3: who marked a record «перенесено в Dentist Plus» and when it was last copied for Dentist Plus
         # (the columns travel to the other computers with the row, see replica.read_row)
         rcols = {r[1] for r in self.conn.execute("PRAGMA table_info(records)")}
-        for col in ("transferred_by TEXT", "dp_copied_at TEXT", "dp_copied_by TEXT"):
+        # 3.7: a record sent by itself into its Dentist Plus visit (PUT /visits/{id}) — the result like for visits
+        for col in ("transferred_by TEXT", "dp_copied_at TEXT", "dp_copied_by TEXT",
+                    "push_status TEXT", "push_error TEXT", "push_at TEXT", "remote_id TEXT"):
             if col.split()[0] not in rcols:
                 self.conn.execute(f"ALTER TABLE records ADD COLUMN {col}")
         self.conn.execute("CREATE INDEX IF NOT EXISTS ix_records_date ON records(date)")
@@ -256,11 +272,12 @@ class DB:
                       (started, utcnow(), 1 if ok else 0, message, json.dumps(counts, ensure_ascii=False)))
             c.execute("DELETE FROM sync_log WHERE id NOT IN (SELECT id FROM sync_log ORDER BY id DESC LIMIT 200)")
 
-    LOCAL_TABLES = ("local_visits", "records", "documents", "invoices", "payments")
+    LOCAL_TABLES = ("local_visits", "records", "documents", "invoices", "payments", "patient_edits")
 
     def wipe(self, with_local=True):
         with self.tx() as c:
-            for t in ("branches", "doctors", "patients", "visits", "visits_archive", "patient_extras", "sync_log", "meta"):
+            for t in ("branches", "doctors", "patients", "visits", "visits_archive", "patient_extras", "sync_log", "meta",
+                      "dp_payments", "dp_schedule"):
                 c.execute(f"DELETE FROM {t}")
             if with_local:
                 for t in self.LOCAL_TABLES + ("notes",):

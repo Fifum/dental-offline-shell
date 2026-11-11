@@ -70,9 +70,10 @@ DEFAULT_SETTINGS = {
     "visit_from_param": "date_from",
     "visit_to_param": "date_to",
     "sync_all_patients": False,   # also download the full patient list (big clinics: slow)
-    "patient_extras": [           # per-patient endpoints, {id} is replaced by patient id
-        {"key": "diagnoses", "title": "Диагнозы", "path": "diagnoses", "params": {"patient_id": "{id}"}},
-    ],
+    # per-patient endpoints, {id} is replaced by patient id. Empty: the partner API has no per-patient lists besides
+    # visits and payments, which are synced anyway (/diagnoses is the ICD-10 dictionary, it ignores patient_id).
+    "patient_extras": [],
+    "dp_branch_id": "",          # Dentist Plus branch for patients created here (required by POST /patients); "" = the visit's or the only one
     "day_start": 8,
     "day_end": 21,
     "transfer_mode": "manual",   # "manual": staff re-enter via journal; "auto": send to Dentist Plus when online
@@ -133,7 +134,16 @@ def load_settings() -> dict:
                 s.update(json.loads(SETTINGS_PATH.read_text(encoding="utf-8")))
             except Exception:
                 pass
-        return s
+        return _migrate(s)
+
+
+def _migrate(s: dict) -> dict:
+    """Settings saved by older versions: the «Диагнозы» extra asked the ICD-10 dictionary /diagnoses once per
+    patient (it has no patient filter) — dropped."""
+    ex = s.get("patient_extras")
+    if isinstance(ex, list):
+        s["patient_extras"] = [e for e in ex if not (isinstance(e, dict) and str(e.get("path", "")).strip("/") == "diagnoses")]
+    return s
 
 
 def node_id() -> str:

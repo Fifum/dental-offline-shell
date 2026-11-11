@@ -176,7 +176,8 @@ t("unmark", lambda: api.mark_transferred("records", [rid], False))
 t("mark patient", lambda: api.mark_transferred("patients", [np["id"]]))
 refuses("mark bad table", lambda: api.mark_transferred("visits", ["x"]), "bad table")
 t("retry push", lambda: api.retry_push("local_visits", lv), lambda r: r is True)
-t("retry push bad table", lambda: api.retry_push("records", rid), lambda r: r is False)
+t("retry push record (3.7: records go into their Dentist Plus visit)", lambda: api.retry_push("records", rid), lambda r: r is True)
+t("retry push bad table", lambda: api.retry_push("documents", rid), lambda r: r is False)
 t("pending count", lambda: d.pending_count(), lambda r: r > 0)
 
 # --- delete record / invoice

@@ -60,6 +60,11 @@ class H(BaseHTTPRequestHandler):
         if p == "visits":
             f, t = q["date_from"], q["date_to"]
             return self.send(200, paged([v for v in VISITS if f <= v["start"][:10] <= t]))
+        if p.startswith("visits/"):   # 3.7: PUT /visits/{id} needs the whole visit — it is read first
+            vid = int(p.split("/")[1])
+            for v in VISITS:
+                if v["id"] == vid: return self.send(200, v)
+            return self.send(404, {"error": "Запись не найдена"})
         if p.startswith("patients/"):
             pid = int(p.split("/")[1]); return self.send(200, {"data": PATIENTS.get(pid, {"id": pid})})
         self.send(404, {"error": "nf"})

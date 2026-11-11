@@ -173,12 +173,12 @@ async function dpLoadCheck(body) {
   catch (e) { body.innerHTML = `<div class="empty"><b>${esc(errText(e))}</b></div>`; return; }
   DPC.from = r.from; DPC.to = r.to;
   const num = v => v === null || v === undefined ? "—" : esc(v);
-  const dpCell = v => typeof v === "number" ? esc(v) : `<span class="dp-nodata">${esc(v)}</span>`;
+  const dpCell = (v, ok) => typeof v === "number" || ok ? esc(v) : `<span class="dp-nodata">${esc(v)}</span>`;
   const row = x => x.key === "visits"
     ? `<tr><td><b>${esc(x.title)}</b><small class="muted">${esc(x.note)}</small></td><td>${num(x.dd)} <small class="muted">с записью</small></td><td>—</td>
         <td>${x.left ? `<b class="bad-t">${x.left}</b> <small class="muted">без записи</small>` : num(x.left)}</td><td>${dpCell(x.dp)}</td></tr>`
     : `<tr><td><b>${esc(x.title)}</b><small class="muted">${esc(x.note)}</small></td><td>${num(x.dd)}${x.sum !== undefined && x.dd ? ` <small class="muted">${money(x.sum)}</small>` : ""}</td>
-        <td>${num(x.marked)}</td><td>${x.left ? `<b class="bad-t">${x.left}</b>` : "0"}</td><td>${dpCell(x.dp)}</td></tr>`;
+        <td>${num(x.marked)}</td><td>${x.left ? `<b class="bad-t">${x.left}</b>` : "0"}</td><td>${dpCell(x.dp, x.dp_ok)}</td></tr>`;
   body.innerHTML = `<div class="pbody dp-filter">
       <label class="fl">С<input class="input" type="date" id="dcFrom" value="${esc(r.from)}"></label>
       <label class="fl">По<input class="input" type="date" id="dcTo" value="${esc(r.to)}"></label>
@@ -187,7 +187,7 @@ async function dpLoadCheck(body) {
     </div>
     <div class="pbody"><table class="tbl dp-check"><thead><tr><th>Что</th><th>В программе</th><th>Отмечено «перенесено»</th><th>Не перенесено</th><th>В Dentist Plus</th></tr></thead>
       <tbody>${r.rows.map(row).join("")}</tbody></table>
-      <div class="muted note-line">Оплаты и счета Dentist Plus в его API нет — «${esc(r.no_dp)}». Сверьте кассу Dentist Plus с разделом «Касса» вручную.
+      <div class="muted note-line">Счетов Dentist Plus в его API нет — «${esc(r.no_dp)}». Оплаты Dentist Plus загружаются за период синхронизации; чеки сверьте с кассой вручную.
         ${r.dp_span ? `Приёмы из Dentist Plus сохранены за ${esc(fmtDate(r.dp_span.from))} — ${esc(fmtDate(r.dp_span.to))}.` : ""}</div></div>
     <div class="pbody j-group"><div class="pb-head"><b>Записи медкарты не перенесены</b><span class="muted">${r.not_transferred_total}</span></div>
       ${r.not_transferred.length ? r.not_transferred.map(x => `<div class="dp-line"><span>${esc(fmtDate(x.date))}</span><b class="lnk" data-dp-pat="${esc(x.patient_id)}">${esc(x.patient_name || "Пациент")}</b>

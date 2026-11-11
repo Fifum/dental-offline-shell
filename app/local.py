@@ -66,6 +66,50 @@ class Local:
             c.execute("UPDATE patients SET local=1 WHERE id=?", (pid,))
         return {"id": pid, "name": person_name(raw)}
 
+    EDITABLE = {"lname": "Фамилия", "fname": "Имя", "mname": "Отчество", "phone": "Телефон", "birth_date": "Дата рождения",
+                "gender": "Пол", "address": "Адрес", "email": "Email"}
+
+    @staticmethod
+    def _card_value(raw: dict, key: str) -> str:
+        v = raw.get(key)
+        if key == "birth_date" and not v:
+            v = raw.get("date_of_birth")
+        v = str(v or "").strip()
+        if key == "gender":
+            v = {"male": "М", "female": "Ж"}.get(v.lower(), v)
+        return v[:10] if key == "birth_date" else v
+
+    def edit_patient(self, pid: str, f: dict):
+        """3.7: change the card. A patient of Dentist Plus — the change is kept in patient_edits for «Перенос» / the
+        automatic transfer (PUT /patients/{id}); a patient created here and not sent yet — only the card itself."""
+        p = self.db.one("SELECT * FROM patients WHERE id=?", (str(pid),))
+        if not p:
+            raise ValueError("Пациент не найден")
+        new = {k: str(f.get(k) or "").strip() for k in self.EDITABLE if k in (f or {})}
+        if "fname" in new and not new["fname"]:
+            raise ValueError("Укажите имя пациента")
+        raw = json.loads(p["detail"] or p["data"] or "{}")
+        changed = {k: v for k, v in new.items() if self._card_value(raw, k) != v}
+        if not changed:
+            return {"changed": 0}
+        raw.update(changed)
+        raw["id"] = p["id"]
+        self.db.upsert_patients([raw], detail=True)
+        if p.get("local") and not p.get("remote_id"):
+            return {"changed": len(changed), "pending": False}  # goes to Dentist Plus with the new patient
+        ts = now()
+        with self.db.tx() as c:
+            cur = c.execute("SELECT id, data FROM patient_edits WHERE patient_id=? AND transferred=0", (p["id"],)).fetchone()
+            if cur:
+                data = json.loads(cur["data"] or "{}")
+                data.update(changed)
+                c.execute("""UPDATE patient_edits SET data=?, updated_at=?, push_status=NULL, push_error=NULL WHERE id=?""",
+                          (json.dumps(data, ensure_ascii=False), ts, cur["id"]))
+            else:
+                c.execute("""INSERT INTO patient_edits(id, patient_id, data, created_at, updated_at, transferred)
+                             VALUES(?,?,?,?,?,0)""", (new_id(), p["id"], json.dumps(changed, ensure_ascii=False), ts, ts))
+        return {"changed": len(changed), "pending": True}
+
     # ============================================================== visits
     def save_visit(self, f: dict):
         """Create a new visit, or edit/move/cancel an existing one (synced or local)."""
@@ -518,6 +562,14 @@ class Local:
                           "patient_id": r["id"], "patient_name": r["name"], "at": r["synced_at"] or "",
                           "transferred": r["transferred"] or 0, "push_status": r["push_status"], "push_error": r["push_error"],
                           "auto": True})
+        for r in self.db.q(f"""SELECT x.*, p.name AS patient_name FROM patient_edits x
+                               LEFT JOIN patients p ON p.id=x.patient_id {flt}"""):
+            data = json.loads(r["data"] or "{}")
+            det = "; ".join(f"{self.EDITABLE.get(k, k)}: {v or '—'}" for k, v in data.items())
+            items.append({"table": "patient_edits", "id": r["id"], "kind": "patient_edit", "what": "Изменение карточки пациента",
+                          "details": det, "patient_id": r["patient_id"], "patient_name": r["patient_name"], "at": r["updated_at"],
+                          "transferred": r["transferred"], "push_status": r["push_status"], "push_error": r["push_error"],
+                          "auto": True})
         for r in self.db.q(f"""SELECT x.*, p.name AS patient_name, d.name AS doctor_name, o.start AS old_start, o.status AS old_status
                                FROM local_visits x LEFT JOIN patients p ON p.id=x.patient_id
                                LEFT JOIN doctors d ON d.id=x.doctor_id LEFT JOIN visits o ON o.id=x.origin_id {flt}"""):
@@ -537,7 +589,8 @@ class Local:
             items.append({"table": "records", "id": r["id"], "kind": "record", "what": "Запись в медкарту",
                           "details": f"{r['date']} · {r['doctor_name'] or ''}{' · ' + dg if dg else ''}",
                           "patient_id": r["patient_id"], "patient_name": r["patient_name"], "at": r["updated_at"],
-                          "transferred": r["transferred"]})
+                          "transferred": r["transferred"], "push_status": r.get("push_status"), "push_error": r.get("push_error"),
+                          "auto": bool(r.get("visit_id"))})
         for r in self.db.q(f"""SELECT x.id, x.patient_id, x.title, x.created_at, x.transferred, p.name AS patient_name
                                FROM documents x LEFT JOIN patients p ON p.id=x.patient_id {flt}"""):
             items.append({"table": "documents", "id": r["id"], "kind": "document", "what": "Документ", "details": r["title"],

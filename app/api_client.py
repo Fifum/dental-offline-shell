@@ -1,17 +1,25 @@
 """Dentist Plus partner API client (https://api2.dentist-plus.com/partner).
 
-Confirmed: POST /auth {login, pass} -> token; GET /branches, /doctors, /patients,
-/patients/{id}, /visits, /schedule, /diagnoses require the token.
+Per the partner documentation (https://api-balancer.dentist-plus.com/partner/docs/, OpenAPI partner-doc.json):
+POST /auth {login, pass} -> {token, expires_at}; every other call carries «Authorization: Bearer <token>»,
+the token expires and is then requested again. Lists take ?page&per_page (at most 200) and answer
+{meta: {current_page, last_page, per_page, total}, data: [...]}; small dictionaries answer a plain array.
+Errors come as {"error": "..."} (401 bad login, 404 «Запись не найдена»). No rate limit is documented;
+429 / Retry-After is still honoured.
 """
 from __future__ import annotations
 
 import re
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import requests
 
 from normalize import get
+
+MAX_PER_PAGE = 200      # documented maximum of ?per_page
+TOKEN_MARGIN = 120      # seconds: a token this close to expires_at is renewed before the call
 
 
 class ApiError(Exception):
@@ -30,6 +38,7 @@ class DentistPlusClient:
         self.login, self.password = login, password
         self.timeout = timeout
         self.token: str | None = None
+        self.token_exp: datetime | None = None   # expires_at of the token (UTC), None when the server gave none
         self.s = requests.Session()
         self.s.headers.update({"Accept": "application/json", "User-Agent": "DentistPlus-offline-shell/1.3"})
 
@@ -54,12 +63,31 @@ class DentistPlusClient:
         if not token:
             raise ApiError("Сервер не вернул токен авторизации")
         self.token = token
+        self.token_exp = self._exp(data.get("expires_at") if isinstance(data, dict) else None)
         self.s.headers["Authorization"] = f"Bearer {token}"
         return data
 
-    def request(self, path: str, params=None, _retry=True):
-        if not self.token:
+    @staticmethod
+    def _exp(v):
+        """expires_at «2023-05-21T13:38:48.290765Z» -> aware UTC datetime (None when absent or unreadable)."""
+        if not v:
+            return None
+        try:
+            d = datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    def _ensure_token(self):
+        if not self.token or (self.token_exp is not None and
+                              (self.token_exp - datetime.now(timezone.utc)).total_seconds() < TOKEN_MARGIN):
+            self.token = None
             self.auth()
+
+    def request(self, path: str, params=None, _retry=True):
+        self._ensure_token()
+        if params and "per_page" in params:
+            params = {**params, "per_page": min(MAX_PER_PAGE, max(1, int(params["per_page"])))}
         url = f"{self.base}/{path.lstrip('/')}"
         for attempt in range(4):
             try:
@@ -88,25 +116,34 @@ class DentistPlusClient:
 
     def write(self, method: str, path: str, body: dict):
         """POST/PUT/PATCH. Returns (status_code, json). Never retries a write after it reached the
-        server (avoids duplicates); only connection errors before sending are reported as offline."""
-        if not self.token:
-            self.auth()
+        server (avoids duplicates); only connection errors before sending are reported as offline.
+        401 (token expired) and 429 (too many requests) mean the server did not do the write, so those are repeated."""
+        self._ensure_token()
         url = f"{self.base}/{path.lstrip('/')}"
-        try:
-            r = self.s.request(method.upper(), url, json=body, timeout=self.timeout)
-        except requests.ConnectionError as e:
-            raise OfflineError(f"Нет связи с сервером: {e.__class__.__name__}")
-        except requests.Timeout:
-            raise ApiError("Сервер не ответил вовремя — результат неизвестен, проверьте в Dentist Plus", None)
-        if r.status_code == 401:
-            self.token = None
-            self.auth()
-            r = self.s.request(method.upper(), url, json=body, timeout=self.timeout)
+        reauth = True
+        for attempt in range(4):
+            try:
+                r = self.s.request(method.upper(), url, json=body, timeout=self.timeout)
+            except requests.ConnectionError as e:
+                raise OfflineError(f"Нет связи с сервером: {e.__class__.__name__}")
+            except requests.Timeout:
+                raise ApiError("Сервер не ответил вовремя — результат неизвестен, проверьте в Dentist Plus", None)
+            if r.status_code == 401 and reauth:
+                reauth = False
+                self.token = None
+                self.auth()
+                continue
+            if r.status_code == 429 and attempt < 3:
+                ra = r.headers.get("Retry-After", "")
+                time.sleep(min(30, int(ra)) if ra.isdigit() else (3, 8, 15)[attempt])
+                continue
+            break
         return r.status_code, self._json(r)
 
     def paged(self, path: str, params=None, per_page=100, max_pages=500):
         """Iterate over all items of a list endpoint, whatever pagination it uses."""
         params = dict(params or {})
+        per_page = min(MAX_PER_PAGE, max(1, int(per_page or 20)))
         page = 1
         seen_first = None
         while page <= max_pages:

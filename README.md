@@ -110,9 +110,9 @@ working without it.
 
 ## Three decisions worth explaining
 
-**A tolerant reader instead of a fixed schema.** The partner API documents only its login endpoint.
-Rather than guess one format and break on the first real response, every field is read through a list
-of candidate names and formats — `start`, `date` + `time`, ISO with a timezone, Unix seconds,
+**A tolerant reader on top of the documented schema.** Since 3.7 the documented names of the partner API
+come first (`fname`/`lname`, `date_of_birth`, `start`/`end`, status codes, `is_cancelled`). Older or unexpected
+answers still work: every field is read through a list of candidate names and formats — `start`, `date` + `time`, ISO with a timezone, Unix seconds,
 `dd.mm.yyyy`; patient as an id or a nested object; doctor as an object or a list. The raw JSON is
 always stored too, so nothing is lost, and a built-in **API diagnostics** screen shows real responses
 so the mapping can be tuned without a rebuild. The sync is tested against four differently shaped fake
@@ -121,9 +121,10 @@ servers.
 **Writes that can't create duplicates.** Automatic sending to the clinic's live system is the riskiest
 part, so it follows strict rules: an item counts as sent only on a 2xx answer; a write that timed out
 is never retried automatically (status "check by hand"); before creating a visit the app looks for the
-same visit in Dentist Plus; after creating it re-reads the day and compares time and doctor. Endpoint
-paths and field names live in settings, so they can be corrected on site. Medical records, documents
-and payments stay manual — payments need a fiscal receipt anyway.
+same visit in Dentist Plus; after creating it re-reads the day and compares time and doctor; a change of a
+visit reads the visit first and sends its required fields back with the change on top. Endpoint paths and
+field names live in settings, so they can be corrected on site. Documents, invoices and payments stay
+manual — payments need a fiscal receipt anyway.
 
 **Local edits as an overlay, not a fork.** Offline changes never touch the synced tables. A moved
 appointment is a local row that hides the synced one; the calendar is a `UNION` of both. When the next
@@ -217,8 +218,9 @@ CSS shows them only under `body.addon`, so the mode switches live (the 3-second 
 
 ## No double entry (3.3)
 
-The partner API of Dentist Plus does not accept medical records, so a record written here — by hand, from a visit
-template, by dictation or with the AI — is pasted into Dentist Plus by the doctor. 3.3 makes that a few clicks and keeps
+The partner API of Dentist Plus takes a medical record only as text fields of a visit (3.7: with the automatic transfer a
+record linked to a Dentist Plus visit goes there by itself), so a record written here — by hand, from a visit
+template, by dictation or with the AI — is otherwise pasted into Dentist Plus by the doctor. 3.3 makes that a few clicks and keeps
 it from being forgotten.
 
 * **«Скопировать для DP».** One click puts the whole record on the clipboard in the order of the Dentist Plus form —
@@ -234,7 +236,8 @@ it from being forgotten.
   has a line per doctor.
 * **«Сверка».** Records, invoices, payments and documents of a period against the marks, and finished Dentist Plus
   visits (from the synced schedule and its archive) that have no record here — matched by the visit, a visit changed
-  here, or patient + day. Dentist Plus payments are not in its API, and the screen says «нет данных из Dentist Plus».
+  here, or patient + day. 3.7: Dentist Plus payments of the period (`GET /payments`) stand next to the payments made
+  here; invoices of Dentist Plus are not in its API, and the screen says «нет данных из Dentist Plus».
 * **Rights.** The director and staff with «Отчёты» or «Перенос в Dentist Plus» see everyone; a doctor sees and marks only
   the records of the doctor his account is linked to. Everything works offline.
 
@@ -322,6 +325,35 @@ these apart, finds the abandoned ones and gives the front desk a call list for t
 
 `app/plan_status.py` holds the statuses, the rules, the call list and the report; `app/ui/plan-status.js` the screens. Both
 new tables sync over the clinic network.
+
+## Partner API by the documentation (3.7)
+
+The integration follows the partner documentation of Dentist Plus (`https://api-balancer.dentist-plus.com/partner/docs/`,
+OpenAPI `partner-doc.json`): base `https://api2.dentist-plus.com/partner`, `POST /auth {login, pass}` →
+`{token, expires_at}`, `Authorization: Bearer`, pages `?page&per_page` (at most 200) with `{meta, data}`.
+
+* **Token.** Renewed two minutes before `expires_at`, and once more on a 401.
+* **Visits.** Asked with `with_deleted=1`: a cancelled visit (`is_cancelled`) shows as «Отменён» instead of vanishing.
+  Status codes become words: `not_confirmed` «Не подтверждён», `confirmed` «Подтверждён», `came` «Пришёл»,
+  `in_chair` «В кресле», `did_not_come` «Не пришёл» — so reports count arrivals and no-shows correctly.
+* **No ICD-10 dictionary per patient.** The old default extra asked `/diagnoses?patient_id=` for every card; `/diagnoses`
+  is the dictionary and has no patient filter. Removed, also from saved settings.
+* **New reads.** `/payments` (mirror `dp_payments`, «Сверка»), `/schedule` per doctor in windows of 31 days, halved when
+  the answer hits its 100-row cap (mirror `dp_schedule`; the calendar uses it where no shift was set here),
+  `/chairs` and `/record_statuses` once an hour; deleted services are skipped.
+* **Writes (transfer mode «auto»).** `POST /patients` with the required `branch_id` and `fname`, `date_of_birth`,
+  `gender` male / female, `description`; `POST /visits` with `branch_id`, `patient_id`, `doctor_id`, `start`, `end`,
+  `status_id` matched to `/record_statuses` by title, `chair_id` by the chair's title; a move, edit or status reads
+  `GET /visits/{id}` and sends `PUT /visits/{id}` with the visit's writable fields and the change on top (teeth are
+  not sent; fewer services afterwards are flagged «проверьте визит»); a cancel is `POST /visits/{id}/cancel {reason}`;
+  a visit cancelled before it was sent is not created. 401 and 429 on a write are repeated — the server did not do it.
+* **Patient cards.** «Изменить» on the card: for a Dentist Plus patient the change goes to «Перенос» (table
+  `patient_edits`, synced between the clinic's computers) and, in the automatic mode, to `PUT /patients/{id}` with the
+  card read first; the card here shows the change until Dentist Plus has it.
+* **Medical records.** In the automatic mode a record linked to a Dentist Plus visit goes into that visit: complaints →
+  `complaints`, anamnesis → `disease_history`, objective → `objectively`, the rest with section titles →
+  `description_doctor` (`write_map["record_fields"]`). Text the doctor already wrote there stays; a record changed here
+  later replaces its own earlier text. A record without a visit stays in the manual list.
 
 ## Architecture
 
@@ -478,6 +510,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 ```powershell
 .venv\Scripts\python tests\test_api_all_functions.py     # 112 checks over every app function
 .venv\Scripts\python tests\test_push_to_dentist_plus.py  # automatic sending against a fake API
+.venv\Scripts\python tests\test_dp_partner_api.py        # 38 checks: a fake server as the partner documentation says — token expiry, per_page cap, status codes and cancelled visits, payments, schedule cap, required fields of every write, cancel, patient edit, a record into its visit, 429
 .venv\Scripts\python tests\test_sync_api_formats.py      # sync against 4 differently shaped APIs
 .venv\Scripts\python tests\test_server_auth.py           # 45 checks: accounts, approval, permissions over HTTP
 .venv\Scripts\python tests\test_stock.py                 # 54 checks: stock, automatic write-off, equipment, rights

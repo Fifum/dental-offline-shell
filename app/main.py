@@ -544,6 +544,9 @@ class Api:
     def create_patient(self, f):
         return self._local.create_patient(f)
 
+    def patient_edit(self, pid, f):
+        return self._local.edit_patient(pid, f)
+
     def save_visit(self, f):
         vid = self._local.save_visit(f)
         if isinstance(f, dict) and not f.get("id"):  # 3.4: a new booking counts for the administrator who made it
@@ -1496,7 +1499,7 @@ class Api:
         return DEFAULT_WRITE_MAP
 
     def retry_push(self, table, rid):
-        if table not in ("local_visits", "patients"):
+        if table not in ("local_visits", "patients", "patient_edits", "records"):
             return False
         with self._db.tx() as c:
             c.execute(f"UPDATE {table} SET push_status=NULL, push_error=NULL WHERE id=? AND COALESCE(transferred,0)=0", (rid,))

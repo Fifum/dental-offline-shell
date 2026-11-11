@@ -40,6 +40,7 @@ class T:
 TABLES = [
     T("users", key=("login",), intpk=True, skip=("last_login", "pin_fails"), refs={"approved_by": "users"}, title="Сотрудник"),
     T("patients", where="local=1", title="Пациент"),
+    T("patient_edits", title="Изменение карточки пациента"),  # 3.7: sent to Dentist Plus by the computer it was made on
     T("local_visits", title="Запись на приём"),
     T("records", title="Лечение в медкарте"),
     T("documents", title="Документ"),

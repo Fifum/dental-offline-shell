@@ -1,6 +1,6 @@
 "use strict";
 /* Everything done in this app, to re-enter into Dentist Plus. */
-const J_ICON = {patient: "Пациент", visit: "Запись", record: "Медкарта", document: "Документ", invoice: "Счёт", payment: "Оплата"};
+const J_ICON = {patient: "Пациент", patient_edit: "Пациент", visit: "Запись", record: "Медкарта", document: "Документ", invoice: "Счёт", payment: "Оплата"};
 
 /* 3.3: tabs — «Всё» (everything to re-enter, «Перенос в Dentist Plus»), «Медкарта: не перенесено» (a doctor sees own
    records), «Сверка» («Отчёты» / «Перенос») */
@@ -27,7 +27,7 @@ async function loadJournal() {
   const pending = items.filter(x => !x.transferred).length;
   const auto = S.status.transfer_mode === "auto";
   $("#journalBody").innerHTML = `<div class="j-mode ${auto ? "auto" : ""}">${auto
-      ? `<b>Автоматическая отправка включена.</b> Пациенты и записи уходят в Dentist Plus сами при подключении к интернету. Медкарты, документы, счета и оплаты — вручную.`
+      ? `<b>Автоматическая отправка включена.</b> Пациенты, изменения карточек, записи на приём и записи медкарты, привязанные к визиту, уходят в Dentist Plus сами при подключении к интернету. Документы, счета и оплаты — вручную.`
       : `<b>Перенос вручную.</b> Внесите изменения в Dentist Plus и отметьте галочкой.`} <button class="linkbtn" id="jMode">изменить режим</button></div>
     <div class="j-sum">${pending ? `Осталось перенести: <b>${pending}</b>` : "Всё отмечено как перенесённое"}
       <span class="muted">Порядок: сначала новые пациенты, затем записи, медкарты, счета и оплаты.</span></div>` +
@@ -73,6 +73,8 @@ function pushLine(x, auto) {
   if (st === "conflict") return `<small class="pl conflict">⚠ ${err}${openBtn} · <button class="linkbtn" data-force="${esc(x.id)}">отправить всё равно</button></small>`;
   const clash = x.conflict_text ? `<small class="pl conflict">⚠ Двойная запись: ${esc(x.conflict_text)}. ${auto ? "Не уйдёт в Dentist Plus, пока не решите." : "Перед переносом в Dentist Plus решите, кого перенести."}${openBtn}</small>` : "";
   if (clash && !st) return clash;
+  if (st === "manual") return `<small class="pl manual">${err || "вносится вручную"}</small>`;
+  if (st === "wait") return `<small class="pl wait">ждёт отправки${err ? ": " + err : ""}</small>`;
   if (st === "sent") return `<small class="pl ok">✓ отправлено автоматически${err ? " · " + err : ""}</small>`;
   if (st === "warn") return `<small class="pl warn">⚠ ${err}</small>`;
   if (st === "unknown") return `<small class="pl warn">⚠ ${err || "результат неизвестен"} — проверьте в Dentist Plus и отметьте галочкой, или <button class="linkbtn" data-retry="${esc(x.id)}" data-t="${esc(x.table)}">отправить ещё раз</button></small>`;
