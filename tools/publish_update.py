@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -37,6 +38,8 @@ import config  # noqa: E402
 
 ENDPOINT = "storage.yandexcloud.net"
 REGION = "ru-central1"
+VERIFY_WAIT_S = 120  # after publishing: how long to wait for GitHub to serve the new latest.json
+VERIFY_EVERY_S = 5
 KEYS = Path(os.environ.get("DD_KEY_DIR") or Path.home() / ".dental-desk-keys") / "yc-s3.key"
 
 
@@ -101,13 +104,22 @@ def github_publish(src: Path, doc: dict, repo: str, allow_plain=False):
     _gh("release", "upload", tag, str(src / "latest.json"), "--repo", repo)
     _gh("release", "edit", tag, "--repo", repo, "--draft=false", "--latest")
     feed = updates.github_feed(repo)
-    try:  # what a program will now see
-        with updates._open(feed) as r:
-            live = json.loads(r.read().decode("utf-8-sig"))
-        ok = updates.verify(live) and live.get("version") == ver and live.get("sha256") == doc["sha256"]
-    except Exception as e:  # noqa: BLE001
-        ok, live = False, str(e)
-    print(f"Готово: {feed}" if ok else f"Релиз загружен, но по адресу {feed} пока другое: {str(live)[:200]}")
+    deadline = time.monotonic() + VERIFY_WAIT_S
+    while True:  # what a program will now see; GitHub serves a new «latest» after a few seconds, sometimes a minute
+        try:
+            with updates._open(feed) as r:
+                live = json.loads(r.read().decode("utf-8-sig"))
+            ok = updates.verify(live) and live.get("version") == ver and live.get("sha256") == doc["sha256"]
+            if not ok:
+                live = f"версия {live.get('version')}, другой файл или подпись"
+        except Exception as e:  # noqa: BLE001
+            ok, live = False, str(e)
+        if ok or time.monotonic() >= deadline:
+            break
+        print(f"GitHub ещё не отдаёт новую версию ({str(live)[:80]}), ждём…", flush=True)
+        time.sleep(VERIFY_EVERY_S)
+    print(f"Готово: {feed}" if ok else f"Релиз загружен, но за {VERIFY_WAIT_S} с по адресу {feed} так и не появилась "
+          f"версия {ver}: {str(live)[:200]}. Проверьте позже: релиз мог ещё не разойтись по серверам GitHub")
     return 0 if ok else 1
 
 

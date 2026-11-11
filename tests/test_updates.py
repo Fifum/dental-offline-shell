@@ -333,6 +333,35 @@ check("publish: draft first, latest.json second, then latest", names[3:] == ["re
 check("publish: only the encrypted file goes up", GH_CALLS[3][3].endswith("update-3.2.0.bin"), GH_CALLS[3])
 check("publish: no clinic name in the release text", not any("AMK" in " ".join(c) for c in GH_CALLS))
 check("publish: checked what programs see", rc == 0)
+
+# GitHub serves the new «latest» with a delay: first a 404, then the old version, then the new one
+publish_update.VERIFY_WAIT_S, publish_update.VERIFY_EVERY_S = 5, 0.01
+old_doc = dict(doc, version="3.1.0", sha256="0" * 64)
+answers = iter([FileNotFoundError("404"), old_doc, doc])
+
+
+def slow_open(url, **kw):
+    a = next(answers, doc)
+    if isinstance(a, Exception):
+        raise a
+    return Live(json.dumps(a).encode())
+
+
+GH_CALLS.clear()
+updates._open = slow_open
+try:
+    rc = publish_update.github_publish(feed_dir, doc, REPO)
+finally:
+    updates._open = real_open
+check("publish: waits until GitHub serves the new latest.json", rc == 0 and next(answers, None) is None)
+publish_update.VERIFY_WAIT_S = 0.05
+GH_CALLS.clear()
+updates._open = lambda url, **kw: Live(json.dumps(old_doc).encode())
+try:
+    rc = publish_update.github_publish(feed_dir, doc, REPO)
+finally:
+    updates._open = real_open
+check("publish: gives up after the wait and says so", rc == 1)
 try:
     publish_update.github_publish(plain_dir, pdoc, REPO)
     FAIL.append("plain installer published to a public repository")
