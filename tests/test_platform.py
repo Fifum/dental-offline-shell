@@ -378,7 +378,10 @@ with A:
     check("plain http refused for downloads", not updates._allowed("http://example.com/latest.json"))
     check("https allowed", updates._allowed("https://storage.yandexcloud.net/b/latest.json"))
     config.save_settings({"update_url": ""})
+    brand_url = config.BRAND.pop("update_url", None)  # a clinic build's brand.json may carry the feed address
     check("no address: not configured", not A.api.update_check()["configured"])
+    if brand_url:
+        config.BRAND["update_url"] = brand_url
 config.UPDATE_PUBKEY = real_pub
 check("built-in public key is set", len(real_pub) == 64 and real_pub != "0" * 64)
 

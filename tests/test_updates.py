@@ -248,10 +248,12 @@ check("tampered latest.json refused", not st["available"] and "не подпис
 RELEASES["dir"] = None
 st = updates.Updater().check()
 check("repository without releases: quietly nothing", not st["available"] and not st["error"], st)
+check("repository without releases: «ещё не опубликованы», not «последняя версия»", st["unpublished"] and st["latest"] is None, st)
 RELEASES["dir"] = feed_dir
 config.VERSION = "3.2.0"
 st = updates.Updater().check()
 check("same version: nothing to install", not st["available"] and st["latest"] == "3.2.0", st)
+check("a release exists: no longer «не опубликованы»", not st["unpublished"], st)
 config.VERSION = "3.1.0"
 httpd.shutdown()
 st = updates.Updater().check()

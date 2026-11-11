@@ -198,7 +198,7 @@ class Updater:
     def __init__(self):
         self.state = {"configured": bool(source()), "current": config.VERSION, "latest": None, "available": False,
                       "notes": "", "size": 0, "date": "", "checked_at": None, "error": "", "downloading": False,
-                      "progress": 0, "ready": "", "installing": False}
+                      "progress": 0, "ready": "", "installing": False, "unpublished": False}
         self._doc = None
         self._etag = ("", "")  # (address, ETag) of the last latest.json read
         self._lock = threading.Lock()
@@ -248,11 +248,12 @@ class Updater:
                 self.state["ready"] = ""  # another file than the one downloaded before
             self._doc = doc
             self.state.update(latest=doc["version"], available=newer, notes=notes[:4000],
-                              size=int(doc.get("plain_size") or doc["size"]), date=str(doc.get("date") or ""), error="")
+                              size=int(doc.get("plain_size") or doc["size"]), date=str(doc.get("date") or ""), error="",
+                              unpublished=False)
         except NotModified:
-            self.state["error"] = ""
-        except FileNotFoundError:
-            self.state.update(error="", available=False)
+            self.state.update(error="", unpublished=False)
+        except FileNotFoundError:  # 3.6.1: say so instead of «последняя версия» — nothing has been published yet
+            self.state.update(error="", available=False, latest=None, unpublished=True)
         except (OSError, ValueError) as e:
             msg = str(e) if isinstance(e, ValueError) else "Нет связи с сервером обновлений"
             log.info("update check: %s", e)

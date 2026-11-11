@@ -135,6 +135,7 @@ async function loadUpdatePanel(check) {
   if (pw && pw.is_client) { try { client = await pw.is_client(); } catch (e) {} }
   const head = !st.configured ? `<div class="bk-state">Сейчас установлена версия <b>${esc(st.current)}</b>. Адрес обновлений ещё не настроен — новые версии ставятся файлом-установщиком.</div>`
     : st.available ? `<div class="pl-sub ok"><div><b>Доступна версия ${esc(st.latest)}</b>${st.date ? " от " + esc(fmtDate(st.date)) : ""} · ${esc(PL_MB(st.size))}</div><div class="muted">Сейчас установлена ${esc(st.current)}</div></div>`
+    : st.unpublished ? `<div class="bk-state">Сейчас установлена версия <b>${esc(st.current)}</b>. Обновления ещё не опубликованы — когда выйдет новая версия, программа найдёт её сама${st.checked_at ? ` · проверено ${esc(fmtDT(st.checked_at))}` : ""}</div>`
     : `<div class="bk-state">Установлена последняя версия <b>${esc(st.current)}</b>${st.checked_at ? ` · проверено ${esc(fmtDT(st.checked_at))}` : ""}</div>`;
   const notes = st.available && st.notes ? `<details class="pl-notes"><summary>Что нового</summary><pre>${esc(st.notes)}</pre></details>` : "";
   const err = st.error ? `<div class="warn-line">${esc(st.error)}</div>` : "";
