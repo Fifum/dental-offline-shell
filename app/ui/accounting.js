@@ -72,7 +72,7 @@ async function editExpense(x) {
       <label class="fl">Статья*<input class="input" id="exC" list="exCats" value="${esc(x.category || S.accCat || "")}" placeholder="Аренда, закупка, лаборатория…"></label>
       <datalist id="exCats">${ACC.categories.map(c => `<option value="${esc(c)}">`).join("")}</datalist>
       <label class="fl" id="exSrcL">Какую рекламу оплатили (для окупаемости в CRM)<select class="input" id="exSrc"><option value="">— не указано —</option>${[...new Set([...(ACC.sources || []), ...(x.source ? [x.source] : [])])].map(s => `<option ${s === x.source ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
-      <div class="grid2"><label class="fl">Сотрудник (для зарплаты)<select class="input" id="exP"><option value="">—</option>${people.map(p => `<option value="${esc(p.key)}" ${p.key === x.person ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
+      <div class="grid2"><label class="fl">Сотрудник (для зарплаты)<select class="input" id="exP"><option value="">—</option>${people.map(p => `<option value="${esc(p.key)}" ${p.key === x.person ? "selected" : ""}>${esc(p.name)}</option>`).join("")}${x.person && !people.some(p => p.key === x.person) ? `<option value="${esc(x.person)}" selected>${esc(x.person_name || "неизвестный сотрудник")}</option>` : ""}</select></label>
         <label class="fl">За месяц<input class="input" type="month" id="exPer" value="${esc(x.period || "")}"></label></div>
       <label class="fl">Комментарий<input class="input" id="exT" value="${esc(x.comment || "")}"></label>
       <div class="auth-err" id="exErr"></div></div>
@@ -109,6 +109,8 @@ async function accPayroll(body) {
       : `<div class="empty"><b>Схемы оплаты ещё не заданы</b><span>Укажите процент от услуг и оклад для сотрудников ниже</span></div>`}</div>
     ${r.unset.length ? `<div class="pbody" style="margin-top:12px"><div class="pb-head"><b>Без схемы оплаты</b><span class="muted">Зарплата не считается, пока не задан процент или оклад</span></div>
       <div class="unset-list">${r.unset.map(p => `<button class="chip" data-sch="${esc(p.key)}">${esc(p.name)}${p.position ? ` · ${esc(p.position)}` : ""}</button>`).join("")}</div></div>` : ""}
+    ${(r.unknown || []).length ? `<div class="pbody" style="margin-top:12px"><div class="pb-head"><b>Схемы без сотрудника</b><span class="muted">Учётной записи нет на этом компьютере (или схема пришла с компьютера со старой версией) — в начисление не входят</span></div>
+      <div class="unset-list">${r.unknown.map(p => `<span class="chip">${esc(p.name)} · ${esc([p.percent ? `${(+p.percent).toLocaleString("ru-RU")}%` : "", p.fixed ? `оклад ${money(p.fixed)}` : ""].filter(Boolean).join(" + "))}</span>`).join("")}</div></div>` : ""}
     <div class="muted note-line">Процент считается от оплат пациентов (или от выставленных счетов) по счетам врача за месяц. Выплата записывается расходом «Зарплата» за этот месяц.</div>`;
   $("#pmPrev").onclick = () => { S.accMonth = shiftMonth(S.accMonth, -1); loadAccounting(); };
   $("#pmNext").onclick = () => { S.accMonth = shiftMonth(S.accMonth, 1); loadAccounting(); };

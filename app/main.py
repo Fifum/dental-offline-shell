@@ -88,6 +88,13 @@ class Api:
         from plan_status import PlanStatus
         self._pst = PlanStatus(db, self._local, self._crm, self._mk, self._sauto)
         self._crm.plan_hook = self._pst.after_task
+        # 3.6.1: staff in the schedules, pay schemes and payouts by login, not by the local account id
+        import staffref
+        try:
+            staffref.migrate(db)
+        except Exception:  # noqa: BLE001 — never stops the start; the rows stay as they were and show as unknown
+            import logging
+            logging.getLogger("staffref").warning("staff references not converted", exc_info=True)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo

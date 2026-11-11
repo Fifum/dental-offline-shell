@@ -2,12 +2,15 @@
 
 Income is what patients paid in this program. Expenses are entered by hand; paying out a salary is an
 expense of the «Зарплата» category tied to a person and a month, so «к выплате» = начислено − выплачено.
+3.6.1: a staff account in the pay schemes and the payouts is stored under its login, not the local id (staffref.py);
+the screens keep the keys of shifts.people.
 """
 from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta
 
+import staffref
 from reports import _period
 from shifts import people
 
@@ -74,9 +77,13 @@ class Accounting:
             args.append(category)
         rows = self.db.q(sql + " ORDER BY date DESC, created_at DESC", args)
         names = {p["key"]: p["name"] for p in people(self.db)}
+        idx = staffref.Index(self.db)
         by = {}
         for r in rows:
-            r["person_name"] = names.get(r["person"] or "", "")
+            if r["person"]:
+                r["person"] = staffref.to_screen(self.db, r["person"], idx)
+            r["person_name"] = (staffref.unknown_name(r["person"]) if staffref.is_unknown(r["person"])
+                                else names.get(r["person"] or "", ""))
             by[r["category"]] = round(by.get(r["category"], 0) + r["amount"], 2)
         return {"rows": rows, "total": round(sum(r["amount"] for r in rows), 2),
                 "by_category": dict(sorted(by.items(), key=lambda x: -x[1]))}
@@ -94,8 +101,15 @@ class Accounting:
         except ValueError:
             raise ValueError("Неверная дата") from None
         person = str(f.get("person") or "") or None
-        if person and not any(p["key"] == person for p in people(self.db)):
-            raise ValueError("Сотрудник не найден")
+        if person and staffref.is_unknown(person):  # 3.6.1: an edited payout keeps a person nobody here has
+            had = self.db.one("SELECT person FROM expenses WHERE id=?", (str(f.get("id") or ""),))
+            if not had or had["person"] != staffref.to_store(self.db, person):
+                raise ValueError("Сотрудник не найден")
+            person = had["person"]
+        elif person:
+            if not any(p["key"] == person for p in people(self.db)):
+                raise ValueError("Сотрудник не найден")
+            person = staffref.to_store(self.db, person)
         period = str(f.get("period") or "")[:7] or None
         source = (str(f.get("source") or "").strip()[:60] or None) if cat == AD else None
         eid = f.get("id") or f"E-{uuid.uuid4().hex[:10]}"
@@ -116,8 +130,13 @@ class Accounting:
         return True
 
     # -------------------------------------------------------------- salary --
+    def _scheme_rows(self):
+        """{screen key: row} of the saved schemes (3.6.1: stored by login)."""
+        idx = staffref.Index(self.db)
+        return {staffref.to_screen(self.db, r["person"], idx): r for r in self.db.q("SELECT * FROM salary_schemes")}
+
     def schemes(self):
-        sch = {r["person"]: r for r in self.db.q("SELECT * FROM salary_schemes")}
+        sch = self._scheme_rows()
         return [{**p, "percent": (sch.get(p["key"]) or {}).get("percent") or 0, "fixed": (sch.get(p["key"]) or {}).get("fixed") or 0,
                  "base": (sch.get(p["key"]) or {}).get("base") or "paid",
                  "minus_materials": bool((sch.get(p["key"]) or {}).get("minus_materials")),
@@ -127,6 +146,7 @@ class Accounting:
         key = str(f.get("person") or "")
         if not any(p["key"] == key for p in people(self.db)):
             raise ValueError("Сотрудник не найден")
+        key = staffref.to_store(self.db, key)
         pct, fixed = _money(f.get("percent") or 0, "Процент"), _money(f.get("fixed") or 0, "Оклад")
         if not 0 <= pct <= 100:
             raise ValueError("Процент: от 0 до 100")
@@ -190,13 +210,16 @@ class Accounting:
             bonus = round(bonuses.get(s["key"]) or 0, 2)
             earned = round(by_percent + s["fixed"] + bonus, 2)
             paid_out = round(self.db.one("SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE category=? AND person=? AND period=?",
-                                         (SALARY, s["key"], mon))["s"], 2)
+                                         (SALARY, staffref.to_store(self.db, s["key"]), mon))["s"], 2)
             if not earned and not paid_out and not s["percent"] and not s["fixed"]:
                 continue
             out.append({**s, "billed": billed, "paid": paid, "materials": materials, "lab": lab, "base_sum": round(base_sum, 2),
                         "by_percent": by_percent, "bonus": bonus, "earned": earned, "paid_out": paid_out, "due": round(earned - paid_out, 2)})
         unset = [s for s in self.schemes() if not s["percent"] and not s["fixed"] and not bonuses.get(s["key"])]
-        return {"month": mon, "rows": out, "unset": unset,
+        # 3.6.1: schemes of a reference nobody here has — shown apart, not counted (whose pay it is is not known here)
+        unknown = [{"key": k, "name": staffref.unknown_name(k), "percent": r["percent"] or 0, "fixed": r["fixed"] or 0}
+                   for k, r in self._scheme_rows().items() if staffref.is_unknown(k) and (r["percent"] or r["fixed"])]
+        return {"month": mon, "rows": out, "unset": unset, "unknown": unknown,
                 "earned": round(sum(r["earned"] for r in out), 2), "paid_out": round(sum(r["paid_out"] for r in out), 2),
                 "bonus": round(sum(r["bonus"] for r in out), 2),
                 "due": round(sum(r["due"] for r in out), 2)}

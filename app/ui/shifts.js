@@ -16,7 +16,7 @@ async function loadShifts() {
   const head = r.days.map(d => `<th class="sh-d ${wd(d) >= 5 ? "we" : ""} ${d === today ? "today" : ""}"><b>${+d.slice(8)}</b><small>${WD_SHORT[wd(d)]}</small></th>`).join("");
   const rows = r.people.map(p => {
     const sh = r.shifts[p.key] || {}, t = r.totals[p.key];
-    return `<tr><th class="sh-p"><b>${esc(p.name)}</b><small class="muted">${esc(p.position || (p.kind === "doctor" ? "врач" : "сотрудник"))}</small></th>${
+    return `<tr${p.kind === "unknown" ? ' class="muted"' : ""}><th class="sh-p"><b>${esc(p.name)}</b><small class="muted">${esc(p.position || (p.kind === "doctor" ? "врач" : "сотрудник"))}</small></th>${
       r.days.map(d => { const s = sh[d]; return `<td class="sh-c ${wd(d) >= 5 ? "we" : ""} ${d === today ? "today" : ""} ${s ? "on" : ""} ${edit ? "ed" : ""}" data-k="${esc(p.key)}" data-d="${d}" ${s ? `data-tip="${esc(`${fmtShort(d)}: ${s.start}–${s.end}${s.note ? " · " + s.note : ""}`)}"` : ""}>${s ? `<span>${hShort(s.start)}<i></i>${hShort(s.end)}</span>` : ""}</td>`; }).join("")}
       <td class="sh-t num">${t ? `<b>${t.days}</b> дн.<br><small class="muted">${(+t.hours).toLocaleString("ru-RU")} ч</small>` : `<span class="muted">—</span>`}</td></tr>`;
   }).join("");
@@ -42,6 +42,14 @@ function lastShift(key) {
 }
 function editShift(key, day) {
   const p = S.shData.people.find(x => x.key === key) || {}, cur = (S.shData.shifts[key] || {})[day], def = cur || lastShift(key);
+  if (p.kind === "unknown") {  // 3.6.1: a shift of an account this computer does not have — it can only be removed
+    if (!cur) return;
+    const ub = modal(`<div class="m-h"><h3>${esc(p.name)}</h3><button class="x" data-close>×</button></div>
+      <div class="m-b"><p class="muted">${esc(fmtDate(day))}: ${cur.start}–${cur.end}</p><p>Смена записана на учётную запись, которой нет на этом компьютере (или она пришла с компьютера со старой версией программы). Её можно только удалить; новую смену поставьте нужному сотруднику.</p></div>
+      <div class="m-f"><button class="btn ghost small danger" id="shDel">Удалить смену</button><span class="muted"></span><button class="btn ghost" data-close>Закрыть</button></div>`);
+    $("#shDel", ub).onclick = async () => { await api.save_shift({person: key, date: day, start: ""}); closeModal(); loadShifts(); };
+    return;
+  }
   const box = modal(`<div class="m-h"><h3>${esc(p.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b"><p class="muted">${esc(fmtDate(day))}, ${WD[parseDay(day).getDay()]}</p>
       <div class="grid2"><label class="fl">Начало<input class="input" type="time" id="shS" value="${def.start}" autofocus></label><label class="fl">Конец<input class="input" type="time" id="shE" value="${def.end}"></label></div>
@@ -61,7 +69,7 @@ function fillShifts() {
   const r = S.shData;
   const box = modal(`<div class="m-h"><h3>Заполнить график: ${esc(monthName(r.month).toLowerCase())}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
-      <div class="fl">Сотрудники<div class="fill-people">${r.people.map(p => `<label class="dm-row"><input type="checkbox" data-pp="${esc(p.key)}">${esc(p.name)}</label>`).join("")}</div>
+      <div class="fl">Сотрудники<div class="fill-people">${r.people.filter(p => p.kind !== "unknown").map(p => `<label class="dm-row"><input type="checkbox" data-pp="${esc(p.key)}">${esc(p.name)}</label>`).join("")}</div>
         <button class="linkbtn" id="fpAll" type="button">выбрать всех</button></div>
       <div class="fl">Дни недели<div class="seg sm wd-pick">${WD_SHORT.map((t, i) => `<button type="button" data-w="${i}" class="${i < 5 ? "on" : ""}">${t}</button>`).join("")}</div></div>
       <div class="grid3"><label class="fl">Начало<input class="input" type="time" id="fS" value="09:00"></label><label class="fl">Конец<input class="input" type="time" id="fE" value="18:00"></label>

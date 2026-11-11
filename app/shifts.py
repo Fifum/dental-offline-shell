@@ -1,7 +1,9 @@
 """Work schedules of the staff: one shift per person per day, filled by hand or by weekday pattern.
 
 A person is a doctor from Dentist Plus ("d:<id>") or a staff account of this program that is not
-linked to a doctor ("u:<id>"), so administrators and assistants get schedules too.
+linked to a doctor ("u:<id>" on the screens), so administrators and assistants get schedules too.
+3.6.1: a staff account is stored under its login ("login:<login>"), because account ids differ between the clinic's
+computers; a stored reference nobody here has is shown as «неизвестный сотрудник» (staffref.py).
 """
 from __future__ import annotations
 
@@ -9,6 +11,8 @@ import calendar
 import re
 import sqlite3
 from datetime import date, datetime
+
+import staffref
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS work_shifts(
@@ -79,27 +83,40 @@ class Shifts:
         first, last = f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{n:02d}"
         rows = self.db.q('SELECT person, date, start, "end", note FROM work_shifts WHERE date BETWEEN ? AND ?', (first, last))
         ppl = people(self.db)
+        idx = staffref.Index(self.db)
         shifts, totals = {}, {}
         for r in rows:
-            shifts.setdefault(r["person"], {})[r["date"]] = {"start": r["start"], "end": r["end"], "note": r["note"] or ""}
-            t = totals.setdefault(r["person"], {"days": 0, "hours": 0.0})
+            k = staffref.to_screen(self.db, r["person"], idx)
+            shifts.setdefault(k, {})[r["date"]] = {"start": r["start"], "end": r["end"], "note": r["note"] or ""}
+            t = totals.setdefault(k, {"days": 0, "hours": 0.0})
             t["days"] += 1
             t["hours"] = round(t["hours"] + _hours(r["start"], r["end"]), 2)
+        # 3.6.1: shifts of a reference nobody here has stay visible (they can be removed), never under somebody else
+        ppl += [{"key": k, "id": None, "name": staffref.unknown_name(k), "kind": "unknown",
+                 "position": "нет такой учётной записи на этом компьютере"} for k in sorted(shifts) if staffref.is_unknown(k)]
         return {"month": f"{y:04d}-{m:02d}", "days": [f"{y:04d}-{m:02d}-{d:02d}" for d in range(1, n + 1)],
                 "people": ppl, "shifts": shifts, "totals": totals}
 
     def _check_person(self, key):
+        """The screen key of a listed person → what is stored (3.6.1: the login of a staff account)."""
         if not any(p["key"] == key for p in people(self.db)):
             raise ValueError("Сотрудник не найден")
+        return staffref.to_store(self.db, key)
 
     def save(self, f, who=""):
         """Set (or with an empty start, remove) one person's shift on one day."""
         key, day = str(f.get("person") or ""), str(f.get("date") or "")[:10]
-        self._check_person(key)
         try:
             date.fromisoformat(day)
         except ValueError:
             raise ValueError("Неверная дата") from None
+        if staffref.is_unknown(key):  # a shift of «неизвестный сотрудник» can only be removed
+            if str(f.get("start") or "").strip():
+                raise ValueError("Сотрудник не найден на этом компьютере — такую смену можно только удалить")
+            with self.db.tx() as c:
+                c.execute("DELETE FROM work_shifts WHERE person=? AND date=?", (staffref.to_store(self.db, key), day))
+            return None
+        screen, key = key, self._check_person(key)
         if not str(f.get("start") or "").strip():
             with self.db.tx() as c:
                 c.execute("DELETE FROM work_shifts WHERE person=? AND date=?", (key, day))
@@ -112,15 +129,14 @@ class Shifts:
                          ON CONFLICT(person, date) DO UPDATE SET start=excluded.start, "end"=excluded."end",
                          note=excluded.note, user_name=excluded.user_name, updated_at=excluded.updated_at""",
                       (key, day, start, end, str(f.get("note") or "").strip()[:200], who, _now()))
-        return {"person": key, "date": day, "start": start, "end": end}
+        return {"person": screen, "date": day, "start": start, "end": end}
 
     def fill(self, f, who=""):
         """Fill a month by weekdays (0 = Monday): «Пн–Пт 09:00–18:00». Returns how many days were set."""
         keys = f.get("people") or ([f["person"]] if f.get("person") else [])
         if not keys:
             raise ValueError("Выберите сотрудников")
-        for k in keys:
-            self._check_person(k)
+        keys = [self._check_person(k) for k in keys]
         wd = {int(x) for x in (f.get("weekdays") or []) if str(x).isdigit() and 0 <= int(x) <= 6}
         if not wd:
             raise ValueError("Отметьте дни недели")
@@ -147,7 +163,7 @@ class Shifts:
         return count
 
     def clear(self, person, month):
-        self._check_person(person)
+        person = staffref.to_store(self.db, person) if staffref.is_unknown(person) else self._check_person(person)
         y, m, n = _month(month)
         with self.db.tx() as c:
             cur = c.execute("DELETE FROM work_shifts WHERE person=? AND date BETWEEN ? AND ?",

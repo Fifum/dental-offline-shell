@@ -7,13 +7,15 @@ that marked the arrival and the leaving of the same day merge field by field.
 
 People are the same as in the schedules (shifts.people): a doctor from Dentist Plus («d:<id>») or a staff account.
 A staff account is stored under its login («login:<login>»), not under the local integer id, because integer ids of
-accounts differ between computers; the screens get the usual «u:<id>» keys.
+accounts differ between computers; the screens get the usual «u:<id>» keys. Since 3.6.1 the work schedules are stored
+the same way (staffref.py).
 """
 from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime, timedelta
 
+import staffref
 from shifts import _hm, _month, people
 
 SCHEMA = """
@@ -37,30 +39,14 @@ def _min(hm):
 
 
 # ------------------------------------------------------------------ people: stable keys --
-def stable(db, key) -> str:
-    """«u:<id>» → «login:<login>» (the same on every computer); a doctor «d:<id>» stays as it is."""
-    key = str(key or "")
-    if key.startswith("u:"):
-        try:
-            r = db.one("SELECT login FROM users WHERE id=?", (int(key[2:]),))
-        except (ValueError, sqlite3.OperationalError):
-            r = None
-        if r and r["login"]:
-            return "login:" + r["login"].lower()
-    return key
+def stable(db, key, idx=None) -> str:
+    """«u:<id>» → «login:<login>» (the same on every computer); a doctor «d:<id>» stays as it is (see staffref)."""
+    return staffref.to_store(db, key, idx)
 
 
-def local(db, skey) -> str:
-    """«login:<login>» → «u:<id>» of this computer; anything else stays."""
-    skey = str(skey or "")
-    if skey.startswith("login:"):
-        try:
-            r = db.one("SELECT id FROM users WHERE lower(login)=lower(?)", (skey[6:],))
-        except sqlite3.OperationalError:
-            r = None
-        if r:
-            return f"u:{r['id']}"
-    return skey
+def local(db, skey, idx=None) -> str:
+    """«login:<login>» → «u:<id>» of this computer; a reference nobody here has → «x:…» (unknown); a doctor stays."""
+    return staffref.to_screen(db, skey, idx)
 
 
 def user_person(u) -> str | None:
@@ -148,7 +134,7 @@ class Timesheet:
             return {"person": None, "can": False, "day": day}
         m = self.mark(skey, day)
         key = local(self.db, skey)
-        sh = self.db.one('SELECT start, "end" FROM work_shifts WHERE person=? AND date=?', (key, day)) if key else None
+        sh = self.db.one('SELECT start, "end" FROM work_shifts WHERE person=? AND date=?', (skey, day))  # 3.6.1: by login
         state = "out" if not m or not m["came"] else ("in" if not m["left"] else "left")
         return {"person": key, "can": True, "day": day, "came": (m or {}).get("came"), "left": (m or {}).get("left"),
                 "state": state, "shift": sh}
@@ -193,10 +179,11 @@ class Timesheet:
         st = settings(self.db)
         today = date.today().isoformat()
         plan, fact = {}, {}
+        idx = staffref.Index(self.db)
         for r in self.db.q('SELECT person, date, start, "end" FROM work_shifts WHERE date BETWEEN ? AND ?', (days[0], days[-1])):
-            plan.setdefault(r["person"], {})[r["date"]] = (r["start"], r["end"])
+            plan.setdefault(local(self.db, r["person"], idx), {})[r["date"]] = (r["start"], r["end"])
         for r in self.db.q('SELECT * FROM time_marks WHERE date BETWEEN ? AND ?', (days[0], days[-1])):
-            fact.setdefault(local(self.db, r["person"]), {})[r["date"]] = r
+            fact.setdefault(local(self.db, r["person"], idx), {})[r["date"]] = r
         ppl = [p for p in people(self.db) if (p["key"] in plan or p["key"] in fact) and (only is None or p["key"] in only)]
         rows = []
         for p in ppl:
