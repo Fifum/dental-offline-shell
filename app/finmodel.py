@@ -90,8 +90,21 @@ class FinModel:
         taxes = cats.pop(TAXES, 0)
 
         var = [_line("doctors", DOCTORS, doctors, rev, detail=[x for x in pay_rows if x["doctors"]])]
+        # 3.5: materials by the purchases (the default) or by what left the stock — a setting of «Бухгалтерия», never both
+        import stock_auto
+        used = stock_auto.stock_used(self.db, a, b)
+        mat_mode = stock_auto.pnl_mode(self.db) if used is not None else "expenses"
         for cat, key in VARIABLE.items():
-            var.append(_line(key, cat, cats.pop(cat, 0), rev))
+            amount = cats.pop(cat, 0)
+            if key == "materials":
+                bought = amount
+                amount = used if mat_mode == "stock" else bought
+                detail = [{"name": "Закупки (расходы)" + (" — не входят, чтобы не считать дважды" if mat_mode == "stock" else ""), "amount": _r(bought)}]
+                if used is not None:
+                    detail.append({"name": "Списано со склада" + ("" if mat_mode == "stock" else " — для сравнения"), "amount": _r(used)})
+                var.append(_line(key, cat, amount, rev, detail=detail))
+                continue
+            var.append(_line(key, cat, amount, rev))
         var_total = sum(x["amount"] for x in var)
         fixed = [_line("staff", STAFF, staff, rev, detail=[x for x in pay_rows if x["staff"]])]
         for cat, v in sorted(cats.items(), key=lambda x: -x[1]):
@@ -127,6 +140,7 @@ class FinModel:
             "per_day_break_even": _r(be / len(wd_all)) if be is not None and wd_all else None,
             "per_day_left": _r(max(0.0, be - rev) / left) if be is not None and left else None,
             "no_schemes": not any(p["percent"] or p["fixed"] for p in self.acc.schemes()),
+            "materials_mode": mat_mode, "materials_used": used,
         }
 
     def _workdays(self, a, b):

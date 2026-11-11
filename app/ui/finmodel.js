@@ -19,7 +19,7 @@ async function accFinmodel(body) {
   let r;
   try { r = await api.finmodel(S.fmMonth); } catch (e) { body.innerHTML = `<div class="empty"><b>${esc(errText(e))}</b></div>`; return; }
   S.fm = r;
-  const line = (x, cls = "", profit = false) => `<tr class="${cls}" ${x.detail && x.detail.length ? `title="${esc(x.detail.map(d => `${d.name}: ${rub(d.doctors || d.staff)}`).join("\n"))}"` : ""}>
+  const line = (x, cls = "", profit = false) => `<tr class="${cls}" ${x.detail && x.detail.length ? `title="${esc(x.detail.map(d => `${d.name}: ${rub(d.amount ?? (d.doctors || d.staff))}`).join("\n"))}"` : ""}>
       <td>${esc(x.name)}</td><td class="num">${money(x.amount)}</td><td class="num">${fmShare(x.share)}</td>
       <td class="fm-guide">${x.guide ? `<span class="muted">${fmGuide(x.guide, profit)}</span>` : ""}${x.flag && x.flag !== "ok" ? ` <span class="pill fm-flag">${FM_FLAG[x.flag]}</span>` : ""}</td></tr>`;
   const op = r.operating, be = r.break_even;

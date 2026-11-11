@@ -68,10 +68,15 @@ TABLES = [
     T("salary_schemes", key=("person",), title="Схема зарплаты"),
     T("materials", title="Материал"),
     T("suppliers", title="Поставщик"),
+    T("stock_locations", title="Место хранения"),  # 3.5: before the documents and moves that name it
     T("stock_docs", title="Складской документ"),
     T("stock_moves", intpk=True, title="Движение по складу"),
     T("stock_lots", intpk=True, refs={"move_id": "stock_moves"}, title="Партия"),
     T("service_materials", key=("service_id", "material_id"), title="Норма списания"),
+    # 3.5: the write-off by Dentist Plus visits (one row per visit, the same id everywhere), its settings, the cost of services
+    T("stock_settings", key=("k",), title="Настройка склада"),
+    T("stock_visit_use", title="Списание по приёму"),
+    T("service_costs", key=("service_id",), title="Себестоимость услуги"),
     T("equipment", title="Оборудование"),
     T("equipment_events", intpk=True, title="Обслуживание оборудования"),
     T("work_shifts", intpk=True, title="Смена"),

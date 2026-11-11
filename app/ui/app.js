@@ -214,6 +214,7 @@ async function refreshStatus() {
   if (typeof platformStatus === "function") platformStatus(st);
   if (typeof addonStatus === "function") addonStatus(st);
   if (typeof crmStatus === "function") crmStatus(st);
+  if (typeof stockAutoStatus === "function") stockAutoStatus(st);  // 3.5: visits waiting for the write-off
   if (st.me_perms && ME && st.me_perms.join() !== ME.perms.join()) {  // 2.14: the director changed this person's position
     ME.perms = st.me_perms; applyPerms();
     toast("Директор изменил ваши права — меню обновлено");

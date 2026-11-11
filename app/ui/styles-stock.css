@@ -97,3 +97,16 @@
 .po-group .tbl th:nth-child(5){width:110px}
 .po-group .tbl th:nth-child(6){width:140px}
 .po-group .tbl th:nth-child(9){width:100px}
+
+/* 3.5: write-off by visits, places, cost of services */
+#stVisitsCnt[hidden]{display:none}
+.radio-row{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13.5px;cursor:pointer}
+.chip.chip-warn{border-color:var(--warn-line);background:var(--warn-soft);color:var(--warn)}
+.sv-tbl .sv-svc{max-width:360px}
+.sv-tbl .sv-svc .chip{cursor:default;display:inline-block;margin:1px 0}
+.sv-tbl .sv-acts{white-space:nowrap;text-align:right}
+.sv-tbl .sv-acts .linkbtn{margin-left:8px}
+.sv-mode{margin-top:6px}
+.mv-transfer{background:var(--warn-soft);color:var(--warn)}
+.co-tbl td small{font-size:11px}
+.dx-doc.sv-wrap{white-space:normal;align-items:flex-start;line-height:1.4}

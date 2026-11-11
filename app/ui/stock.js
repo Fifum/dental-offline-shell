@@ -3,7 +3,10 @@
 S.stockTab = "balance";
 let STK = {units: [], move_kinds: {}, eq_status: {}};
 const qtyFmt = (n, u) => `${(Math.round((+n || 0) * 1000) / 1000).toLocaleString("ru-RU")}${u ? " " + u : ""}`;
-const DOC_KIND = {receipt: "Приходная накладная", writeoff: "Акт списания материалов", inventory: "Инвентаризация"};
+const DOC_KIND = {receipt: "Приходная накладная", writeoff: "Акт списания материалов", inventory: "Инвентаризация",
+  transfer: "Перемещение материалов", visit: "Списание по приёму"};  // 3.5: places and visits of Dentist Plus
+const hasPlaces = () => (STK.locations || []).length > 1;
+const placeSelect = (id, cur = "", label = "Место") => hasPlaces() ? `<label class="fl">${label}<select class="input" id="${id}">${STK.locations.map(l => `<option value="${esc(l.id)}" ${l.id === (cur || "") ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>` : "";
 
 $$("#stockTabs button").forEach(b => b.onclick = () => {
   S.stockTab = b.dataset.k;
@@ -13,6 +16,7 @@ $$("#stockTabs button").forEach(b => b.onclick = () => {
 
 function stockTabsByRights() {
   const vis = {balance: canAny("stock_view", "stock_edit"), docs: canAny("stock_view", "stock_edit"), moves: canAny("stock_view", "stock_edit"),
+    visits: canAny("stock_view", "stock_edit"), places: canAny("stock_view", "stock_edit"),
     equipment: canAny("equipment", "stock_view"), norms: canAny("stock_view", "stock_edit"), suppliers: can("stock_edit"),
     steril: canAny("sterilization", "equipment")};
   $$("#stockTabs button").forEach(b => b.hidden = !vis[b.dataset.k]);
@@ -24,7 +28,8 @@ async function loadStock() {
   stockTabsByRights();
   if (S.stockTab === "steril") return sterilJournal();  // the journal is also for those without stock rights
   STK = await api.stock_summary();
-  const fn = {balance: stockBalance, docs: stockDocs, moves: stockMoves, equipment: stockEquipment, norms: stockNorms, suppliers: stockSuppliers}[S.stockTab];
+  const fn = {balance: stockBalance, docs: stockDocs, moves: stockMoves, equipment: stockEquipment, norms: stockNorms, suppliers: stockSuppliers,
+    visits: stockVisits, places: stockPlaces}[S.stockTab];
   await fn();
 }
 
@@ -42,34 +47,41 @@ function statRow() {
 async function stockBalance() {
   const body = $("#stockBody");
   const q = S.stockQ || "", low = !!S.stockLow, exp = !!S.stockExp;
-  const rows = await api.materials(q, low, exp);
+  if (!hasPlaces() || !STK.locations.some(l => l.id === S.stockLoc)) S.stockLoc = null;  // 3.5: «все места» or one place
+  const loc = S.stockLoc, locName = loc != null ? STK.locations.find(l => l.id === loc).name : "";
+  const rows = await api.materials(q, low, exp, loc);
   S.stockRows = rows;
   const edit = can("stock_edit"), acc = can("accounting") && rows.some(m => m.balance_doc !== undefined);
-  const docDiff = acc && rows.some(m => Math.abs(m.balance - m.balance_doc) > 1e-9);
+  const docDiff = acc && loc == null && rows.some(m => Math.abs(m.balance - m.balance_doc) > 1e-9);
   body.innerHTML = statRow() + `<div class="tab-tools">
       <div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="stQ" placeholder="Материал, код, штрихкод" value="${esc(q)}"></div>
       <label class="switch-row" style="margin:0"><input type="checkbox" id="stLow" ${low ? "checked" : ""}><span class="sw"></span>Только заканчиваются</label>
       <label class="switch-row" style="margin:0"><input type="checkbox" id="stExp" ${exp ? "checked" : ""}><span class="sw"></span>Истекает срок</label>
+      ${hasPlaces() ? `<select class="input sm-sel" id="stLoc" title="Остатки по месту хранения"><option value="*">Все места</option>${STK.locations.map(l => `<option value="${esc(l.id)}" ${l.id === loc ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select>` : ""}
       <span class="grow"></span>
+      ${edit && hasPlaces() ? `<button class="btn ghost" id="stMove" title="Переместить между кабинетами и филиалами">Перемещение</button>` : ""}
       <button class="btn ghost" id="stOrder" title="Что и сколько заказать, у кого дешевле">Заказ поставщикам</button>
       ${edit && STK.expired ? `<button class="btn ghost danger-t" id="stExpOut">Списать просроченное</button>` : ""}
       ${edit ? `<button class="btn" id="stIn">Приход</button><button class="btn ghost" id="stOut">Списание</button><button class="btn ghost" id="stInv">Инвентаризация</button><button class="btn ghost" id="stNew">Новый материал</button>` : ""}
       <button class="icon-btn" id="stPrint" title="Печать остатков"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button>
       ${acc ? `<button class="btn ghost small" id="stPrintDoc" title="Остатки только по документам — для бухгалтерии">Печать по документам</button>` : ""}</div>
+    ${loc != null ? `<div class="note-box">Остатки места «${esc(locName)}». Минимум и «заканчиваются» — по всей клинике; общий остаток — в подсказке у количества.</div>` : ""}
     ${docDiff ? `<div class="warn-line">Есть приход или списание без документов: остаток «по документам» отличается от фактического. Его видите только вы (право «Бухгалтерия»).</div>` : ""}
     <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Код</th><th>Материал</th><th>Раздел</th><th class="num">Остаток</th>${docDiff ? '<th class="num" title="Только движения с документами">По документам</th>' : ""}<th class="num">Минимум</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr></thead><tbody>${
       rows.map(m => `<tr data-m="${esc(m.id)}" class="${m.balance < 0 ? "neg" : ""} ${m.exp_state ? "exp-" + m.exp_state : ""}"><td class="muted">${esc(m.code)}</td><td class="lnk"><b>${esc(m.name)}</b>${expLine(m)}</td><td>${esc(m.category)}</td>
-        <td class="num"><b>${qtyFmt(m.balance, m.unit)}</b></td>${docDiff ? `<td class="num ${Math.abs(m.balance - m.balance_doc) > 1e-9 ? "warn-t" : "muted"}">${qtyFmt(m.balance_doc, m.unit)}</td>` : ""}<td class="num muted">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td><td class="num">${money(m.price)}</td><td class="num">${money(m.value)}</td>
+        <td class="num" ${m.total_balance !== undefined ? `title="Во всей клинике: ${esc(qtyFmt(m.total_balance, m.unit))}"` : ""}><b>${qtyFmt(m.balance, m.unit)}</b></td>${docDiff ? `<td class="num ${Math.abs(m.balance - m.balance_doc) > 1e-9 ? "warn-t" : "muted"}">${qtyFmt(m.balance_doc, m.unit)}</td>` : ""}<td class="num muted">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td><td class="num">${money(m.price)}</td><td class="num">${money(m.value)}</td>
         <td class="pills">${m.balance < 0 ? '<span class="pill st-cancel">меньше нуля</span>' : m.low ? '<span class="pill st-cancel">заканчивается</span>' : m.exp_state ? "" : '<span class="pill st-ok">есть</span>'}${m.exp_state === "expired" ? '<span class="pill exp-pill expired">просрочено</span>' : m.exp_state === "soon" ? '<span class="pill exp-pill soon">истекает срок</span>' : ""}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>${q || low || exp ? "Ничего не найдено" : "Склад пока пуст"}</b><span>${edit ? "Добавьте материалы и оформите приход по накладной" : ""}</span></div>`}</div>`;
   let t; $("#stQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { S.stockQ = e.target.value; stockBalance().then(() => { const i = $("#stQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
   $("#stLow").onchange = e => { S.stockLow = e.target.checked; stockBalance(); };
   $("#stExp").onchange = e => { S.stockExp = e.target.checked; stockBalance(); };
+  const sl = $("#stLoc"); if (sl) sl.onchange = e => { S.stockLoc = e.target.value === "*" ? null : e.target.value; stockBalance(); };
   $$("#stockBody tr[data-m]").forEach(tr => tr.onclick = () => openMaterial(tr.dataset.m));
   const on = (id, f) => { const el = $(id); if (el) el.onclick = f; };
-  on("#stIn", () => openStockDoc("receipt")); on("#stOut", () => openStockDoc("writeoff")); on("#stInv", openInventory);
+  on("#stIn", () => openStockDoc("receipt")); on("#stOut", () => openStockDoc("writeoff")); on("#stInv", () => openInventory());
   on("#stNew", () => editMaterial({})); on("#stPrint", () => printBalance()); on("#stPrintDoc", () => printBalance(true));
   on("#stOrder", () => openPurchase()); on("#stExpOut", writeOffExpired);
+  on("#stMove", () => openTransfer({from: loc ?? ""}));
 }
 
 function editMaterial(m, {onSaved} = {}) {
@@ -108,6 +120,7 @@ async function openMaterial(id) {
     <div class="m-b">
       <div class="stat-row"><div class="stat"><span>Остаток</span><b>${qtyFmt(m.balance, m.unit)}</b>${m.balance_doc !== undefined && Math.abs(m.balance - m.balance_doc) > 1e-9 ? `<small class="muted">по документам: ${qtyFmt(m.balance_doc, m.unit)}</small>` : ""}</div><div class="stat"><span>Минимум</span><b>${m.min_qty ? qtyFmt(m.min_qty, m.unit) : "—"}</b></div>
         <div class="stat"><span>Цена</span><b>${money(m.price)}</b></div><div class="stat"><span>Сумма</span><b>${money(m.value)}</b></div></div>
+      ${(m.by_location || []).some(x => x.id) ? `<h4 class="sub-h">По местам хранения</h4><div class="chips">${m.by_location.map(x => `<span class="chip ${x.qty < 0 ? "chip-warn" : ""}">${esc(x.name)} · ${qtyFmt(x.qty, m.unit)}</span>`).join("")}</div>` : ""}
       <h4 class="sub-h">Партии и сроки годности</h4>
       ${lotsTable(m.lot_list, m.unit, edit)}
       <h4 class="sub-h">Списывается по услугам</h4>
@@ -127,15 +140,17 @@ async function openMaterial(id) {
 
 function movesTable(moves, withMaterial = true) {
   if (!moves.length) return `<div class="empty"><b>Движений нет</b></div>`;
-  return `<table class="tbl compact"><thead><tr><th>Когда</th><th>Операция</th>${withMaterial ? "<th>Материал</th>" : ""}<th class="num">Кол-во</th><th>Основание</th><th>Сотрудник</th></tr></thead><tbody>${
+  const pl = hasPlaces();  // 3.5: the place of every move once the clinic has cabinets or branches
+  return `<table class="tbl compact"><thead><tr><th>Когда</th><th>Операция</th>${withMaterial ? "<th>Материал</th>" : ""}<th class="num">Кол-во</th>${pl ? "<th>Место</th>" : ""}<th>Основание</th><th>Сотрудник</th></tr></thead><tbody>${
     moves.map(x => `<tr><td>${fmtDT(x.at)}</td><td><span class="mv mv-${x.kind}">${esc(x.kind_title)}</span></td>${withMaterial ? `<td>${esc(x.name)}</td>` : ""}
-      <td class="num ${x.qty < 0 ? "bad-t" : "ok-t"}"><b>${x.qty > 0 ? "+" : ""}${qtyFmt(x.qty, x.unit)}</b></td>
+      <td class="num ${x.qty < 0 ? "bad-t" : "ok-t"}"><b>${x.qty > 0 ? "+" : ""}${qtyFmt(x.qty, x.unit)}</b></td>${pl ? `<td class="muted">${esc(x.location_name || "")}</td>` : ""}
       <td class="muted">${esc([x.doc_number ? "№ " + x.doc_number : "", x.patient_name || "", x.reason || ""].filter(Boolean).join(" · "))}${x.nodoc ? " " + '<span class="pill dx-nodoc">без документа</span>' : ""}</td><td class="muted">${esc(x.user_name || "")}</td></tr>`).join("")}</tbody></table>`;
 }
 
 /* ---------------------------------------------- receipt and write-off */
 async function openStockDoc(kind, preset, opts = {}) {
-  let [mats, sups] = await Promise.all([api.materials(""), kind === "receipt" ? api.suppliers() : Promise.resolve([])]);
+  const place0 = hasPlaces() ? (opts.location ?? S.stockLoc ?? "") : null;  // 3.5: the place of the receipt / write-off
+  let [mats, sups] = await Promise.all([api.materials("", false, false, place0), kind === "receipt" ? api.suppliers() : Promise.resolve([])]);
   const blank = () => ({material_id: "", qty: "", price: "", lot: "", expires: ""});
   const st = {lines: preset && preset.length ? preset.map(x => ({...blank(), ...x})) : [blank()]};
   const isIn = kind === "receipt";
@@ -147,6 +162,7 @@ async function openStockDoc(kind, preset, opts = {}) {
           <span class="muted" id="dScanMsg">Сканер добавит строку или прибавит 1 к количеству. Код с партией и сроком («Честный знак», GS1) заполнит их сам.</span></div>`
       : `<div class="grid2"><label class="fl">Причина списания*<input class="input" id="dReason" list="woReasons" placeholder="например: истёк срок годности" value="${esc(opts.reason || "")}"></label><label class="fl">Дата<input class="input" type="date" id="dDate" value="${iso(new Date())}"></label></div>
         <datalist id="woReasons"><option value="Истёк срок годности"><option value="Повреждение, брак"><option value="Использовано вне услуг (общие нужды)"><option value="Утеря"></datalist>`}
+      ${place0 != null ? `<div class="grid3">${placeSelect("dPlace", place0, isIn ? "Куда оприходовать" : "Откуда списать")}</div>` : ""}
       <table class="tbl compact doc-lines"><thead><tr><th>Материал</th><th class="num">Остаток</th>${isIn ? `<th style="width:120px">Партия</th><th style="width:150px">Годен до</th>` : ""}<th class="num" style="width:110px">Количество</th>${isIn ? `<th class="num" style="width:120px">Цена, ₽</th><th class="num">Сумма</th>` : ""}<th></th></tr></thead><tbody id="dLines"></tbody></table>
       <div><button class="btn ghost small" id="dAdd">+ Ещё материал</button></div>
       <label class="fl">Комментарий<input class="input" id="dCom" value="${esc(opts.comment || "")}"></label>
@@ -172,6 +188,8 @@ async function openStockDoc(kind, preset, opts = {}) {
     $$("#dLines [data-rm]").forEach(b => b.onclick = () => { st.lines.splice(+b.dataset.rm, 1); if (!st.lines.length) st.lines.push(blank()); draw(); });
   };
   draw();
+  const dp = $("#dPlace", box);
+  if (dp) dp.onchange = async () => { mats = await api.materials("", false, false, dp.value); byId = Object.fromEntries(mats.map(m => [m.id, m])); draw(); };
   $("#dAdd", box).onclick = () => { st.lines.push(blank()); draw(); };
   const scan = $("#dScan", box);
   if (scan) {
@@ -210,6 +228,7 @@ async function openStockDoc(kind, preset, opts = {}) {
     const lines = st.lines.filter(l => l.material_id);
     const nodoc = $("#dNodoc").checked, pay = $("#dPay") ? $("#dPay").value : "";
     const f = {date: $("#dDate").value, comment: $("#dCom").value, lines, nodoc};
+    if (dp) f.location_id = dp.value;
     try {
       const id = isIn ? await api.stock_receive({...f, supplier_id: $("#dSup").value, number: $("#dNum").value, pay})
         : await api.stock_write_off({...f, reason: $("#dReason").value});
@@ -220,10 +239,12 @@ async function openStockDoc(kind, preset, opts = {}) {
   };
 }
 
-async function openInventory() {
-  const mats = await api.materials("");
-  const box = modal(`<div class="m-h"><h3>Инвентаризация</h3><button class="x" data-close>×</button></div>
+async function openInventory(place) {
+  if (place === undefined) place = hasPlaces() ? (S.stockLoc ?? "") : null;  // 3.5: a count of one place
+  const mats = await api.materials("", false, false, place);
+  const box = modal(`<div class="m-h"><h3>Инвентаризация${place != null ? ": " + esc(STK.locations.find(l => l.id === place).name) : ""}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
+      ${place != null ? `<div class="grid3">${placeSelect("invPlace", place, "Где считаем")}</div>` : ""}
       <div class="muted">Пересчитайте материалы и впишите фактический остаток. Пустые строки не меняются. Разница с учётом станет движением «Инвентаризация».</div>
       <table class="tbl compact"><thead><tr><th>Материал</th><th class="num">По учёту</th><th class="num" style="width:140px">Фактически</th><th class="num">Разница</th></tr></thead><tbody>${
         mats.map(m => `<tr><td>${esc(m.name)}<small class="muted" style="display:block">${esc(m.category)}</small></td><td class="num">${qtyFmt(m.balance, m.unit)}</td>
@@ -237,9 +258,12 @@ async function openInventory() {
     $("#invCnt").textContent = n ? `Пересчитано: ${n}` : ""; };
   $$("[data-im]", box).forEach(i => i.oninput = recount);
   $("#invSheet", box).onclick = () => printInventorySheet(mats);
+  const ip = $("#invPlace", box); if (ip) ip.onchange = () => { closeModal(); openInventory(ip.value); };
   $("#invOk", box).onclick = async () => {
     try {
-      const r = await api.stock_inventory({comment: $("#invCom").value, nodoc: $("#invNodoc").checked, lines: $$("[data-im]", box).map(i => ({material_id: i.dataset.im, actual: i.value}))});
+      const f = {comment: $("#invCom").value, nodoc: $("#invNodoc").checked, lines: $$("[data-im]", box).map(i => ({material_id: i.dataset.im, actual: i.value}))};
+      if (place != null) f.location_id = place;
+      const r = await api.stock_inventory(f);
       closeModal(); toast(r.diffs.length ? `Проведено. Расхождений: ${r.diffs.length}` : "Проведено. Расхождений нет"); loadStock();
     } catch (e) { $("#invErr").textContent = errText(e); }
   };
@@ -249,10 +273,10 @@ async function openInventory() {
 async function stockDocs() {
   const kind = S.stockDocKind || "";
   const rows = await api.stock_docs(kind || null);
-  $("#stockBody").innerHTML = `<div class="tab-tools"><div class="seg" id="sdKind">${[["", "Все"], ["receipt", "Приход"], ["writeoff", "Списание"], ["inventory", "Инвентаризация"]].map(([k, t]) => `<button data-k="${k}" class="${k === kind ? "on" : ""}">${t}</button>`).join("")}</div></div>
+  $("#stockBody").innerHTML = `<div class="tab-tools"><div class="seg" id="sdKind">${[["", "Все"], ["receipt", "Приход"], ["writeoff", "Списание"], ["inventory", "Инвентаризация"], ["visit", "По приёмам"], ["transfer", "Перемещения"]].map(([k, t]) => `<button data-k="${k}" class="${k === kind ? "on" : ""}">${t}</button>`).join("")}</div></div>
     <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Дата</th><th>Документ</th><th>№</th><th>Поставщик / причина</th><th class="num">Строк</th><th class="num">Сумма</th><th>Сотрудник</th></tr></thead><tbody>${
       rows.map(d => `<tr data-d="${esc(d.id)}"><td>${fmtDate(d.date)}</td><td class="lnk"><b>${esc(DOC_KIND[d.kind] || d.kind)}</b>${d.nodoc ? " " + '<span class="pill dx-nodoc">без документа</span>' : ""}</td><td>${esc(d.number || "—")}</td>
-        <td>${esc(d.supplier_name || d.reason || "")}</td><td class="num">${d.lines}</td><td class="num">${d.total ? money(d.total) : "—"}</td><td class="muted">${esc(d.user_name || "")}</td></tr>`).join("")}</tbody></table>`
+        <td>${esc(d.kind === "transfer" ? `${d.location_name} → ${d.to_location_name}` : d.supplier_name || d.reason || "")}${hasPlaces() && d.kind !== "transfer" && d.location_id ? ` <small class="muted">· ${esc(d.location_name)}</small>` : ""}</td><td class="num">${d.lines}</td><td class="num">${d.total ? money(d.total) : "—"}</td><td class="muted">${esc(d.user_name || "")}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>Документов пока нет</b></div>`}</div>`;
   $$("#sdKind button").forEach(b => b.onclick = () => { S.stockDocKind = b.dataset.k; stockDocs(); });
   $$("#stockBody tr[data-d]").forEach(tr => tr.onclick = () => openStockDocView(tr.dataset.d));
@@ -262,8 +286,9 @@ async function openStockDocView(id) {
   const d = await api.stock_doc(id);
   modal(`<div class="m-h"><h3>${esc(DOC_KIND[d.kind] || "Документ")} ${d.number ? "№ " + esc(d.number) : ""} от ${fmtDate(d.date)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">${d.supplier_name ? `<div>Поставщик: <b>${esc(d.supplier_name)}</b></div>` : ""}${d.reason && d.kind === "writeoff" ? `<div>Причина: <b>${esc(d.reason)}</b></div>` : ""}
+      ${d.kind === "transfer" ? `<div>Откуда: <b>${esc(d.location_name)}</b> → куда: <b>${esc(d.to_location_name)}</b></div>` : d.kind === "visit" ? `<div>${esc(d.reason)} · место: <b>${esc(d.location_name)}</b></div>` : hasPlaces() ? `<div class="muted">Место: ${esc(d.location_name)}</div>` : ""}
       <table class="tbl compact"><thead><tr><th>Материал</th><th class="num">Кол-во</th><th class="num">Цена</th><th class="num">Сумма</th></tr></thead><tbody>${
-        d.moves.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty > 0 && d.kind === "inventory" ? "+" : ""}${qtyFmt(d.kind === "writeoff" ? -x.qty : x.qty, x.unit)}</td><td class="num">${money(x.price)}</td><td class="num">${money(Math.abs(x.qty) * x.price)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">Расхождений не было</td></tr>`}</tbody></table>
+        d.moves.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${x.qty > 0 && d.kind === "inventory" ? "+" : ""}${qtyFmt(d.kind === "writeoff" || d.kind === "visit" ? -x.qty : x.qty, x.unit)}</td><td class="num">${money(x.price)}</td><td class="num">${money(Math.abs(x.qty) * x.price)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">Расхождений не было</td></tr>`}</tbody></table>
       ${d.comment ? `<div class="muted">${esc(d.comment)}</div>` : ""}</div>
     <div class="m-f"><span class="muted">Оформил: ${esc(d.user_name || "—")}, ${fmtDT(d.created_at)}${d.nodoc ? " · без документов, не печатается" : ""}</span><button class="btn ghost" data-close>Закрыть</button>${d.nodoc ? "" : `<button class="btn" id="sdPrint">Печать</button>`}</div>`, {wide: true});
   const sp = $("#sdPrint"); if (sp) sp.onclick = () => printStockDoc(id);
@@ -271,15 +296,18 @@ async function openStockDocView(id) {
 
 /* ------------------------------------------------------- moves */
 async function stockMoves() {
-  const f = S.moveF || {from: addDays(iso(new Date()), -30), to: iso(new Date()), kind: ""};
+  const f = S.moveF || {from: addDays(iso(new Date()), -30), to: iso(new Date()), kind: "", location: null};
   S.moveF = f;
   const rows = await api.stock_moves(f);
   $("#stockBody").innerHTML = `<div class="tab-tools"><input type="date" class="input" id="mvFrom" value="${f.from}"> — <input type="date" class="input" id="mvTo" value="${f.to}">
       <select class="input sm-sel" id="mvKind"><option value="">Все операции</option>${Object.entries(STK.move_kinds).map(([k, t]) => `<option value="${k}" ${k === f.kind ? "selected" : ""}>${t}</option>`).join("")}</select>
-      <span class="muted">Списание по услугам происходит само, когда выставлен счёт</span></div>
+      ${hasPlaces() ? `<select class="input sm-sel" id="mvLoc"><option value="*">Все места</option>${STK.locations.map(l => `<option value="${esc(l.id)}" ${l.id === f.location ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select>` : ""}
+      <span class="muted">Списание по услугам происходит само, когда выставлен счёт или подтверждён приём («По приёмам»)</span></div>
     <div class="pbody" style="margin-top:8px">${movesTable(rows)}</div>`;
-  const upd = () => { S.moveF = {from: $("#mvFrom").value, to: $("#mvTo").value, kind: $("#mvKind").value}; stockMoves(); };
+  const upd = () => { const l = $("#mvLoc"); S.moveF = {from: $("#mvFrom").value, to: $("#mvTo").value, kind: $("#mvKind").value,
+    location: l && l.value !== "*" ? l.value : null}; stockMoves(); };
   $("#mvFrom").onchange = upd; $("#mvTo").onchange = upd; $("#mvKind").onchange = upd;
+  const ml = $("#mvLoc"); if (ml) ml.onchange = upd;
 }
 
 /* ------------------------------------------------------- norms */
@@ -289,10 +317,11 @@ async function stockNorms() {
   const q = (S.normQ || "").toLowerCase();
   const list = svc.filter(s => !q || `${s.code} ${s.title}`.toLowerCase().includes(q));
   $("#stockBody").innerHTML = `<div class="tab-tools"><div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="nQ" placeholder="Услуга" value="${esc(S.normQ || "")}"></div>
-      <span class="muted">Какие материалы и сколько уходит на одну услугу. Когда услуга попадает в счёт, материалы списываются со склада сами.</span></div>
-    <div class="pbody" style="margin-top:8px"><table class="tbl"><thead><tr><th>Услуга</th><th>Материалы на одну услугу</th></tr></thead><tbody>${
+      <span class="muted">Какие материалы и сколько уходит на одну услугу (техкарта). Материалы списываются сами по счёту и по приёмам Dentist Plus («По приёмам»).</span></div>
+    <div class="pbody" style="margin-top:8px"><table class="tbl"><thead><tr><th>Услуга</th><th>Материалы на одну услугу</th><th class="num" title="По последним ценам закупки">Материалы, ₽</th></tr></thead><tbody>${
       list.map(s => `<tr data-s="${esc(s.id)}"><td class="lnk"><b>${esc(s.title)}</b><small class="muted" style="display:block">${esc(s.code || "")}</small></td>
-        <td>${(by[s.id] || []).map(n => `<span class="chip">${esc(n.name)} · ${qtyFmt(n.qty, n.unit)}</span>`).join(" ") || '<span class="muted">не заданы</span>'}</td></tr>`).join("")}</tbody></table></div>`;
+        <td>${(by[s.id] || []).map(n => `<span class="chip">${esc(n.name)} · ${qtyFmt(n.qty, n.unit)}</span>`).join(" ") || '<span class="muted">не заданы</span>'}</td>
+        <td class="num">${(by[s.id] || []).length ? money((by[s.id] || []).reduce((a, n) => a + n.qty * (n.price || 0), 0)) : "—"}</td></tr>`).join("")}</tbody></table></div>`;
   let t; $("#nQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { S.normQ = e.target.value; stockNorms().then(() => { const i = $("#nQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
   if (can("stock_edit")) $$("#stockBody tr[data-s]").forEach(tr => tr.onclick = () => editNorms(svc.find(s => s.id === tr.dataset.s), by[tr.dataset.s] || []));
 }
@@ -441,13 +470,14 @@ async function printStockDoc(id) {
   const d = await api.stock_doc(id);
   const head = await clinicHead();
   const c = (await ref()).clinic || {};
-  const rows = d.moves.map((x, i) => { const q = d.kind === "writeoff" ? -x.qty : x.qty;
+  const rows = d.moves.map((x, i) => { const q = d.kind === "writeoff" || d.kind === "visit" ? -x.qty : x.qty;
     return `<tr><td>${i + 1}</td><td>${esc(x.name)}</td><td>${esc(x.unit)}</td><td>${qtyFmt(q)}</td><td>${money(x.price)}</td><td>${money(Math.abs(x.qty) * x.price)}</td></tr>`; }).join("");
   const total = d.moves.reduce((a, x) => a + Math.abs(x.qty) * x.price, 0);
   $("#printArea").innerHTML = `${head}<h2 style="text-align:center">${esc(DOC_KIND[d.kind])} № ${esc(d.number || "")} от ${fmtDate(d.date)}</h2>
-    ${d.supplier_name ? `<p>Поставщик: ${esc(d.supplier_name)}${d.supplier_inn ? ", ИНН " + esc(d.supplier_inn) : ""}</p>` : ""}${d.kind === "writeoff" ? `<p>Причина списания: ${esc(d.reason)}</p>` : ""}
+    ${d.supplier_name ? `<p>Поставщик: ${esc(d.supplier_name)}${d.supplier_inn ? ", ИНН " + esc(d.supplier_inn) : ""}</p>` : ""}${d.kind === "writeoff" ? `<p>Причина списания: ${esc(d.reason)}</p>` : ""}${d.kind === "transfer" ? `<p>Откуда: ${esc(d.location_name)} → куда: ${esc(d.to_location_name)}</p>` : d.kind === "visit" ? `<p>${esc(d.reason)}</p>` : ""}
     <table><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr>${rows}<tr><td colspan="5" style="text-align:right"><b>Итого</b></td><td><b>${money(total)}</b></td></tr></table>
     ${d.kind === "writeoff" ? signLines([{role: "Председатель комиссии"}, {role: "Член комиссии"}, {role: "Член комиссии"}, {role: "Утверждаю, руководитель", name: c.director || ""}])
+      : d.kind === "transfer" ? signLines([{role: "Отпустил", name: d.user_name}, {role: "Принял"}]) : d.kind === "visit" ? signLines([{role: "Ответственный", name: d.user_name}])
       : signLines([{role: "Принял", name: d.user_name}, {role: "Сдал (поставщик)"}])}`;
   window.print();
 }

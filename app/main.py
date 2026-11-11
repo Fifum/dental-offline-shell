@@ -81,6 +81,9 @@ class Api:
         self._mot = Motivation(db, self._dir)
         self._acc.bonus_fn = self._mot.bonuses
         self._prep = PeriodReports(db, self)
+        # 3.5: write-off by Dentist Plus visits, places of the stock (on Stock) and the cost of services
+        from stock_auto import StockAuto
+        self._sauto = StockAuto(db, self._stock, self._acc)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -94,8 +97,70 @@ class Api:
         return current_user_name()
 
     def stock_summary(self):
-        from stock import EQ_STATUS, MOVE_KINDS, UNITS
-        return {**self._stock.summary(), "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS}
+        from stock import EQ_STATUS, LOC_KINDS, MOVE_KINDS, UNITS
+        locs = self._stock.locations()
+        return {**self._stock.summary(), "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS,
+                "locations": [{"id": x["id"], "name": x["name"], "kind": x["kind"]} for x in locs], "loc_kinds": LOC_KINDS}
+
+    # ------------------------------------- 3.5: places, transfers, write-off by visits, cost --
+    def _stock_me(self):
+        _, u = self._my_perms()
+        return (u or {}).get("login") or "", self._who()
+
+    def stock_locations(self):
+        return self._stock.locations()
+
+    def stock_location_save(self, f):
+        return self._stock.save_location(f if isinstance(f, dict) else {})
+
+    def stock_location_delete(self, lid):
+        return self._stock.delete_location(lid)
+
+    def stock_transfer(self, f):
+        return self._stock.transfer(f if isinstance(f, dict) else {}, self._who())
+
+    def stock_auto_settings(self):
+        from stock_auto import MODES
+        chairs = sorted({r["c"] for r in self._db.q("""SELECT chair AS c FROM visits_archive WHERE COALESCE(chair,'')<>''
+                                                       UNION SELECT chair AS c FROM local_visits WHERE COALESCE(chair,'')<>''""")})
+        return {**self._sauto.settings(), "modes": MODES, "locations": self._stock.locations(), "chairs": chairs[:100],
+                "branches": self._db.branches()}
+
+    def stock_auto_settings_save(self, f):
+        return self._sauto.save_settings(f)
+
+    def stock_visits(self, f=None):
+        f = f if isinstance(f, dict) else {}
+        return self._sauto.visits(f.get("from"), f.get("to"), f.get("status"))
+
+    def stock_visit(self, vid):
+        return self._sauto.visit(vid)
+
+    def stock_visit_save(self, vid, services, location=None):
+        return self._sauto.save_services(vid, services, location)
+
+    def stock_visit_confirm(self, ids):
+        login, name = self._stock_me()
+        return self._sauto.confirm(ids, login, name)
+
+    def stock_visit_revert(self, vid):
+        login, name = self._stock_me()
+        return self._sauto.revert(vid, login, name)
+
+    def stock_visit_skip(self, vid, note=""):
+        return self._sauto.skip(vid, note)
+
+    def stock_visit_restore(self, vid):
+        return self._sauto.restore(vid)
+
+    def service_costs(self, month=None):
+        return self._sauto.costs(month)
+
+    def service_cost_save(self, f):
+        return self._sauto.save_cost(f)
+
+    def stock_cost_settings_save(self, f):
+        return self._sauto.save_cost_settings(f)
 
     def _stock_view(self, rows):
         """2.14.1: the balance «по документам» is the accountant's view — only with the «Бухгалтерия» right."""
@@ -107,8 +172,8 @@ class Api:
                 r.pop("value_doc", None)
         return rows
 
-    def materials(self, q="", only_low=False, only_expiring=False):
-        return self._stock_view(self._stock.materials(q, bool(only_low), only_expiring=bool(only_expiring)))
+    def materials(self, q="", only_low=False, only_expiring=False, location=None):
+        return self._stock_view(self._stock.materials(q, bool(only_low), only_expiring=bool(only_expiring), location=location))
 
     def stock_lots(self, mid):
         return self._stock.lots(mid)
@@ -173,7 +238,8 @@ class Api:
 
     def stock_moves(self, f=None):
         f = f or {}
-        return self._stock.moves(f.get("material_id"), f.get("from"), f.get("to"), f.get("kind"))
+        return self._stock.moves(f.get("material_id"), f.get("from"), f.get("to"), f.get("kind"),
+                                 location=f.get("location") if "location" in f and f.get("location") is not None else None)
 
     def norms(self, service_id=None):
         return self._stock.norms(service_id)
@@ -1483,6 +1549,14 @@ class Api:
                 st["stock_alerts"] = sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"])
         except Exception:  # noqa: BLE001
             pass
+        try:  # 3.5: the automatic write-off by visits (at most every 5 minutes, only in the mode «сразу») and the drafts
+            self._sauto.tick()
+            from auth import _current, Auth
+            u = getattr(_current, "user", None)
+            if u is None or "stock_edit" in Auth.effective_perms(u):
+                st["stock_visits"] = self._sauto.draft_count()
+        except Exception:  # noqa: BLE001
+            log.exception("status 3.5")
         try:
             from auth import _current, Auth
             u = getattr(_current, "user", None)

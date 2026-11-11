@@ -10,7 +10,8 @@ async function loadAccounting() {
   const fn = {summary: accSummary, expenses: accExpenses, payroll: accPayroll, insurance: typeof accInsurance === "function" ? accInsurance : accSummary,
     finmodel: typeof accFinmodel === "function" ? accFinmodel : accSummary,
     pnl: typeof accPnl === "function" ? accPnl : accSummary, cashflow: typeof accCashflow === "function" ? accCashflow : accSummary,
-    motivation: typeof accMotivation === "function" ? accMotivation : accSummary}[S.accTab] || accSummary;
+    motivation: typeof accMotivation === "function" ? accMotivation : accSummary,
+    cost: typeof accCost === "function" ? accCost : accSummary}[S.accTab] || accSummary;  // 3.5: the cost of services
   $$("#accTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === S.accTab));
   await fn(body);
   bindPeriod(body, loadAccounting);

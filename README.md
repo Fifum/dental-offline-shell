@@ -76,7 +76,7 @@ working without it.
 | **The clinic's own local model** | On top of the downloaded Gemma 3 / Qwen 2.5 the program builds «dental-desk» (Ollama Modelfile: the program's rules, dental terms, settings tuned on the quality check) in seconds; a quality check runs 11 real tasks of the program and scores accuracy, Russian and speed; `tools/ai_dataset.py` prepares an anonymous training set for a later LoRA |
 | **Double bookings** | Overlaps between laptops that worked offline are flagged in the calendar and the transfer list, and are not sent to Dentist Plus until resolved |
 | **Fiscal receipts** | 54-FZ receipts on ATOL (DTO 10 web server) or Shtrih-M (COM driver) registers, or a test mode: receipt on payment, partial payment and credit rules, returns, shifts, X/Z reports, failed receipts kept for retry |
-| **Stock** | Materials with minimum levels, supplier invoices, write-offs with a printed act, stock counts, consumption norms per service — billing a service writes its materials off automatically. A receipt, write-off or count can go without documents: the actual balance moves, the balance «by documents» (seen with the accounting right only) does not, act numbers stay without gaps, a receipt can be written down as an expense of the day |
+| **Stock** | Materials with minimum levels, supplier invoices, write-offs with a printed act, stock counts, consumption norms per service — billing a service or (3.5) a finished Dentist Plus visit writes its materials off; cabinets and branches with transfers; the cost of every service. A receipt, write-off or count can go without documents: the actual balance moves, the balance «by documents» (seen with the accounting right only) does not, act numbers stay without gaps, a receipt can be written down as an expense of the day |
 | **Expiry dates and lots** | Lot number and expiry date on every receipt line; lots on hand worked out from the move ledger first-expired-first-out (nothing stored, so edited invoices never break them); expired and soon-to-expire materials highlighted with a filter and a counter on the menu badge; one-click write-off of everything expired |
 | **Purchase list** | One button: everything below the minimum or lasting under 14 days, quantity from the last 60 days' use to cover 30 days, the cheapest supplier by last purchase price with the other offers alongside, grouped by supplier with a printed request, Excel and a pre-filled receipt |
 | **Barcode scanner** | Keyboard-mode USB scanners in the receipt form: a known code adds a line or +1, an unknown one offers to create the material; GS1 / «Честный знак» DataMatrix codes fill the lot and expiry date |
@@ -269,6 +269,34 @@ the payroll, the expenses of the day, cash shifts, work schedules and the day re
 `app/finreport.py` holds the profit and loss, the cash flow and the reports, `app/motivation.py` the rules and the bonus,
 `app/timesheet.py` the marks; `app/ui/finstaff.js` the screens. New tables travel over the clinic network like the rest.
 
+## Stock automation (3.5)
+
+The stock follows the visits that really happened in Dentist Plus, knows which cabinet holds what, and tells the owner what a
+service costs.
+
+* **Write-off by Dentist Plus visits («По приёмам»).** A finished visit (status «завершён» / «пришёл») with its services
+  becomes a write-off of the materials of the services' norms — the same «техкарта» that already writes off an invoice made
+  here. The services come from the visit as Dentist Plus gave it (`services`, `items`, `works`, nested `service`, an embedded
+  invoice — the partner API does not document them, so the usual shapes are tried), then from the visit's title when it is
+  exactly a service's name; otherwise the screen says «нет данных из Dentist Plus» and the services are entered by hand.
+* **Safe by default.** Visits are drafts until someone with the stock right confirms them. The automatic mode writes them
+  off by itself every five minutes, but only visits from the day it was switched on, and a visit still «in the chair» waits
+  for the next day. A reverted visit is never taken again automatically.
+* **Never twice.** One row per visit (`stock_visit_use`, keyed by the Dentist Plus visit id); a visit with an invoice here
+  (by the visit, a visit edited here, or patient + day) is left to the invoice. The document is `V-<visit>` and its moves get
+  stable `uid`s, so two laptops that wrote off the same visit offline converge to one write-off instead of two.
+* **Places («Места хранения»).** The main stock, cabinets (with the Dentist Plus chair) and branches. Every move carries its
+  place (`stock_moves.location_id`), a transfer is one numbered document with − there and + here, so the clinic's balance and
+  the FEFO lots stay as they were. Receipts, write-offs and stock counts can name a place and cannot take more than it holds.
+  A visit is written off in the cabinet of its chair, then the place of its branch, then the default place.
+* **Cost of services («Себестоимость»).** Materials by norm × last purchase price + laboratory + other costs + the doctor's
+  percent (the service's own, the clinic's setting, or the average of the doctors' pay schemes). The month view counts the
+  services made — invoices here and visits written off — against that cost. The P&L can take materials from the stock
+  (what left it in the month) instead of the purchases; never both.
+
+`app/stock_auto.py` holds the visit write-off and the cost, `app/stock.py` the places and transfers, `app/ui/stock-auto.js`
+the screens. The four new tables sync over the clinic network; staff are stored by login.
+
 ## Architecture
 
 ```
@@ -318,6 +346,8 @@ Dentist Plus partner API
 | `app/fiscal.py` | Fiscal receipts: receipt rules, test mode, ATOL web server and Shtrih-M drivers, shifts, returns |
 | `app/stock.py` | Materials as a ledger of moves, receipts, write-offs, stock counts, service norms, lots and expiry (FEFO), purchase list, barcode parsing (GS1), equipment register |
 | `app/ui/stock-lots.js` | Lots in the material card, expired write-off, purchase list window and supplier requests |
+| `app/stock_auto.py` | 3.5: write-off by Dentist Plus visits (drafts or automatic, never twice, reversible), the place of a visit, the cost of services, materials for the P&L |
+| `app/ui/stock-auto.js` | «По приёмам», «Места хранения» and transfers, «Себестоимость» |
 | `app/backup.py` | Automatic backups: online copy, integrity check, rotation, second folder, restore with a safety copy |
 | `app/security.py` | Disk encryption state (BitLocker / Device Encryption) without admin rights |
 | `app/waitlist.py` | Waiting list: entries, filters by doctor and day, booked / removed |
@@ -447,6 +477,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_addon_mode.py           # 107 checks: the add-on mode — default for old installs, the director's switch, official / draft / internal documents, hiding, SaaS kept callable, UI wiring, addon.js in node
 .venv\Scripts\python tests\test_dp_transfer.py          # 129 checks: no double entry — sections and their settings, the text for Dentist Plus, the mark (kept / dropped), auto mark, «Не перенесено», the reminder, the day report line, reconciliation, sync of marks, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_finance_staff.py        # 150 checks: profit and loss by months, the cash flow by accounts, the administrators' motivation into the payroll and the profit, the timesheet against the schedule, the week and month report (fake SMTP and Telegram, when it is due), sync between computers, rights over HTTP, UI wiring
+.venv\Scripts\python tests\test_stock_auto.py           # 129 checks: services of a Dentist Plus visit in its shapes, drafts, the place by chair / branch, never twice (an invoice here, two computers offline), revert and skip, services by hand, the automatic mode from its day, places and transfers, the cost of services, materials in the P&L, sync, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 

@@ -7,6 +7,10 @@ deleting the invoice puts them back).
 
 Equipment: a register with inventory numbers, location, service history and a write-off act.
 
+3.5 места хранения: the main stock plus cabinets and branches (`stock_locations`). Every move belongs to one place
+(`stock_moves.location_id`, empty — the main stock), so the balance of a place is the sum of its moves and the clinic's balance
+is still the sum of all moves. A transfer is a document with two moves (− there, + here); lots and expiry stay clinic-wide.
+
 2.14.1 «без документа»: a receipt bought without an invoice, a write-off without an act or a stock count may be marked
 `stock_docs.nodoc = 1`. The stock itself is always the real one (everything); «по документам» is the balance of the
 documented moves only (plus services and starting balances) — seen with the «Бухгалтерия» right, for the accountant.
@@ -48,6 +52,9 @@ CREATE TABLE IF NOT EXISTS stock_lots(
     id INTEGER PRIMARY KEY AUTOINCREMENT, material_id TEXT, move_id INTEGER, lot TEXT, expires TEXT,
     qty REAL, created_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_lots_mat ON stock_lots(material_id);
+CREATE TABLE IF NOT EXISTS stock_locations(
+    id TEXT PRIMARY KEY, name TEXT, kind TEXT, branch_id TEXT, chair TEXT, active INTEGER DEFAULT 1, sort INTEGER DEFAULT 0,
+    comment TEXT, created_at TEXT, updated_at TEXT);
 """
 SOON_DAYS = 30          # a lot expiring within this many days is highlighted
 USAGE_DAYS = 60         # the average daily use for the purchase list is taken over this period
@@ -55,7 +62,9 @@ MIN_DAYS_LEFT = 14      # a material that lasts fewer days goes into the purchas
 EXPIRED_REASON = "Истёк срок годности"
 
 MOVE_KINDS = {"receipt": "Приход", "writeoff": "Списание", "service": "По услуге", "inventory": "Инвентаризация",
-              "return": "Возврат поставщику"}
+              "return": "Возврат поставщику", "transfer": "Перемещение"}
+MAIN = "Основной склад"   # the place of every move without a location (all of them before 3.5)
+LOC_KINDS = {"store": "Склад", "cabinet": "Кабинет", "branch": "Филиал"}
 EQ_STATUS = {"in_use": "В работе", "repair": "В ремонте", "storage": "На складе", "written_off": "Списано"}
 EQ_EVENTS = {"service": "Обслуживание", "repair": "Ремонт", "move": "Перемещение", "note": "Заметка",
              "writeoff": "Списание", "status": "Статус"}
@@ -158,10 +167,19 @@ class Stock:
         db.conn.executescript(SCHEMA)
         if "nodoc" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_docs)")}:  # 2.14.1: without a document
             db.conn.execute("ALTER TABLE stock_docs ADD COLUMN nodoc INTEGER DEFAULT 0")
+        dcols = {r[1] for r in db.conn.execute("PRAGMA table_info(stock_docs)")}
+        for col in ("location_id TEXT", "to_location_id TEXT"):  # 3.5: where a document took or put the materials
+            if col.split()[0] not in dcols:
+                db.conn.execute(f"ALTER TABLE stock_docs ADD COLUMN {col}")
+        if "location_id" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_moves)")}:  # 3.5: the place of a move
+            db.conn.execute("ALTER TABLE stock_moves ADD COLUMN location_id TEXT")
         db.conn.commit()
 
+    service_location = None  # 3.5: callable(invoice row) -> place of the automatic write-off by an invoice (set by Api)
+
     # ============================================================ materials --
-    def materials(self, q="", only_low=False, with_inactive=False, only_expiring=False):
+    def materials(self, q="", only_low=False, with_inactive=False, only_expiring=False, location=None):
+        """`location` (3.5): the balance and its value in that place («» — the main stock); the minimum stays clinic-wide."""
         rows = self.db.q("""
             SELECT m.*, COALESCE(SUM(s.qty), 0) AS balance,
                    COALESCE(SUM(CASE WHEN COALESCE(d.nodoc, 0) = 0 THEN s.qty END), 0) AS balance_doc,
@@ -183,6 +201,12 @@ class Stock:
             r["soon_qty"] = round(sum(x["left"] for x in ls if x["state"] == "soon"), 3)
             r["expires"] = min((x["expires"] for x in ls if x["expires"]), default="")
             r["exp_state"] = "expired" if r["expired_qty"] > 0 else "soon" if r["soon_qty"] > 0 else ""
+        if location is not None:
+            at = self.location_balances()
+            for r in rows:
+                r["total_balance"] = r["balance"]
+                r["balance"] = round(at.get(r["id"], {}).get(location or "", 0), 3)
+                r["value"] = round(r["balance"] * (r["price"] or 0), 2)
         if q:
             rows = [r for r in rows if q in f"{r['code']} {r['name']} {r['category']} {r['barcode']}".lower()]
         if only_low:
@@ -267,6 +291,10 @@ class Stock:
         m = rows[0]
         m["lot_list"] = self.lots(mid)
         m["moves"] = self.moves(material_id=mid, limit=200)
+        names = self._loc_names()  # 3.5: where it is
+        m["by_location"] = [{"id": k, "name": names.get(k, MAIN), "qty": v}
+                            for k, v in sorted(self.location_balances().get(mid, {}).items(), key=lambda x: (x[0] != "", names.get(x[0], "")))
+                            if abs(v) > 1e-9]
         m["norms"] = self.db.q("""SELECT sm.service_id, sm.qty, s.title, s.code FROM service_materials sm
                                   JOIN services s ON s.id = sm.service_id WHERE sm.material_id=? ORDER BY s.title""", (mid,))
         return m
@@ -349,14 +377,15 @@ class Stock:
         did, at = _id("R"), _now()
         day = f.get("date") or date.today().isoformat()
         total = round(sum(q * p for _, q, p in lines), 2)
+        loc = self._loc(f.get("location_id"))
         with self.db.tx() as c:
-            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc,
+                         location_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (did, "receipt", _clean(f.get("number"), 50), day, f.get("supplier_id") or None, "",
-                       _clean(f.get("comment"), 500), total, user, at, 1 if f.get("nodoc") else 0))
+                       _clean(f.get("comment"), 500), total, user, at, 1 if f.get("nodoc") else 0, loc))
             for (mid, q, p), (lot, exp) in zip(lines, lots):
-                cur = c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at) VALUES(?,?,?,?,?,?,?)",
-                                (mid, q, p, "receipt", did, user, f"{day} {at[11:]}"))
+                cur = c.execute("""INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, user_name, at, location_id)
+                                   VALUES(?,?,?,?,?,?,?,?)""", (mid, q, p, "receipt", did, user, f"{day} {at[11:]}", loc))
                 if lot or exp:
                     c.execute("INSERT INTO stock_lots(material_id, move_id, lot, expires, qty, created_at) VALUES(?,?,?,?,?,?)",
                               (mid, cur.lastrowid, lot, exp, q, at))
@@ -375,11 +404,15 @@ class Stock:
             if q <= 0:
                 raise ValueError("Количество для списания должно быть больше нуля")
             need[mid] = need.get(mid, 0) + q
+        # 3.5: a write-off from a named place cannot take more than that place has; without a place — the clinic's balance
+        by_place = "location_id" in f
+        loc = self._loc(f.get("location_id"))
         for mid, q in need.items():
-            bal = self.balance(mid)
+            bal = self.location_balance(mid, loc) if by_place else self.balance(mid)
             if q > bal + 1e-9:
                 name = self.db.one("SELECT name FROM materials WHERE id=?", (mid,))["name"]
-                raise ValueError(f"«{name}»: на складе {bal:g}, списать {q:g} нельзя")
+                where = f"в месте «{self.location_name(loc)}»" if by_place else "на складе"
+                raise ValueError(f"«{name}»: {where} {bal:g}, списать {q:g} нельзя")
         # a line may name the lot it takes from (write-off of an expired lot): that lot shrinks, not the undated stock
         lot_of, taken = [], {}
         for (mid, q, _), ln in zip(lines, f.get("lines") or []):
@@ -401,14 +434,15 @@ class Stock:
         prices = {r["id"]: r["price"] for r in self.db.q("SELECT id, price FROM materials")}
         total = round(sum(q * (prices.get(mid) or 0) for mid, q, _ in lines), 2)
         with self.db.tx() as c:
-            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc,
+                         location_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (did, "writeoff", "" if f.get("nodoc") else self._next_number("writeoff"), day, None, reason,
-                       _clean(f.get("comment"), 500), total, user, at, 1 if f.get("nodoc") else 0))
+                       _clean(f.get("comment"), 500), total, user, at, 1 if f.get("nodoc") else 0, loc))
             for (mid, q, _), g in zip(lines, lot_of):
                 why = reason + (f" (партия {g['lot']})" if g and g["lot"] else "")
-                cur = c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at) VALUES(?,?,?,?,?,?,?,?)",
-                                (mid, -q, prices.get(mid) or 0, "writeoff", did, why[:300], user, f"{day} {at[11:]}"))
+                cur = c.execute("""INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at, location_id)
+                                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                                (mid, -q, prices.get(mid) or 0, "writeoff", did, why[:300], user, f"{day} {at[11:]}", loc))
                 if g:
                     c.execute("INSERT INTO stock_lots(material_id, move_id, lot, expires, qty, created_at) VALUES(?,?,?,?,?,?)",
                               (mid, cur.lastrowid, g["lot"], g["expires"], -q, at))
@@ -431,19 +465,26 @@ class Stock:
             raise ValueError("Введите фактический остаток хотя бы по одному материалу")
         did, at = _id("I"), _now()
         diffs = []
+        by_place = "location_id" in f  # 3.5: a count of one place compares with that place's balance
+        loc = self._loc(f.get("location_id"))
         with self.db.tx() as c:
             for mid, actual in counted:
-                book = round(c.execute("SELECT COALESCE(SUM(qty),0) FROM stock_moves WHERE material_id=?", (mid,)).fetchone()[0], 3)
+                if by_place:
+                    book = c.execute("SELECT COALESCE(SUM(qty),0) FROM stock_moves WHERE material_id=? AND COALESCE(location_id,'')=?",
+                                     (mid, loc or "")).fetchone()[0]
+                else:
+                    book = c.execute("SELECT COALESCE(SUM(qty),0) FROM stock_moves WHERE material_id=?", (mid,)).fetchone()[0]
+                book = round(book, 3)
                 d = round(actual - book, 3)
                 if abs(d) > 1e-9:
                     price = c.execute("SELECT price FROM materials WHERE id=?", (mid,)).fetchone()[0] or 0
-                    c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at) VALUES(?,?,?,?,?,?,?,?)",
-                              (mid, d, price, "inventory", did, "Инвентаризация", user, at))
+                    c.execute("""INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at, location_id)
+                                 VALUES(?,?,?,?,?,?,?,?,?)""", (mid, d, price, "inventory", did, "Инвентаризация", user, at, loc))
                     diffs.append({"material_id": mid, "book": book, "actual": actual, "diff": d})
-            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc,
+                         location_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (did, "inventory", "" if f.get("nodoc") else self._next_number("inventory"), at[:10], None, "Инвентаризация",
-                       _clean(f.get("comment"), 500), 0, user, at, 1 if f.get("nodoc") else 0))
+                       _clean(f.get("comment"), 500), 0, user, at, 1 if f.get("nodoc") else 0, loc))
         return {"id": did, "counted": len(counted), "diffs": diffs}
 
     def _next_number(self, kind):
@@ -470,7 +511,14 @@ class Stock:
         if kind:
             sql += " WHERE d.kind=?"
             args.append(kind)
-        return self.db.q(sql + " ORDER BY d.created_at DESC LIMIT ?", (*args, int(limit)))
+        rows = self.db.q(sql + " ORDER BY d.created_at DESC LIMIT ?", (*args, int(limit)))
+        names = self._loc_names()
+        for r in rows:
+            r["location_name"] = names.get(r.get("location_id") or "", MAIN)
+            r["to_location_name"] = names.get(r.get("to_location_id") or "", MAIN) if r["kind"] == "transfer" else ""
+            if r["kind"] == "transfer":
+                r["lines"] = (r["lines"] or 0) // 2  # two moves per line: − there, + here
+        return rows
 
     def doc(self, did):
         d = self.db.one("""SELECT d.*, s.name AS supplier_name, s.inn AS supplier_inn FROM stock_docs d
@@ -478,9 +526,16 @@ class Stock:
         if d:
             d["moves"] = self.db.q("""SELECT m.*, t.name, t.unit, t.code FROM stock_moves m JOIN materials t ON t.id=m.material_id
                                       WHERE m.doc_id=? ORDER BY m.id""", (did,))
+            names = self._loc_names()
+            d["location_name"] = names.get(d.get("location_id") or "", MAIN)
+            d["to_location_name"] = names.get(d.get("to_location_id") or "", MAIN)
+            for m in d["moves"]:
+                m["location_name"] = names.get(m.get("location_id") or "", MAIN)
+            if d["kind"] == "transfer":  # one line per material: what went from there to here
+                d["moves"] = [m for m in d["moves"] if m["qty"] > 0]
         return d
 
-    def moves(self, material_id=None, day_from=None, day_to=None, kind=None, limit=500):
+    def moves(self, material_id=None, day_from=None, day_to=None, kind=None, limit=500, location=None):
         sql = """SELECT m.*, t.name, t.unit, p.name AS patient_name, d.number AS doc_number, COALESCE(d.nodoc,0) AS nodoc
                  FROM stock_moves m JOIN materials t ON t.id = m.material_id
                  LEFT JOIN patients p ON p.id = m.patient_id LEFT JOIN stock_docs d ON d.id = m.doc_id WHERE 1=1"""
@@ -497,14 +552,139 @@ class Stock:
         if kind:
             sql += " AND m.kind=?"
             args.append(kind)
+        if location is not None:
+            sql += " AND COALESCE(m.location_id,'')=?"
+            args.append(location or "")
         rows = self.db.q(sql + " ORDER BY m.at DESC, m.id DESC LIMIT ?", (*args, int(limit)))
+        names = self._loc_names()
         for r in rows:
             r["kind_title"] = MOVE_KINDS.get(r["kind"], r["kind"])
+            r["location_name"] = names.get(r.get("location_id") or "", MAIN)
+            if r["kind"] == "service" and str(r.get("doc_id") or "").startswith("V-"):
+                r["kind_title"] = "По приёму"  # 3.5: the write-off by a Dentist Plus visit
         return rows
+
+    # ======================================================= places (3.5) --
+    def _loc(self, lid):
+        """A place id from the form: «» (or nothing) is the main stock; an unknown or closed place is an error."""
+        lid = str(lid or "").strip()
+        if not lid:
+            return None
+        if not self.db.one("SELECT 1 AS x FROM stock_locations WHERE id=? AND active=1", (lid,)):
+            raise ValueError("Место хранения не найдено")
+        return lid
+
+    def _loc_names(self):
+        return {"": MAIN, **{r["id"]: r["name"] for r in self.db.q("SELECT id, name FROM stock_locations")}}
+
+    def location_name(self, lid):
+        return self._loc_names().get(lid or "", MAIN)
+
+    def location_balance(self, mid, lid):
+        return round(self.db.one("SELECT COALESCE(SUM(qty),0) AS b FROM stock_moves WHERE material_id=? AND COALESCE(location_id,'')=?",
+                                 (mid, lid or ""))["b"], 3)
+
+    def location_balances(self):
+        """{material id: {place id («» — main): balance}} — only places where something is or was."""
+        out = {}
+        for r in self.db.q("""SELECT material_id, COALESCE(location_id,'') AS loc, SUM(qty) AS q FROM stock_moves
+                              GROUP BY material_id, COALESCE(location_id,'')"""):
+            out.setdefault(r["material_id"], {})[r["loc"]] = round(r["q"] or 0, 3)
+        return out
+
+    def locations(self, with_inactive=False):
+        """The main stock first, then the cabinets and branches: how many materials are there and for how much."""
+        rows = self.db.q("SELECT * FROM stock_locations WHERE (? OR active=1) ORDER BY sort, name", (1 if with_inactive else 0,))
+        prices = {m["id"]: m["price"] or 0 for m in self.db.q("SELECT id, price FROM materials WHERE active=1")}
+        bal = self.location_balances()
+        stat = {}
+        for mid, by in bal.items():
+            if mid not in prices:
+                continue
+            for loc, q in by.items():
+                s = stat.setdefault(loc, {"items": 0, "value": 0.0, "negative": 0})
+                if abs(q) > 1e-9:
+                    s["items"] += 1
+                if q > 0:
+                    s["value"] += q * prices[mid]
+                elif q < -1e-9:
+                    s["negative"] += 1
+        main = {"id": "", "name": MAIN, "kind": "main", "kind_title": "Основной", "branch_id": "", "chair": "", "active": 1, "comment": ""}
+        out = []
+        for r in [main] + rows:
+            s = stat.get(r["id"], {"items": 0, "value": 0.0, "negative": 0})
+            out.append({**r, "kind_title": r.get("kind_title") or LOC_KINDS.get(r["kind"], r["kind"]),
+                        "items": s["items"], "value": round(s["value"], 2), "negative": s["negative"]})
+        return out
+
+    def save_location(self, f):
+        name = _clean(f.get("name"), 100)
+        if not name:
+            raise ValueError("Укажите название места хранения")
+        if name.lower() == MAIN.lower():
+            raise ValueError(f"«{MAIN}» уже есть")
+        lid = str(f.get("id") or "") or _id("L")
+        # SQLite lower() knows only Latin letters: compare in Python so that «кабинет 1» is «Кабинет 1»
+        dup = any(r["name"].casefold() == name.casefold() for r in self.db.q("SELECT name FROM stock_locations WHERE id<>? AND active=1", (lid,)))
+        if dup:
+            raise ValueError(f"Место «{name}» уже есть")
+        kind = f.get("kind") if f.get("kind") in LOC_KINDS else "cabinet"
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO stock_locations(id, name, kind, branch_id, chair, active, sort, comment, created_at, updated_at)
+                         VALUES(?,?,?,?,?,1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind,
+                         branch_id=excluded.branch_id, chair=excluded.chair, sort=excluded.sort, comment=excluded.comment, active=1,
+                         updated_at=excluded.updated_at""",
+                      (lid, name, kind, _clean(f.get("branch_id"), 40), _clean(f.get("chair"), 100), int(_num(f.get("sort"), "Порядок")),
+                       _clean(f.get("comment"), 300), _now(), _now()))
+        return lid
+
+    def delete_location(self, lid):
+        """A place is closed only when it is empty: move what is left first (the history stays)."""
+        if not self.db.one("SELECT 1 AS x FROM stock_locations WHERE id=?", (lid,)):
+            raise ValueError("Место хранения не найдено")
+        left = [m for m, by in self.location_balances().items() if abs(by.get(lid, 0)) > 1e-9
+                and self.db.one("SELECT 1 AS x FROM materials WHERE id=? AND active=1", (m,))]
+        if left:
+            raise ValueError(f"В этом месте ещё есть материалы ({len(left)}). Сначала переместите их на другое место")
+        with self.db.tx() as c:
+            c.execute("UPDATE stock_locations SET active=0, updated_at=? WHERE id=?", (_now(), lid))
+        return True
+
+    def transfer(self, f, user=""):
+        """Move materials from one place to another: one document, − there and + here; the clinic's balance does not change."""
+        src, dst = self._loc(f.get("from_id")), self._loc(f.get("to_id"))
+        if (src or "") == (dst or ""):
+            raise ValueError("Выберите разные места: откуда и куда")
+        lines = self._lines(f.get("lines"))
+        need = {}
+        for mid, q, _ in lines:
+            if q <= 0:
+                raise ValueError("Количество для перемещения должно быть больше нуля")
+            need[mid] = need.get(mid, 0) + q
+        for mid, q in need.items():
+            have = self.location_balance(mid, src)
+            if q > have + 1e-9:
+                name = self.db.one("SELECT name FROM materials WHERE id=?", (mid,))["name"]
+                raise ValueError(f"«{name}»: в месте «{self.location_name(src)}» {have:g}, переместить {q:g} нельзя")
+        did, at = _id("T"), _now()
+        day = f.get("date") or date.today().isoformat()
+        prices = {r["id"]: r["price"] or 0 for r in self.db.q("SELECT id, price FROM materials")}
+        total = round(sum(q * prices.get(mid, 0) for mid, q in need.items()), 2)
+        why = f"{self.location_name(src)} → {self.location_name(dst)}"
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO stock_docs(id, kind, number, date, supplier_id, reason, comment, total, user_name, created_at, nodoc,
+                         location_id, to_location_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (did, "transfer", self._next_number("transfer"), day, None, why, _clean(f.get("comment"), 500), total, user, at,
+                       0, src, dst))
+            for mid, q in need.items():
+                for qty, loc in ((-q, src), (q, dst)):
+                    c.execute("""INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at, location_id)
+                                 VALUES(?,?,?,?,?,?,?,?,?)""", (mid, qty, prices.get(mid, 0), "transfer", did, why, user, f"{day} {at[11:]}", loc))
+        return did
 
     # ================================================ norms + auto write-off --
     def norms(self, service_id=None):
-        sql = """SELECT sm.*, m.name, m.unit, s.title AS service_title FROM service_materials sm
+        sql = """SELECT sm.*, m.name, m.unit, m.price, s.title AS service_title FROM service_materials sm
                  JOIN materials m ON m.id=sm.material_id JOIN services s ON s.id=sm.service_id WHERE m.active=1"""
         args = ()
         if service_id:
@@ -525,7 +705,7 @@ class Stock:
 
     def on_invoice(self, invoice_id, user=""):
         """Bring the automatic write-off of an invoice in line with its current services."""
-        inv = self.db.one("SELECT id, patient_id, items, kind, created_at FROM invoices WHERE id=?", (invoice_id,))
+        inv = self.db.one("SELECT id, patient_id, visit_id, items, kind, created_at FROM invoices WHERE id=?", (invoice_id,))
         with self.db.tx() as c:
             c.execute("DELETE FROM stock_moves WHERE invoice_id=? AND kind='service'", (invoice_id,))
             if not inv or (inv["kind"] or "invoice") != "invoice":
@@ -540,14 +720,20 @@ class Stock:
                 for n in c.execute("SELECT material_id, qty FROM service_materials WHERE service_id=?", (sid,)).fetchall():
                     need[n[0]] = need.get(n[0], 0) + n[1] * qty
                     titles.setdefault(n[0], []).append(it.get("title") or "")
+            loc = None
+            if need and self.service_location is not None:
+                try:
+                    loc = self.service_location(inv) or None
+                except Exception:  # noqa: BLE001 — the place never stops the write-off
+                    loc = None
             for mid, q in need.items():
                 price = (c.execute("SELECT price FROM materials WHERE id=? AND active=1", (mid,)).fetchone() or [None])[0]
                 if price is None:
                     continue
-                c.execute("""INSERT INTO stock_moves(material_id, qty, price, kind, invoice_id, patient_id, reason, user_name, at)
-                             VALUES(?,?,?,?,?,?,?,?,?)""",
+                c.execute("""INSERT INTO stock_moves(material_id, qty, price, kind, invoice_id, patient_id, reason, user_name, at, location_id)
+                             VALUES(?,?,?,?,?,?,?,?,?,?)""",
                           (mid, -round(q, 3), price or 0, "service", invoice_id, inv["patient_id"],
-                           "; ".join(dict.fromkeys(titles[mid]))[:200], user, _now()))
+                           "; ".join(dict.fromkeys(titles[mid]))[:200], user, _now(), loc))
         return len(need)
 
     # ======================================================= purchase list --
