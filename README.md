@@ -240,6 +240,35 @@ it from being forgotten.
 
 `app/dp_transfer.py` holds the rules, `app/ui/dp.js` the screens.
 
+## Finance and staff (3.4)
+
+The owner's management accounting and the staff's time, built on what the program already has — the financial model,
+the payroll, the expenses of the day, cash shifts, work schedules and the day report.
+
+* **Profit and loss by months («ОПиУ»).** The month of the financial model laid side by side for 3, 6 or 12 months:
+  revenue, variable costs, margin, fixed costs by category, salaries, operating and net profit, totals and shares.
+  Salaries are accrued pay, so payouts are never counted twice.
+* **Cash flow («Деньги»).** Money that really moved, by days or months, with a running total and by «where the money is»:
+  the drawer, the bank account and cards, employees' own money. Paying from the advance, by bonuses or a certificate moves
+  no money; cash put into or collected from the drawer is a move inside the clinic. Expenses without a document are shown
+  apart, and cash shifts are reconciled against the terminal and the bank. Dentist Plus payments are not in its API — the
+  screen says «нет данных из Dentist Plus».
+* **Administrators' motivation.** Rules for all administrators or per person: a sum per booking that came, per new patient,
+  per CRM request brought to a visit, a percent of own sales (invoices the employee made, certificates sold), a percent of
+  the clinic's revenue and a bonus when the clinic's plan is met. Everything is 0 until the director sets it; the bonus goes
+  into the payroll and the profit. Bookings are logged when a visit is created here (`staff_bookings`) and matched to the
+  visit later by id, by doctor and minute, or by patient and day — the local visit disappears once Dentist Plus has it.
+* **Timesheet.** «Я пришёл» / «Я ушёл» under one's own account; «Графики» → «Табель» puts the marks against the schedule:
+  late, early, absent, no leaving, outside the schedule, with a grace in minutes. Corrections are flagged and journaled.
+  Accounts are stored by login, not by the local integer id, so every computer shows the same person; someone who never
+  marks is not «absent».
+* **The week and month report.** On Mondays and on the 1st the owner gets the last week / month through the channels of the
+  day report (Telegram and/or e-mail, Excel attached); without a configured channel nothing is sent. Missed reports are
+  retried for three days, and `period_reports` syncs so a second computer does not send the same report.
+
+`app/finreport.py` holds the profit and loss, the cash flow and the reports, `app/motivation.py` the rules and the bonus,
+`app/timesheet.py` the marks; `app/ui/finstaff.js` the screens. New tables travel over the clinic network like the rest.
+
 ## Architecture
 
 ```
@@ -308,6 +337,10 @@ Dentist Plus partner API
 | `app/crm.py` | CRM: tasks and the rules that make them, requests and the funnel, segments, visit scores (NPS) and review QR codes, advertising spend by source |
 | `app/ui/crm.js` | Tasks, the requests board and funnel, segments and the WhatsApp mailing, scores, CRM settings, the CRM tab of the patient card |
 | `app/director.py` | Director's analytics: visit history (schedule + archive of Dentist Plus visits), main screen and hints, patients and retention, load, conversion, materials share, plan vs fact |
+| `app/finreport.py` | 3.4: profit and loss by months, the cash flow by days / months and accounts, the week and month report and its sending |
+| `app/motivation.py` | 3.4: the administrators' motivation rules, bookings made by staff, the monthly bonus for the payroll |
+| `app/timesheet.py` | 3.4: arrival and leaving marks, the timesheet against the work schedule, stable person keys |
+| `app/ui/finstaff.js` | 3.4: «ОПиУ», «Деньги», «Мотивация», the owner's report window, «Табель» and «Я пришёл» |
 | `app/replica.py` | Replication: change capture by triggers, integer ids made stable (uid / login), three-way merge, conflict journal |
 | `app/cloud.py` | Cloud client: connection codes, clinic key, AES-GCM encryption, pull / merge / push loop, encrypted file transfer |
 | `cloud/cloud_server.py` | Multi-clinic sync server (standard library only): devices, plans and trials, versioned rows, files; admin commands |
@@ -413,6 +446,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_updates.py              # 58 checks: encrypted installer and notes, signing a release, a fake GitHub (302, ETag/304, 404), download and install, another build's key, worker once a minute, rights, publishing order
 .venv\Scripts\python tests\test_addon_mode.py           # 107 checks: the add-on mode — default for old installs, the director's switch, official / draft / internal documents, hiding, SaaS kept callable, UI wiring, addon.js in node
 .venv\Scripts\python tests\test_dp_transfer.py          # 129 checks: no double entry — sections and their settings, the text for Dentist Plus, the mark (kept / dropped), auto mark, «Не перенесено», the reminder, the day report line, reconciliation, sync of marks, rights over HTTP, UI wiring
+.venv\Scripts\python tests\test_finance_staff.py        # 150 checks: profit and loss by months, the cash flow by accounts, the administrators' motivation into the payroll and the profit, the timesheet against the schedule, the week and month report (fake SMTP and Telegram, when it is due), sync between computers, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
 ```
 

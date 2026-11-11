@@ -97,6 +97,8 @@ async function loadDaySettings() {
       <p class="hint">Пароль приложения: Яндекс — id.yandex.ru → «Безопасность» → «Пароли приложений» → «Почта»; Mail.ru — «Безопасность» → «Пароли для внешних приложений». Обычный пароль ящика почта не принимает.</p></div>
     <div class="form"><label>Время отправки<input class="input" id="drTime" type="time" value="${esc(s.time)}"></label></div>
     <label class="switch-row"><input type="checkbox" id="drClose" ${s.on_close ? "checked" : ""}><span class="sw"></span>Отправлять сразу при закрытии кассовой смены</label>
+    <label class="switch-row"><input type="checkbox" id="drWeek" ${s.week_on !== false ? "checked" : ""}><span class="sw"></span>Отчёт за неделю — по понедельникам: деньги, расходы, приёмы, табель${typeof openPeriodReport === "function" && can("accounting") ? ` <button class="linkbtn" type="button" id="drWeekSee">посмотреть</button>` : ""}</label>
+    <label class="switch-row"><input type="checkbox" id="drMonth" ${s.month_on !== false ? "checked" : ""}><span class="sw"></span>Отчёт за месяц — 1-го числа: прибыль и убытки, движение денег, зарплата и мотивация, табель${typeof openPeriodReport === "function" && can("accounting") ? ` <button class="linkbtn" type="button" id="drMonthSee">посмотреть</button>` : ""}</label>
     <p class="hint">Отчёт: поступления по способам оплаты, все расходы дня (с документами и без), кассовая смена и файл Excel. Без интернета отчёт подождёт и уйдёт, когда связь появится. Отправляет компьютер, на котором включена эта настройка (обычно ресепшен). Токен бота и пароль почты хранятся зашифрованными на этом компьютере.</p>
     <div class="row"><button class="btn" id="drSave">Сохранить</button><button class="btn ghost" id="drTest">Сохранить и отправить отчёт за сегодня</button><span class="msg" id="drMsg"></span></div>`;
   drawChats();
@@ -121,10 +123,12 @@ async function loadDaySettings() {
   const save = async () => {
     const r = await api.day_report_settings_save({enabled: $("#drOn").checked, to: $("#drTo").value, host: $("#drHost").value, port: $("#drPort").value,
       login: $("#drLogin").value, password: $("#drPass").value, time: $("#drTime").value, on_close: $("#drClose").checked, security: "ssl",
+      week_on: $("#drWeek").checked, month_on: $("#drMonth").checked,
       tg_on: $("#tgOn").checked, tg_token: tok(), tg_bot: bot, tg_chats: chats.filter(c => c.on).map(c => ({id: c.id, name: c.name}))});
     $("#drPass").value = ""; $("#tgToken").value = "";
     return r;
   };
+  [["#drWeekSee", "week"], ["#drMonthSee", "month"]].forEach(([id, k]) => { const b = $(id, box); if (b) b.onclick = e => { e.preventDefault(); e.stopPropagation(); openPeriodReport(k); }; });
   $("#drSave").onclick = async () => { try { await save(); msgD("Сохранено", true); } catch (e) { msgD(errText(e), false); } };
   $("#drTest").onclick = async () => {
     msgD("Отправляю…", true);

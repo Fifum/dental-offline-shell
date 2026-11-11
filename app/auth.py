@@ -259,6 +259,12 @@ METHOD_PERMS = {
     "acc_summary": "accounting", "expenses": "accounting", "save_expense": "accounting", "delete_expense": "accounting",
     "salary_schemes": "accounting", "save_salary_scheme": "accounting", "payroll": "accounting", "pay_salary": "accounting",
     "finmodel": "accounting", "finmodel_scenario": "accounting", "finmodel_brief": "accounting",
+    # 3.4: profit and loss by months, the cash flow, the administrators' motivation, the week and month report
+    "fin_pnl": "accounting", "fin_cashflow": "accounting", "motivation_rules": "accounting", "motivation_save": "accounting",
+    "motivation_month": "accounting", "period_report": "accounting", "period_report_send": "accounting",
+    # 3.4: the timesheet — everyone marks own arrival and sees own days; the whole clinic is checked in Api
+    "time_me": ANY_USER, "time_clock": ANY_USER, "timesheet": ANY_USER,
+    "time_mark_save": ("shifts_edit", "staff"), "timesheet_settings_save": ("shifts_edit", "staff"),
     # marketing
     "mk_summary": "marketing", "mk_sources": ("marketing", "patients_view", "patients_edit"), "save_mk_sources": "marketing",
     "mk_sources_report": "marketing", "call_list": "marketing", "log_call": "marketing",
@@ -326,6 +332,9 @@ AUDITED = {
     "fiscal_for_payment": "Чек по оплате", "fiscal_save_settings": "Настройки кассы",
     "save_expense": "Расход", "delete_expense": "Удаление расхода", "save_salary_scheme": "Схема оплаты сотрудника",
     "pay_salary": "Выплата зарплаты", "save_mk_sources": "Источники пациентов", "log_call": "Звонок пациенту",
+    "motivation_save": "Правила мотивации администраторов", "period_report_send": "Отчёт за неделю / месяц владельцу",
+    "time_clock": "Отметка прихода / ухода", "time_mark_save": "Исправление табеля",
+    "timesheet_settings_save": "Настройки табеля",
     "set_patient_marketing": "Источник пациента", "save_shift": "Смена в графике", "fill_shifts": "Заполнение графика",
     "clear_shifts": "Очистка графика",
     "dictate": "Диктовка в медкарту", "speech_download": "Скачивание модели речи", "ai_settings_save": "Настройки ИИ",

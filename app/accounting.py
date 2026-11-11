@@ -159,10 +159,19 @@ class Accounting:
         except Exception:  # noqa: BLE001 - no stock module tables
             return 0.0
 
+    bonus_fn = None  # 3.4: {person key: bonus} of the month — the administrators' motivation (motivation.py), set by Api
+
     def payroll(self, month=None):
-        """Pay for one month: percent of the doctor's services (paid or billed) plus the monthly salary."""
+        """Pay for one month: percent of the doctor's services (paid or billed) plus the monthly salary
+        plus (3.4) the motivation bonus of the month."""
         mon, a, b = _month_range(month)
         out = []
+        bonuses = {}
+        if self.bonus_fn is not None:
+            try:
+                bonuses = self.bonus_fn(mon) or {}
+            except Exception:  # noqa: BLE001 — the bonus never breaks the payroll
+                bonuses = {}
         for s in self.schemes():
             billed = paid = materials = lab = 0.0
             if s["kind"] == "doctor":
@@ -178,16 +187,18 @@ class Accounting:
                     lab = self._lab_cost(s["id"], a, b)
             base_sum = max(0.0, (paid if s["base"] == "paid" else billed) - materials - lab)
             by_percent = round(base_sum * s["percent"] / 100, 2)
-            earned = round(by_percent + s["fixed"], 2)
+            bonus = round(bonuses.get(s["key"]) or 0, 2)
+            earned = round(by_percent + s["fixed"] + bonus, 2)
             paid_out = round(self.db.one("SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE category=? AND person=? AND period=?",
                                          (SALARY, s["key"], mon))["s"], 2)
             if not earned and not paid_out and not s["percent"] and not s["fixed"]:
                 continue
             out.append({**s, "billed": billed, "paid": paid, "materials": materials, "lab": lab, "base_sum": round(base_sum, 2),
-                        "by_percent": by_percent, "earned": earned, "paid_out": paid_out, "due": round(earned - paid_out, 2)})
-        unset = [s for s in self.schemes() if not s["percent"] and not s["fixed"]]
+                        "by_percent": by_percent, "bonus": bonus, "earned": earned, "paid_out": paid_out, "due": round(earned - paid_out, 2)})
+        unset = [s for s in self.schemes() if not s["percent"] and not s["fixed"] and not bonuses.get(s["key"])]
         return {"month": mon, "rows": out, "unset": unset,
                 "earned": round(sum(r["earned"] for r in out), 2), "paid_out": round(sum(r["paid_out"] for r in out), 2),
+                "bonus": round(sum(r["bonus"] for r in out), 2),
                 "due": round(sum(r["due"] for r in out), 2)}
 
     def pay_salary(self, f, who=""):

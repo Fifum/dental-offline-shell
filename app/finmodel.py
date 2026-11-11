@@ -60,8 +60,8 @@ class FinModel:
         doctors = staff = 0.0
         rows = []
         for p in pr["rows"]:
-            if p["percent"] or p["fixed"]:
-                doc, fix = (p["by_percent"] if p["kind"] == "doctor" else 0.0), p["fixed"]
+            if p["percent"] or p["fixed"] or p.get("bonus"):  # 3.4: the motivation bonus is a part of the staff's pay
+                doc, fix = (p["by_percent"] if p["kind"] == "doctor" else 0.0), p["fixed"] + (p.get("bonus") or 0)
             elif p["kind"] == "doctor":
                 doc, fix = p["paid_out"], 0.0
             else:

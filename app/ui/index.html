@@ -3,28 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
-<script src="theme.js?v=3.3.0"></script>
+<script src="theme.js?v=3.4.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=3.3.0">
-<link rel="stylesheet" href="styles-v2.css?v=3.3.0">
-<link rel="stylesheet" href="styles-brand.css?v=3.3.0">
-<link rel="stylesheet" href="styles-auth.css?v=3.3.0">
-<link rel="stylesheet" href="styles-motion.css?v=3.3.0">
-<link rel="stylesheet" href="styles-stock.css?v=3.3.0">
-<link rel="stylesheet" href="styles-office.css?v=3.3.0">
-<link rel="stylesheet" href="styles-medcard.css?v=3.3.0">
-<link rel="stylesheet" href="styles-theme.css?v=3.3.0">
-<link rel="stylesheet" href="styles-teeth.css?v=3.3.0">
-<link rel="stylesheet" href="styles-voice.css?v=3.3.0">
-<link rel="stylesheet" href="styles-platform.css?v=3.3.0">
-<link rel="stylesheet" href="styles-director.css?v=3.3.0">
-<link rel="stylesheet" href="styles-plans.css?v=3.3.0">
-<link rel="stylesheet" href="styles-crm.css?v=3.3.0">
-<link rel="stylesheet" href="styles-finance.css?v=3.3.0">
-<link rel="stylesheet" href="styles-ai.css?v=3.3.0">
-<link rel="stylesheet" href="styles-settings.css?v=3.3.0">
-<link rel="stylesheet" href="styles-staff.css?v=3.3.0">
-<link rel="stylesheet" href="styles-responsive.css?v=3.3.0">
+<link rel="stylesheet" href="styles.css?v=3.4.0">
+<link rel="stylesheet" href="styles-v2.css?v=3.4.0">
+<link rel="stylesheet" href="styles-brand.css?v=3.4.0">
+<link rel="stylesheet" href="styles-auth.css?v=3.4.0">
+<link rel="stylesheet" href="styles-motion.css?v=3.4.0">
+<link rel="stylesheet" href="styles-stock.css?v=3.4.0">
+<link rel="stylesheet" href="styles-office.css?v=3.4.0">
+<link rel="stylesheet" href="styles-medcard.css?v=3.4.0">
+<link rel="stylesheet" href="styles-theme.css?v=3.4.0">
+<link rel="stylesheet" href="styles-teeth.css?v=3.4.0">
+<link rel="stylesheet" href="styles-voice.css?v=3.4.0">
+<link rel="stylesheet" href="styles-platform.css?v=3.4.0">
+<link rel="stylesheet" href="styles-director.css?v=3.4.0">
+<link rel="stylesheet" href="styles-plans.css?v=3.4.0">
+<link rel="stylesheet" href="styles-crm.css?v=3.4.0">
+<link rel="stylesheet" href="styles-finance.css?v=3.4.0">
+<link rel="stylesheet" href="styles-ai.css?v=3.4.0">
+<link rel="stylesheet" href="styles-settings.css?v=3.4.0">
+<link rel="stylesheet" href="styles-staff.css?v=3.4.0">
+<link rel="stylesheet" href="styles-responsive.css?v=3.4.0">
 </head>
 <body>
 <div class="app">
@@ -64,7 +64,7 @@
         <button class="icon-btn" id="syncBtn" title="Обновить сейчас"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.4M4 4v3.5h3.5M4 13a8 8 0 0 0 14.6 4.4M20 20v-3.5h-3.5"/></svg></button>
       </div>
       <div class="user-chip" id="userChip"><button id="ucBtn"><span class="av" id="ucAv">?</span><span class="uc-t"><b id="ucName"></b><small id="ucRole"></small></span></button>
-        <div class="user-menu" id="ucMenu" hidden><div class="um-theme"><span>Тема</span><div class="seg theme-seg" data-theme-seg><button type="button" data-tp="light">Светлая</button><button type="button" data-tp="dark">Тёмная</button><button type="button" data-tp="system">Системная</button></div></div><button id="ucPass">Сменить пароль</button><button id="ucPin">ПИН-код для входа</button><button id="ucSwitch">Сменить сотрудника</button><button id="ucServer" hidden>Сменить сервер</button><button id="ucOut">Выйти</button></div></div>
+        <div class="user-menu" id="ucMenu" hidden><div class="um-theme"><span>Тема</span><div class="seg theme-seg" data-theme-seg><button type="button" data-tp="light">Светлая</button><button type="button" data-tp="dark">Тёмная</button><button type="button" data-tp="system">Системная</button></div></div><button id="ucClock" hidden>Я пришёл</button><button id="ucPass">Сменить пароль</button><button id="ucPin">ПИН-код для входа</button><button id="ucSwitch">Сменить сотрудника</button><button id="ucServer" hidden>Сменить сервер</button><button id="ucOut">Выйти</button></div></div>
     </header>    <div class="banner" id="banner" hidden></div>
 
     <!-- ===================== SCHEDULE ===================== -->
@@ -158,7 +158,7 @@
     <section class="view" id="view-accounting" hidden>
       <header class="top">
         <div class="title-block"><h1>Бухгалтерия</h1><span class="muted">Поступления, расходы, зарплата сотрудников и прибыль</span></div>
-        <div class="seg" id="accTabs"><button data-k="summary" class="on">Сводка</button><button data-k="finmodel">Финмодель</button><button data-k="expenses">Расходы</button><button data-k="payroll">Зарплата</button><button data-k="insurance">ДМС</button></div>
+        <div class="seg" id="accTabs"><button data-k="summary" class="on">Сводка</button><button data-k="finmodel">Финмодель</button><button data-k="pnl" title="Отчёт о прибылях и убытках по месяцам">ОПиУ</button><button data-k="cashflow" title="Движение денег по дням и счетам">Деньги</button><button data-k="expenses">Расходы</button><button data-k="payroll">Зарплата</button><button data-k="motivation" title="Мотивация администраторов">Мотивация</button><button data-k="insurance">ДМС</button></div>
       </header>
       <div class="card-scroll" id="accBody"></div>
     </section>
@@ -175,7 +175,8 @@
     <!-- ===================== WORK SHIFTS ===================== -->
     <section class="view" id="view-shifts" hidden>
       <header class="top">
-        <div class="title-block"><h1>Графики работы</h1><span class="muted">Смены врачей и сотрудников по дням</span></div>
+        <div class="title-block"><h1>Графики работы</h1><span class="muted">Смены врачей и сотрудников по дням, приход и уход</span></div>
+        <div class="seg" id="shTabs"><button data-k="plan" class="on">График</button><button data-k="fact" title="Приход и уход против графика">Табель</button></div>
       </header>
       <div class="card-scroll" id="shBody"></div>
     </section>
@@ -415,45 +416,46 @@
   <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
   <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=3.3.0"></script>
-<script src="booking.js?v=3.3.0"></script>
-<script src="calendar-dnd.js?v=3.3.0"></script>
-<script src="waitlist.js?v=3.3.0"></script>
-<script src="steril.js?v=3.3.0"></script>
-<script src="files.js?v=3.3.0"></script>
-<script src="perio.js?v=3.3.0"></script>
-<script src="sign.js?v=3.3.0"></script>
-<script src="taxcert.js?v=3.3.0"></script>
-<script src="lab.js?v=3.3.0"></script>
-<script src="money.js?v=3.3.0"></script>
-<script src="finance.js?v=3.3.0"></script>
-<script src="record.js?v=3.3.0"></script>
-<script src="docs.js?v=3.3.0"></script>
-<script src="billing.js?v=3.3.0"></script>
-<script src="plans.js?v=3.3.0"></script>
-<script src="journal.js?v=3.3.0"></script>
-<script src="refs.js?v=3.3.0"></script>
-<script src="tpl-editor.js?v=3.3.0"></script>
-<script src="staff.js?v=3.3.0"></script>
-<script src="stock.js?v=3.3.0"></script>
-<script src="stock-lots.js?v=3.3.0"></script>
-<script src="fiscal.js?v=3.3.0"></script>
-<script src="backup.js?v=3.3.0"></script>
-<script src="reports.js?v=3.3.0"></script>
-<script src="director.js?v=3.3.0"></script>
-<script src="accounting.js?v=3.3.0"></script>
-<script src="finmodel.js?v=3.3.0"></script>
-<script src="marketing.js?v=3.3.0"></script>
-<script src="crm.js?v=3.3.0"></script>
-<script src="shifts.js?v=3.3.0"></script>
-<script src="dictate.js?v=3.3.0"></script>
-<script src="ai.js?v=3.3.0"></script>
-<script src="addon.js?v=3.3.0"></script>
-<script src="dp.js?v=3.3.0"></script>
-<script src="settings-nav.js?v=3.3.0"></script>
-<script src="daily.js?v=3.3.0"></script>
-<script src="platform.js?v=3.3.0"></script>
-<script src="motion.js?v=3.3.0"></script>
-<script src="responsive.js?v=3.3.0"></script>
+<script src="app.js?v=3.4.0"></script>
+<script src="booking.js?v=3.4.0"></script>
+<script src="calendar-dnd.js?v=3.4.0"></script>
+<script src="waitlist.js?v=3.4.0"></script>
+<script src="steril.js?v=3.4.0"></script>
+<script src="files.js?v=3.4.0"></script>
+<script src="perio.js?v=3.4.0"></script>
+<script src="sign.js?v=3.4.0"></script>
+<script src="taxcert.js?v=3.4.0"></script>
+<script src="lab.js?v=3.4.0"></script>
+<script src="money.js?v=3.4.0"></script>
+<script src="finance.js?v=3.4.0"></script>
+<script src="record.js?v=3.4.0"></script>
+<script src="docs.js?v=3.4.0"></script>
+<script src="billing.js?v=3.4.0"></script>
+<script src="plans.js?v=3.4.0"></script>
+<script src="journal.js?v=3.4.0"></script>
+<script src="refs.js?v=3.4.0"></script>
+<script src="tpl-editor.js?v=3.4.0"></script>
+<script src="staff.js?v=3.4.0"></script>
+<script src="stock.js?v=3.4.0"></script>
+<script src="stock-lots.js?v=3.4.0"></script>
+<script src="fiscal.js?v=3.4.0"></script>
+<script src="backup.js?v=3.4.0"></script>
+<script src="reports.js?v=3.4.0"></script>
+<script src="director.js?v=3.4.0"></script>
+<script src="accounting.js?v=3.4.0"></script>
+<script src="finmodel.js?v=3.4.0"></script>
+<script src="marketing.js?v=3.4.0"></script>
+<script src="crm.js?v=3.4.0"></script>
+<script src="shifts.js?v=3.4.0"></script>
+<script src="finstaff.js?v=3.4.0"></script>
+<script src="dictate.js?v=3.4.0"></script>
+<script src="ai.js?v=3.4.0"></script>
+<script src="addon.js?v=3.4.0"></script>
+<script src="dp.js?v=3.4.0"></script>
+<script src="settings-nav.js?v=3.4.0"></script>
+<script src="daily.js?v=3.4.0"></script>
+<script src="platform.js?v=3.4.0"></script>
+<script src="motion.js?v=3.4.0"></script>
+<script src="responsive.js?v=3.4.0"></script>
 </body>
 </html>

@@ -94,6 +94,12 @@ TABLES = [
     T("staff_roles", key=("key",), title="Должность"),
     T("day_reports", key=("day",), title="Отчёт за день"),
     T("dp_settings", key=("k",), title="Настройка переноса в Dentist Plus"),
+    # 3.4: the timesheet, the administrators' motivation and the week / month report already sent
+    T("time_marks", title="Отметка прихода и ухода"),
+    T("staff_settings", key=("k",), title="Настройка табеля"),
+    T("motivation_rules", key=("person",), title="Правило мотивации"),
+    T("staff_bookings", title="Запись, сделанная сотрудником"),
+    T("period_reports", key=("key",), title="Отчёт за неделю или месяц"),
     T("audit", intpk=True, refs={"user_id": "users"}, title="Журнал действий"),
 ]
 BY_NAME = {t.name: t for t in TABLES}

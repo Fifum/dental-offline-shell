@@ -5,6 +5,10 @@ const WD_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
 const hShort = t => t ? (t.endsWith(":00") ? String(+t.slice(0, 2)) : `${+t.slice(0, 2)}:${t.slice(3)}`) : "";
 
 async function loadShifts() {
+  if (typeof loadTimesheet === "function") {  // 3.4: «График» | «Табель»
+    bindShiftTabs();
+    if (S.shTab === "fact") return loadTimesheet();
+  }
   const r = await api.shifts_month(S.shMonth);
   S.shData = r;
   const edit = can("shifts_edit"), today = iso(new Date());

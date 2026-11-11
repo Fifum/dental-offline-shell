@@ -331,7 +331,7 @@ srv.stop()
 # ------------------------------------------------------------------ the UI
 html = (UI / "index.html").read_text(encoding="utf-8")
 js = (UI / "dp.js").read_text(encoding="utf-8")
-check("version 3.3.0", config.VERSION == "3.3.0", config.VERSION)
+check("version 3.3.0 or later", tuple(map(int, config.VERSION.split("."))) >= (3, 3, 0), config.VERSION)
 check("dp.js loaded with the cache tag", f'<script src="dp.js?v={config.VERSION}"></script>' in html)
 check("no old cache tags", "?v=3.2.0" not in html)
 check("tabs in «Перенос»", 'id="jTabs"' in html and 'data-jt="med"' in html and 'data-jt="check"' in html)

@@ -8,7 +8,9 @@ $$("#accTabs button").forEach(b => b.onclick = () => { S.accTab = b.dataset.k; $
 async function loadAccounting() {
   const body = $("#accBody");
   const fn = {summary: accSummary, expenses: accExpenses, payroll: accPayroll, insurance: typeof accInsurance === "function" ? accInsurance : accSummary,
-    finmodel: typeof accFinmodel === "function" ? accFinmodel : accSummary}[S.accTab] || accSummary;
+    finmodel: typeof accFinmodel === "function" ? accFinmodel : accSummary,
+    pnl: typeof accPnl === "function" ? accPnl : accSummary, cashflow: typeof accCashflow === "function" ? accCashflow : accSummary,
+    motivation: typeof accMotivation === "function" ? accMotivation : accSummary}[S.accTab] || accSummary;
   $$("#accTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === S.accTab));
   await fn(body);
   bindPeriod(body, loadAccounting);
@@ -93,14 +95,14 @@ async function accPayroll(body) {
   if (!ACC.methods.length) ACC = await api.acc_summary(S.period.from, S.period.to);
   const r = await api.payroll(S.accMonth);
   S.payRows = r.rows;
-  const scheme = p => [p.percent ? `${(+p.percent).toLocaleString("ru-RU")}% ${ACC.bases[p.base] || ""}${p.minus_materials ? " минус материалы" : ""}${p.minus_lab ? " минус лаборатория" : ""}` : "", p.fixed ? `оклад ${money(p.fixed)}` : ""].filter(Boolean).join(" + ") || "не задана";
+  const scheme = p => [p.percent ? `${(+p.percent).toLocaleString("ru-RU")}% ${ACC.bases[p.base] || ""}${p.minus_materials ? " минус материалы" : ""}${p.minus_lab ? " минус лаборатория" : ""}` : "", p.fixed ? `оклад ${money(p.fixed)}` : "", p.bonus ? "мотивация" : ""].filter(Boolean).join(" + ") || "не задана";
   body.innerHTML = accTools(`<div class="month-nav"><button class="icon-btn" id="pmPrev" title="Предыдущий месяц">‹</button><b>${monthName(r.month)}</b><button class="icon-btn" id="pmNext" title="Следующий месяц">›</button></div>`, false) +
     `<div class="stat-row"><div class="stat"><span>Начислено</span><b>${money(r.earned)}</b></div><div class="stat"><span>Выплачено</span><b>${money(r.paid_out)}</b></div>
       <div class="stat ${r.due > 0 ? "warn" : ""}"><span>К выплате</span><b>${money(r.due)}</b></div></div>
     <div class="pbody">${r.rows.length ? `<table class="tbl"><thead><tr><th>Сотрудник</th><th>Схема оплаты</th><th class="num">Оплачено пациентами</th><th class="num">Выставлено</th><th class="num">По проценту</th><th class="num">Начислено</th><th class="num">Выплачено</th><th class="num">К выплате</th><th></th></tr></thead><tbody>${
       r.rows.map(p => `<tr><td><b>${esc(p.name)}</b>${p.position ? `<br><small class="muted">${esc(p.position)}</small>` : ""}</td><td class="muted">${esc(scheme(p))}</td>
         <td class="num">${p.kind === "doctor" ? money(p.paid) : "—"}</td><td class="num">${p.kind === "doctor" ? money(p.billed) : "—"}</td><td class="num">${p.percent ? money(p.by_percent) : "—"}${p.lab ? `<br><small class="muted">лаборатория −${money(p.lab)}</small>` : ""}${p.materials ? `<br><small class="muted">материалы −${money(p.materials)}</small>` : ""}</td>
-        <td class="num"><b>${money(p.earned)}</b></td><td class="num">${money(p.paid_out)}</td><td class="num ${p.due > 0 ? "bad-t" : ""}"><b>${money(p.due)}</b></td>
+        <td class="num"><b>${money(p.earned)}</b>${p.bonus ? `<br><small class="muted">в т. ч. мотивация ${money(p.bonus)}</small>` : ""}</td><td class="num">${money(p.paid_out)}</td><td class="num ${p.due > 0 ? "bad-t" : ""}"><b>${money(p.due)}</b></td>
         <td class="row-acts"><button class="linkbtn" data-sch="${esc(p.key)}">схема</button>${p.due > 0 ? `<button class="btn small" data-pay="${esc(p.key)}">Выплатить</button>` : ""}</td></tr>`).join("")}</tbody>
       <tfoot><tr><td colspan="5">Итого</td><td class="num">${money(r.earned)}</td><td class="num">${money(r.paid_out)}</td><td class="num">${money(r.due)}</td><td></td></tr></tfoot></table>`
       : `<div class="empty"><b>Схемы оплаты ещё не заданы</b><span>Укажите процент от услуг и оклад для сотрудников ниже</span></div>`}</div>

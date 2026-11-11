@@ -73,6 +73,14 @@ class Api:
         self._consents = Consents(db)
         from daily import Daily
         self._daily = Daily(db, self._acc, self._fin)
+        # 3.4: time tracking, the administrators' motivation (it adds to the payroll), the week and month report
+        from timesheet import Timesheet
+        from motivation import Motivation
+        from finreport import PeriodReports
+        self._ts = Timesheet(db)
+        self._mot = Motivation(db, self._dir)
+        self._acc.bonus_fn = self._mot.bonuses
+        self._prep = PeriodReports(db, self)
         catalog.seed(db, demo=bool(config.load_settings().get("demo")))
         if config.load_settings().get("demo"):
             import demo
@@ -275,6 +283,34 @@ class Api:
     def finmodel_brief(self):
         return self._fm().brief()
 
+    # 3.4: profit and loss by months, the cash flow, the administrators' motivation, the week and month report
+    def fin_pnl(self, m_from=None, m_to=None):
+        import finreport
+        return finreport.pnl_months(self._fm(), m_from, m_to)
+
+    def fin_cashflow(self, date_from=None, date_to=None, group="day"):
+        import finreport
+        return finreport.cashflow(self._db, date_from, date_to, group, self._fin)
+
+    def motivation_rules(self):
+        return self._mot.rules()
+
+    def motivation_save(self, f):
+        return self._mot.save_rule(f if isinstance(f, dict) else {})
+
+    def motivation_month(self, month=None):
+        return self._mot.month(month)
+
+    def period_report(self, kind="week", start=None):
+        """The report for a week or a month as it goes by mail and Telegram."""
+        import daily
+        rep = self._prep.build(kind, start)
+        return {**rep, "text": self._prep.text(rep), "subject": self._prep.subject(rep), "state": self._prep.state(rep["key"]),
+                "channels": daily.channels()}
+
+    def period_report_send(self, kind="week", start=None, force=True):
+        return self._prep.send(kind, start, self._who(), force=bool(force))
+
     # ----------------------------------------------------------- marketing --
     def mk_summary(self):
         return {**self._mk.summary(), "sources": self._mk.sources()}
@@ -384,6 +420,32 @@ class Api:
     def shifts_month(self, month=None):
         return self._shifts.month(month)
 
+    # 3.4: the timesheet — actual arrival and leaving against the schedule
+    def _ts_all(self):
+        perms, u = self._my_perms()
+        return u is None or u.get("role") == "director" or bool(perms & {"shifts_edit", "staff", "reports", "accounting"})
+
+    def time_me(self):
+        return self._ts.me(self._me())
+
+    def time_clock(self, kind):
+        return self._ts.clock(self._me(), kind)
+
+    def timesheet(self, month=None):
+        """Everyone's timesheet for those who make schedules or see the reports; one's own for everyone else."""
+        if self._ts_all():
+            return {**self._ts.month(month), "all": True, "can_edit": bool(self._my_perms()[0] & {"shifts_edit", "staff"})}
+        me = self._ts.me(self._me())
+        only = {me["person"]} if me.get("person") else set()
+        return {**self._ts.month(month, only), "all": False, "can_edit": False, "linked": bool(only)}
+
+    def time_mark_save(self, f):
+        return self._ts.save(f if isinstance(f, dict) else {}, self._who())
+
+    def timesheet_settings_save(self, f):
+        import timesheet
+        return timesheet.save_settings(self._db, f if isinstance(f, dict) else {})
+
     def save_shift(self, f):
         return self._shifts.save(f, self._who())
 
@@ -406,7 +468,15 @@ class Api:
         return self._local.create_patient(f)
 
     def save_visit(self, f):
-        return self._local.save_visit(f)
+        vid = self._local.save_visit(f)
+        if isinstance(f, dict) and not f.get("id"):  # 3.4: a new booking counts for the administrator who made it
+            self._mot.log_booking(vid, f, self._me())
+        return vid
+
+    @staticmethod
+    def _me():
+        from auth import _current
+        return getattr(_current, "user", None)
 
     def set_visit_status(self, vid, status):
         return self._local.set_visit_status(vid, status)
@@ -626,6 +696,8 @@ class Api:
         clashes = []
         for vid in r["ids"]:
             v = self._db.visit(vid)
+            if v and isinstance(f, dict) and not f.get("id"):  # 3.4: each visit of a new series is a booking
+                self._mot.log_booking(vid, {**f, "start": v["start"]}, self._me())
             if v and conflicts.find(v, self._db.day(v["start"][:10]), ignore=(v["id"],)):
                 clashes.append(v["start"])
         return {**r, "clashes": clashes}
@@ -778,6 +850,7 @@ class Api:
             if inv.get("insurer_id"):
                 self._fin.check_payer(inv, self._inv_total(inv))
         iid = self._local.save_invoice(inv)
+        self._mot.stamp_invoice(iid, self._me())  # 3.4: own sales of an administrator (motivation)
         if is_inv:
             self._fin.write_uses(iid, inv.get("items"))
             if "insurer_id" in inv:
@@ -803,6 +876,7 @@ class Api:
 
     def plan_to_invoice(self, plan_id, item_indexes=None, visit_id=None):
         iid = self._local.plan_to_invoice(plan_id, item_indexes, visit_id)
+        self._mot.stamp_invoice(iid, self._me())
         self._stock.on_invoice(iid, self._who())
         return iid
 
@@ -951,6 +1025,7 @@ class Api:
 
     def membership_sell(self, f):
         r = self._fin.membership_sell(f, self._who())
+        self._mot.stamp_invoice(r["invoice_id"], self._me())
         self._stock.on_invoice(r["invoice_id"], self._who())
         return r
 
@@ -1452,6 +1527,7 @@ class Api:
             if u is not None:
                 st["me_perms"] = Auth.effective_perms(u)
             self._daily.tick(self._cash_for)  # the day report at the set time, at most every 5 minutes
+            self._prep.tick()  # 3.4: the week (Mondays) and month (the 1st) report, only when a channel is set up
         except Exception:  # noqa: BLE001
             log.exception("status 2.14")
         try:  # 3.3: records not transferred to Dentist Plus (the counter) and the reminder at the end of the day

@@ -40,7 +40,8 @@ METHODS = ["Наличные из кассы", "Карта клиники", "П�
 # what the front desk usually pays for during a day — first in the list
 DAY_CATEGORIES = ["Хозяйственные расходы", "Транспорт и доставка", "Материалы и закупки", "Ремонт и обслуживание", "Прочее"]
 DEFAULTS = {"enabled": False, "to": "", "host": "smtp.yandex.ru", "port": 465, "security": "ssl", "login": "", "pass_enc": "",
-            "time": "21:00", "on_close": True, "tg_on": False, "tg_token_enc": "", "tg_bot": "", "tg_chats": []}
+            "time": "21:00", "on_close": True, "tg_on": False, "tg_token_enc": "", "tg_bot": "", "tg_chats": [],
+            "week_on": True, "month_on": True}  # 3.4: the report for the last week (Mondays) and month (the 1st) by the same channels
 PROVIDERS = {"yandex": ("smtp.yandex.ru", 465, "ssl"), "mail": ("smtp.mail.ru", 465, "ssl"), "gmail": ("smtp.gmail.com", 465, "ssl")}
 
 
@@ -62,7 +63,8 @@ def settings() -> dict:
 
 def public_settings() -> dict:
     s = settings()
-    return {k: s[k] for k in ("enabled", "to", "host", "port", "security", "login", "time", "on_close", "tg_on", "tg_bot", "tg_chats")} | {
+    return {k: s[k] for k in ("enabled", "to", "host", "port", "security", "login", "time", "on_close", "tg_on", "tg_bot", "tg_chats",
+                              "week_on", "month_on")} | {
         "has_pass": bool(s["pass_enc"]), "has_tg_token": bool(s["tg_token_enc"]), "methods": METHODS}
 
 
@@ -83,7 +85,7 @@ def save_settings(f: dict) -> dict:
             new["port"] = int(f["port"])
         except (TypeError, ValueError):
             raise ValueError("Порт — число, обычно 465") from None
-    for k in ("enabled", "on_close", "tg_on"):
+    for k in ("enabled", "on_close", "tg_on", "week_on", "month_on"):
         if k in f:
             new[k] = bool(f[k])
     if f.get("password"):
