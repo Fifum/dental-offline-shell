@@ -266,8 +266,8 @@ check("a shift set here wins", sh.day(today)["7"] == {"start": "10:00", "end": "
 n_sched = len([x for x in LOG if x[1] == "schedule"])
 STATE["chairs"] = 4
 w._pull_schedule(c, T, T + timedelta(days=30))
-check("a capped /schedule answer is asked again in halves", d.one("SELECT COUNT(*) n FROM dp_schedule WHERE doctor_id='7' AND day >= ?",
-                                                                (today,))["n"] == 31 * 4)
+check("a capped /schedule answer is asked again in halves", d.one("SELECT COUNT(*) n FROM dp_schedule WHERE doctor_id='7' AND day >= ? AND day <= ?",
+                                                                (today, (T + timedelta(days=30)).isoformat()))["n"] == 31 * 4)
 STATE["chairs"] = 2
 w._pull_schedule(c, T - timedelta(days=7), T + timedelta(days=int(config.load_settings()["days_forward"])))
 LOG.clear(); w.sync_once()
@@ -408,6 +408,46 @@ d2.conn.execute("INSERT INTO dp_schedule VALUES('7','2026-11-12','','1','15:00',
 check("old dp_schedule migrated: key with time_from, rows kept", "time_from" in pk
       and d2.one("SELECT COUNT(*) n FROM dp_schedule")["n"] == 2, pk)
 d2.conn.close()
+
+# ---- 7. 3.7.3: visits a year ahead — the near weeks every sync, the far months twice an hour in 31-day chunks
+import time as _time  # noqa: E402
+config.save_settings({"days_forward": 30})            # settings of an older version
+check("days ahead raised to a year", config.load_settings()["days_forward"] == 365, config.load_settings()["days_forward"])
+far_day = (T + timedelta(days=300)).isoformat()
+near_day = (T + timedelta(days=40)).isoformat()
+PATIENTS[70] = {"id": 70, "fname": "Д", "lname": "Далёкий", "date_of_birth": "1985-05-05"}
+VISITS[700] = visit(700, f"{far_day} 10:00", patient={"id": 70, "fname": "Д", "lname": "Далёкий"})
+VISITS[701] = visit(701, f"{near_day} 11:00")
+d.meta_set("visits_far_at", str(int(_time.time())))   # the far months were asked a minute ago
+d.meta_set("visits_far_to", (T + timedelta(days=365)).isoformat())
+LOG.clear(); w.sync_once()
+vq = [x for x in LOG if x[1] == "visits"]
+near_border = (T + timedelta(days=syncmod.NEAR_DAYS)).isoformat()
+check("an ordinary sync asks only the near weeks", vq and all(x[2]["date_to"] <= near_border for x in vq), [x[2]["date_to"] for x in vq])
+check("a visit in 40 days is there", d.one("SELECT 1 AS x FROM visits WHERE id='701'") is not None)
+d.meta_set("visits_far_at", "0")                       # half an hour later
+LOG.clear(); w.sync_once()
+vq = [x for x in LOG if x[1] == "visits"]
+check("the far months up to a year are asked", max(x[2]["date_to"] for x in vq) == (T + timedelta(days=365)).isoformat(),
+      [x[2]["date_to"] for x in vq])
+far_q = [x for x in vq if x[2]["date_from"] > near_border]
+check("the far months in 31-day chunks", 0 < len(far_q) <= 10, len(far_q))
+check("a visit in 300 days is in the database", d.one("SELECT 1 AS x FROM visits WHERE id='700'") is not None)
+check("and in the calendar of that day", [v["id"] for v in d.day(far_day)] == ["700"], d.day(far_day))
+check("its patient card is loaded", d.one("SELECT detail FROM patients WHERE id='70'")["detail"] is not None)
+check("the far horizon remembered", d.meta_get("visits_far_to") == (T + timedelta(days=365)).isoformat())
+d.meta_set("visits_far_at", "0")
+LOG.clear(); w.sync_once()
+check("a loaded far card is not asked again", not [x for x in LOG if x[1] == "patients/70"], [x[1] for x in LOG if x[1].startswith("patients/")])
+VISITS[700] = visit(700, f"{far_day} 15:00", patient={"id": 70, "fname": "Д", "lname": "Далёкий"})
+d.meta_set("visits_far_at", "0")
+w.sync_once()
+check("a far visit moved in Dentist Plus is moved here", d.one("SELECT start FROM visits WHERE id='700'")["start"][11:16] == "15:00")
+d.meta_set("visits_far_to", "")                        # the update to 3.7.3: the horizon grew — asked at once
+d.meta_set("visits_far_at", str(int(_time.time())))
+LOG.clear(); w.sync_once()
+check("a grown horizon is filled at once", any(x[2]["date_from"] > near_border for x in LOG if x[1] == "visits"))
+del VISITS[700], VISITS[701]
 
 # ---- 6. 3.7.1: the developer's report shows what the sync stored, without personal data
 import devreport  # noqa: E402

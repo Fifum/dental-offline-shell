@@ -20,6 +20,13 @@ HOURLY = 60 * 60   # dictionaries (chairs, visit statuses) and the doctors' sche
 SCHEDULE_LIMIT = 100   # GET /schedule returns at most 100 rows: a fuller answer is asked again in halves
 CARD_PAUSE_S = 0.7     # pause between patient cards asked one by one after a 429 / 5xx
 RETRY_MAX = 2000       # cards remembered for the next sync
+# 3.7.3: visits a year ahead. The near weeks are asked at every sync (7-day chunks); the far months in 31-day chunks
+# once in FAR_EVERY, so the year adds about ten requests per half hour, not fifty per sync. Patient cards of the far
+# months are asked only when the card is not loaded yet (the visit itself carries the name and the phone).
+NEAR_DAYS = 62
+FAR_CHUNK_DAYS = 31
+FAR_EVERY = 30 * 60
+SCHEDULE_FAR_EVERY = 24 * 60 * 60   # the doctors' schedule beyond NEAR_DAYS: once a day
 
 
 def _card_reason(e) -> str:
@@ -32,6 +39,14 @@ def _card_reason(e) -> str:
     if isinstance(e, ApiError):
         return "ошибка API"
     return e.__class__.__name__
+
+
+def _chunks(a: date, b: date, step: int) -> list[tuple[date, date]]:
+    out = []
+    while a <= b:
+        out.append((a, min(b, a + timedelta(days=step - 1))))
+        a += timedelta(days=step)
+    return out
 
 
 def _num(v):
@@ -232,12 +247,13 @@ class SyncWorker(threading.Thread):
         today = date.today()
         start = today - timedelta(days=int(s["days_back"]))
         end = today + timedelta(days=int(s["days_forward"]))
-        step = max(1, int(s.get("chunk_days", 7)))
-        chunks = []
-        d = start
-        while d <= end:
-            chunks.append((d, min(end, d + timedelta(days=step - 1))))
-            d += timedelta(days=step)
+        near_end = min(end, today + timedelta(days=NEAR_DAYS))
+        far = near_end < end and self._far_due(end)
+        chunks = _chunks(start, near_end, max(1, int(s.get("chunk_days", 7))))
+        n_near = len(chunks)
+        if far:
+            chunks += _chunks(near_end + timedelta(days=1), end, FAR_CHUNK_DAYS)
+        far_patients: set[str] = set()
         patient_ids: set[str] = set()
         embedded_patients = []
         total_visits = 0
@@ -255,7 +271,7 @@ class SyncWorker(threading.Thread):
                     continue  # API ignored the date filter for this one
                 rows.append(f)
                 if f["patient_id"]:
-                    patient_ids.add(f["patient_id"])
+                    (patient_ids if i < n_near else far_patients).add(f["patient_id"])
                 if f["patient"]:
                     embedded_patients.append(f["patient"])
                 if f["doctor"] and f["doctor"].get("id") is not None:
@@ -263,8 +279,21 @@ class SyncWorker(threading.Thread):
             self.db.replace_visits(a.isoformat(), b.isoformat(), rows)
             total_visits += len(rows)
         counts["visits"] = total_visits
+        counts["visits_to"] = (end if far else near_end).isoformat()
+        if far:
+            self.db.meta_set("visits_far_at", str(int(time.time())))
+            self.db.meta_set("visits_far_to", end.isoformat())
         if embedded_patients:
             self.db.upsert_patients(embedded_patients)
+        far_patients -= patient_ids
+        if far_patients:  # far months: only the cards never loaded
+            have = set()
+            ids_far = sorted(far_patients)
+            for k in range(0, len(ids_far), 500):
+                part = ids_far[k:k + 500]
+                have |= {r["id"] for r in self.db.q(
+                    f"SELECT id FROM patients WHERE detail IS NOT NULL AND id IN ({','.join('?' * len(part))})", part)}
+            patient_ids |= far_patients - have
 
         if s.get("sync_all_patients"):
             self._set(phase="Список пациентов…", progress=62)
@@ -433,8 +462,12 @@ class SyncWorker(threading.Thread):
 
         if hourly or not self.db.one("SELECT 1 AS x FROM dp_schedule LIMIT 1"):
             self._set(phase="Расписание врачей…")
+            far = self._due("dp_schedule_far_at", SCHEDULE_FAR_EVERY)
+            s_end = end if far else min(end, today + timedelta(days=NEAR_DAYS))
             try:
-                n = self._pull_schedule(c, today - timedelta(days=7), end)
+                n = self._pull_schedule(c, today - timedelta(days=7), s_end)
+                if far:
+                    self.db.meta_set("dp_schedule_far_at", str(int(time.time())))
                 counts["dp_schedule"] = n["received"]
                 counts["dp_schedule_saved"] = n["saved"]
                 if n["skipped"]:
@@ -442,11 +475,17 @@ class SyncWorker(threading.Thread):
             except ApiError as e:
                 counts["schedule_error"] = str(e)
 
-    def _due(self, key):
+    def _due(self, key, every=HOURLY):
         try:
-            return time.time() - int(self.db.meta_get(key) or 0) >= HOURLY
+            return time.time() - int(self.db.meta_get(key) or 0) >= every
         except ValueError:
             return True
+
+    def _far_due(self, end: date) -> bool:
+        """The far months of visits: once in FAR_EVERY, and at once when the horizon grew (the update to 3.7.3)."""
+        if (self.db.meta_get("visits_far_to") or "") < (end - timedelta(days=7)).isoformat():
+            return True
+        return self._due("visits_far_at", FAR_EVERY)
 
     def _save_payments(self, a, b, pays):
         now = utcnow()

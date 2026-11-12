@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
-VERSION = "3.7.2"
+VERSION = "3.7.3"
 
 # Updates: latest.json signed with Ed25519 (tools/update_sign.py). The secret key stays with the developer outside
 # every repository; this public key only checks signatures. The address can also come from brand.json or settings
@@ -57,6 +57,9 @@ DB_PATH = data_dir() / "clinic.db"
 SETTINGS_PATH = data_dir() / "settings.json"
 LOG_PATH = data_dir() / "app.log"
 
+MIN_DAYS_FORWARD = 365   # 3.7.3: visits are booked months ahead — never fewer days ahead than a year
+MAX_DAYS_FORWARD = 730
+
 DEFAULT_SETTINGS = {
     "base_url": "https://api2.dentist-plus.com/partner",
     "login": "",
@@ -64,7 +67,7 @@ DEFAULT_SETTINGS = {
     "demo": True,                 # demo data until real credentials are entered
     "interval_min": 5,            # full sync interval while online
     "days_back": 30,              # keep visits this many days in the past
-    "days_forward": 30,           # and this many days ahead
+    "days_forward": 365,          # and this many days ahead (3.7.3: at least MIN_DAYS_FORWARD)
     "chunk_days": 7,              # request visits in windows of N days
     "per_page": 100,
     "visit_from_param": "date_from",
@@ -140,6 +143,10 @@ def load_settings() -> dict:
 def _migrate(s: dict) -> dict:
     """Settings saved by older versions: the «Диагнозы» extra asked the ICD-10 dictionary /diagnoses once per
     patient (it has no patient filter) — dropped."""
+    try:  # 3.7.3: older versions kept 30 days ahead — a visit booked in two months was not seen
+        s["days_forward"] = min(MAX_DAYS_FORWARD, max(MIN_DAYS_FORWARD, int(s.get("days_forward") or 0)))
+    except (TypeError, ValueError):
+        s["days_forward"] = MIN_DAYS_FORWARD
     ex = s.get("patient_extras")
     if isinstance(ex, list):
         s["patient_extras"] = [e for e in ex if not (isinstance(e, dict) and str(e.get("path", "")).strip("/") == "diagnoses")]
@@ -167,4 +174,4 @@ def save_settings(new: dict) -> dict:
         tmp = SETTINGS_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, SETTINGS_PATH)
-        return cur
+        return _migrate(cur)
