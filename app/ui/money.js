@@ -168,16 +168,19 @@ async function loadMoneySettings() {
       <label>Сертификат действует, месяцев<input class="input" id="lyM" type="number" min="1" max="60" value="${s.cert_months}"></label></div>
     <p class="hint">0 % — бонусы не начисляются. Бонусы начисляются с оплат наличными, картой, переводом и по СБП.</p>
     <h4 class="sub-h">Оплата по СБП</h4>
-    <div class="sbp-set">${q && q.qr ? `<img alt="QR-код СБП" src="${q.qr}">` : `<span class="muted">QR-код не загружен</span>`}
+    ${!q ? `<p class="msg bad">Не удалось загрузить настройки СБП — откройте раздел ещё раз. Сохранённый QR-код не изменится.</p>`
+    : `<div class="sbp-set">${q.qr ? `<img alt="QR-код СБП" src="${q.qr}">` : `<span class="muted">QR-код не загружен</span>`}
       <div><label class="btn ghost small">Загрузить QR-код (картинка из банка)<input type="file" id="sbpF" accept="image/png,image/jpeg" hidden></label>
-      <label class="fl">Подпись под QR-кодом<input class="input" id="sbpL" value="${esc(q ? q.label : "")}" placeholder="Например: получатель ООО «…», банк …"></label></div></div>
+      <label class="fl">Подпись под QR-кодом<input class="input" id="sbpL" value="${esc(q.label)}" placeholder="Например: получатель ООО «…», банк …"></label></div></div>`}
     <p class="hint">Возьмите в банке статический QR-код СБП клиники. Программа показывает его пациенту на экране или на планшете вместе с суммой; после поступления денег нажмите «Принять оплату» со способом «СБП».</p>
     <div class="row"><button class="btn" id="lySave">Сохранить</button><span class="msg" id="lyMsg"></span></div>`;
   let qr = q ? q.qr : "";
-  $("#sbpF", box).onchange = async e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2e6) return toast("Картинка больше 2 МБ", true); qr = await blobB64(f); $(".sbp-set", box).firstElementChild.outerHTML = `<img alt="QR-код СБП" src="${qr}">`; };
+  if (q) $("#sbpF", box).onchange = async e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2e6) return toast("Картинка больше 2 МБ", true); qr = await blobB64(f); $(".sbp-set", box).firstElementChild.outerHTML = `<img alt="QR-код СБП" src="${qr}">`; };
   $("#lySave", box).onclick = async () => {
     try { await api.loyalty_settings_save({bonus_percent: $("#lyP", box).value, bonus_max_share: $("#lyS", box).value, cert_months: $("#lyM", box).value});
-      await api.sbp_settings_save({qr, label: $("#sbpL", box).value}); toast("Сохранено"); }
+      if (q) await api.sbp_settings_save(  // 3.8.1: SBP block not loaded -> never save an empty QR over the stored one
+        {qr, label: $("#sbpL", box).value});
+      toast("Сохранено"); }
     catch (e) { const m = $("#lyMsg", box); m.textContent = errText(e); m.className = "msg bad"; }
   };
 }

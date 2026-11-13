@@ -2748,7 +2748,10 @@ class Setup:
 
     def join_clinic(self, clinic):
         import p2p
-        self._host.start_server()
+        try:
+            self._host.start_server()
+        except OSError as e:
+            return {"ok": False, "message": f"Не удалось открыть порт {self._host.port()}: {e}. Возможно, программа уже запущена."}
         targets = [{"ip": c["ip"], "port": c["port"]} for x in p2p.scan() if x["clinic"] == clinic for c in x["computers"]]
         if not targets:
             return {"ok": False, "message": "Компьютеры этой клиники больше не видны в сети. Нажмите «Искать снова»."}

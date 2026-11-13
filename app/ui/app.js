@@ -1216,10 +1216,15 @@ async function saveSettings() {
 $("#sTest").onclick = async () => {
   msgBox = "#sMsg";
   msg("Проверяем…", true);
-  const r = await api.test_connection($("#sLogin").value.trim(), $("#sPass").value, $("#sBase").value.trim());
-  msg(r.message, r.ok);
+  try {
+    const r = await api.test_connection($("#sLogin").value.trim(), $("#sPass").value, $("#sBase").value.trim());
+    msg(r.message, r.ok);
+  } catch (e) { msg("Не удалось проверить: " + errText(e), false); }
 };
-$("#sDiag").onclick = async () => { const o = $("#diagOut"); o.hidden = false; o.textContent = "Запрашиваем API…"; o.textContent = await api.diagnostics(); };
+$("#sDiag").onclick = async () => {
+  const o = $("#diagOut"); o.hidden = false; o.textContent = "Запрашиваем API…";
+  try { o.textContent = await api.diagnostics(); } catch (e) { o.textContent = "Не удалось получить диагностику: " + errText(e); }
+};
 $("#openDir").onclick = () => api.open_data_dir();
 let devRepText = "";
 $("#devRep").onclick = async () => {
@@ -1244,8 +1249,9 @@ $("#netFw").onclick = async () => {
   const pw = window.pywebview && window.pywebview.api;
   if (!pw || !pw.allow_firewall || !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return toast("Откройте настройки в программе на компьютере-сервере", true);
   $("#netMsg").textContent = "Windows попросит подтвердить…"; $("#netMsg").className = "msg ok";
-  const r = await pw.allow_firewall();
-  $("#netMsg").textContent = r.ok ? "Готово: другие компьютеры клиники могут подключаться" : "Не получилось — подтвердите запрос Windows";
+  let r;
+  try { r = await pw.allow_firewall(); } catch (e) { r = {ok: false, err: errText(e)}; }
+  $("#netMsg").textContent = r.ok ? "Готово: другие компьютеры клиники могут подключаться" : r.err ? "Не получилось: " + r.err : "Не получилось — подтвердите запрос Windows";
   $("#netMsg").className = "msg " + (r.ok ? "ok" : "bad");
 };
 

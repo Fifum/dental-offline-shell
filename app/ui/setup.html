@@ -54,7 +54,8 @@ const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const err = t => { $("#err").textContent = t || ""; };
 const view = v => { for (const id of ["scanBox", "found", "none", "wait"]) $("#" + id).hidden = id !== v; };
-let api, lastClinic = "", polling = null;
+let api, lastClinic = "", polling = null, joining = false;
+const errText = e => String((e && (e.message || e)) || "Ошибка").replace(/^Error:\s*/, "");
 async function scan() {
   err(""); view("scanBox"); $("#title").textContent = "Ищем компьютеры клиники…";
   let r = await api.p2p_scan();
@@ -71,8 +72,14 @@ async function scan() {
   view("found");
 }
 async function join(clinic) {
-  err(""); lastClinic = clinic;
-  const r = await api.join_clinic(clinic);
+  if (joining) return;  // a double click must not send two join requests
+  joining = true; err(""); lastClinic = clinic;
+  const btns = [...document.querySelectorAll("#found button[data-c], #again")];
+  btns.forEach(b => { b.disabled = true; });
+  let r;
+  try { r = await api.join_clinic(clinic); }
+  catch (e) { r = {ok: false, message: "Не удалось отправить запрос: " + errText(e)}; }
+  finally { joining = false; btns.forEach(b => { b.disabled = false; }); }
   if (!r.ok) return err(r.message);
   $("#title").textContent = "Подключение к клинике «" + (r.clinic_name || "") + "»";
   $("#code").textContent = String(r.code).replace(/(\d{3})(\d{3})/, "$1 $2");
@@ -104,7 +111,8 @@ async function init() {
   $("#again").onclick = () => join(lastClinic);
   $("#create").onclick = async () => {
     err(""); $("#create").disabled = true;
-    const r = await api.create_clinic();
+    let r;
+    try { r = await api.create_clinic(); } catch (e) { r = {ok: false, message: "Не удалось создать клинику: " + errText(e)}; }
     if (!r.ok) { err(r.message); $("#create").disabled = false; }
   };
   err(i.error);

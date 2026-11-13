@@ -74,6 +74,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const pad = n => String(n).padStart(2, "0");
 const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseDay = s => { const [y, m, d] = s.slice(0, 10).split("-").map(Number); return new Date(y, m - 1, d); };  // local, not UTC
 const MONTHS = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
 const WD = ["воскресенье","понедельник","вторник","среда","четверг","пятница","суббота"];
 const fmtDate = s => { if (!s) return ""; const [y, m, d] = s.slice(0, 10).split("-").map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
@@ -81,7 +82,7 @@ const fmtDT = s => s ? `${s.slice(8, 10)}.${s.slice(5, 7)}.${s.slice(0, 4)} ${s.
 const hm = s => s ? s.slice(11, 16) : "";
 let api, SNAP = null, S = {tab: "day", day: iso(new Date()), doc: "", q: ""};
 
-function age(b) { if (!b || !/^\d{4}-\d{2}-\d{2}/.test(b)) return ""; const d = new Date(b.slice(0, 10)), n = new Date(); let a = n.getFullYear() - d.getFullYear();
+function age(b) { if (!b || !/^\d{4}-\d{2}-\d{2}/.test(b)) return ""; const d = parseDay(b), n = new Date(); let a = n.getFullYear() - d.getFullYear();
   if (n < new Date(n.getFullYear(), d.getMonth(), d.getDate())) a--; return a; }
 function alertsOf(p) {
   const out = [];
@@ -152,7 +153,7 @@ function renderDay() {
   const visits = SNAP.visits.filter(v => v.start.slice(0, 10) === S.day && (!S.doc || v.doctor_id === S.doc));
   const byDoc = {};
   visits.forEach(v => (byDoc[v.doctor_name || "Без врача"] ||= []).push(v));
-  const d = new Date(S.day);
+  const d = parseDay(S.day);
   body.innerHTML = `<div class="off-tools">
       <button class="pill-btn" id="dPrev">‹</button><input type="date" class="input" id="dDay" value="${S.day}" min="${SNAP.from}" max="${SNAP.to}"><button class="pill-btn" id="dNext">›</button>
       <h2 style="margin:0 8px;font-family:var(--font-d);font-variant:small-caps;font-weight:500">${WD[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}</h2>
@@ -165,7 +166,7 @@ function renderDay() {
         <span>${esc(v.patient_phone || "")}</span><span class="muted">${esc(v.title || "")}${v.chair ? " · " + esc(v.chair) : ""}</span><span class="pill">${esc(v.status || "—")}</span></div>`; }).join("")}</div>`).join("")
       || `<div class="empty-s">На этот день записей нет</div>`}
     <p class="muted" style="font-size:12px">В копии: ${fmtDate(SNAP.from)} — ${fmtDate(SNAP.to)}. Записывать, переносить и отменять можно только на сервере.</p>`;
-  const go = n => { const x = new Date(S.day); x.setDate(x.getDate() + n); const s = iso(x); if (s >= SNAP.from && s <= SNAP.to) { S.day = s; renderDay(); } };
+  const go = n => { const x = parseDay(S.day); x.setDate(x.getDate() + n); const s = iso(x); if (s >= SNAP.from && s <= SNAP.to) { S.day = s; renderDay(); } };
   $("#dPrev").onclick = () => go(-1); $("#dNext").onclick = () => go(1);
   $("#dDay").onchange = e => { if (e.target.value) { S.day = e.target.value; renderDay(); } };
   $("#dDoc").onchange = e => { S.doc = e.target.value; renderDay(); };

@@ -76,13 +76,16 @@ function renderDoc(body, ctx, inputs) {
       ctx.records_full.slice().reverse().map(r => { const d = r.data || {}; const dg = (d.diagnoses || []).map(x => `${x.tooth ? "зуб " + x.tooth + " — " : ""}${x.code} ${x.title}`).join("; ");
         return `<tr><td>${esc(fmtDate(r.date))}</td><td>${[["Жалобы", d.complaints], ["Анамнез", d.anamnesis], ["Объективно", d.objective], ["Диагноз", dg], ["Лечение", d.treatment], ["Рекомендации", d.recommendations]]
           .filter(x => x[1]).map(([k, v]) => `<b>${k}:</b> ${esc(v)}`).join("<br>")}</td><td>${esc(r.doctor_name || "")}</td></tr>`; }).join("")}</table>`;
-  return body
-    .replace(/\{\{table:records\}\}/g, recTable)
-    .replace(/\{\{table:services\}\}/g, () => servicesTable(ctx.invoice))
-    .replace(/\{\{table:rx\}\}/g, () => rxTable(rec.rx))
-    .replace(/\{\{rp:rx\}\}/g, () => rxRecipe(rec.rx))
-    .replace(/\{\{input:([^|}]+)\|?([^}]*)\}\}/g, (_, label) => { const v = inputs[i++]; return v ? esc(v) : `<span class="blank">${"&nbsp;".repeat(18)}</span>`; })
-    .replace(/\{\{([\w.]+)\}\}/g, (_, k) => { const v = vals[k]; return v ? esc(v) : `<span class="blank">${"&nbsp;".repeat(18)}</span>`; });
+  const blank = `<span class="blank">${"&nbsp;".repeat(18)}</span>`;
+  // one pass over the template: text put in by a placeholder (a record, a service, a drug) is never scanned again
+  return body.replace(/\{\{(?:table:(records|services|rx)|(rp:rx)|input:([^|}]+)\|?([^}]*)|([\w.]+))\}\}/g, (_, table, rp, label, hint, k) => {
+    if (table === "records") return recTable();
+    if (table === "services") return servicesTable(ctx.invoice);
+    if (table === "rx") return rxTable(rec.rx);
+    if (rp) return rxRecipe(rec.rx);
+    if (label !== undefined) { const v = inputs[i++]; return v ? esc(v) : blank; }
+    const v = vals[k]; return v ? esc(v) : blank;
+  });
 }
 
 /* 3.2: in the add-on mode official templates are «из DP» (печатайте из Dentist Plus), prescriptions and referrals are drafts */
