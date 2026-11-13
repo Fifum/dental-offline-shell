@@ -1812,7 +1812,8 @@ class Api:
         self._director("Выбирать компьютер для обмена с Dentist Plus")
         import dp_main
         if not dp_main._in_network():
-            raise ValueError("Компьютер не в сети клиники: он и так обменивается с Dentist Plus сам")
+            raise ValueError("Обмен с Dentist Plus можно передать только компьютеру, подключённому к сети клиники. "
+                             "Подключите его к сети клиники (Настройки → Сеть клиники) и повторите")
         s = config.load_settings()
         if not (s.get("login") and s.get("pass_enc")):
             raise ValueError("Сначала укажите на этом компьютере логин и пароль API Dentist Plus")
