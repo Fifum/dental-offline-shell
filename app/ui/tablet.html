@@ -85,6 +85,7 @@ fetch("/ping").then(r => r.json()).then(j => { $("#brand").textContent = j.name 
 
 function pairScreen(msg = "") {
   $("#app").innerHTML = `<h1>Подключение планшета</h1><p class="muted">Попросите администратора открыть в программе<br>Настройки → «Планшет для пациентов» → «Подключить планшет» и введите код.</p>
+    <p class="muted" style="font-size:14px">Планшет должен быть подключён к рабочему Wi-Fi клиники, а не к гостевой сети для пациентов: анкеты передаются по сети клиники без шифрования.</p>
     <input class="code" id="code" inputmode="numeric" maxlength="6" autocomplete="off"><div class="err" id="err">${esc(msg)}</div><button class="big" id="go">Подключить</button>`;
   $("#code").focus();
   $("#go").onclick = async () => {

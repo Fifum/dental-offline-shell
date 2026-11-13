@@ -129,8 +129,27 @@ class TaxCerts:
             raise ValueError("Справка не найдена")
         return r
 
+    def _label_dups(self, year, rows):
+        """М1: the number is MAX+1 for the year on the computer that issues it (the tax form wants a plain number per
+        year, so no computer prefix). Two computers without a connection can give the same number: the certificate
+        issued first keeps it, the later ones show «15-2» in the register — the director sees it and re-issues them."""
+        dups = {r["number"] for r in self.db.q("SELECT number FROM tax_certs WHERE year=? AND number IS NOT NULL "
+                                                "GROUP BY number HAVING COUNT(*)>1", (int(year),))}
+        if not dups:
+            return rows
+        rank = {}
+        for n in dups:
+            for i, x in enumerate(self.db.q("SELECT id FROM tax_certs WHERE year=? AND number=? ORDER BY issued_at, id", (int(year), n))):
+                rank[x["id"]] = i + 1
+        for r in rows:
+            k = rank.get(r.get("id"), 1) if r.get("number") in dups else 1
+            r["dup"] = k > 1
+            if k > 1:
+                r["number"] = f"{r['number']}-{k}"
+        return rows
+
     def list(self, year) -> dict:
-        rows = self.db.q("SELECT * FROM tax_certs WHERE year=? ORDER BY number", (int(year),))
+        rows = self._label_dups(year, self.db.q("SELECT * FROM tax_certs WHERE year=? ORDER BY number, issued_at, id", (int(year),)))
         return {"year": int(year), "rows": rows, "total1": round(sum(r["sum1"] or 0 for r in rows), 2),
                 "total2": round(sum(r["sum2"] or 0 for r in rows), 2)}
 

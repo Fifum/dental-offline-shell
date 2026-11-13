@@ -18,7 +18,7 @@ import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import config
-from auth import AUDITED, Auth, AuthError, set_current_user
+from auth import AUDITED, Auth, AuthError, request_scope, set_current_user
 
 log = logging.getLogger("server")
 
@@ -53,6 +53,27 @@ def discovery_ports(port) -> list:
 
 
 SECRET_ARGS = {"test_connection"}
+FIRST_ARG_ONLY = {"voice_enroll", "patient", "file_get"}  # М19: an id, never a recording or a whole record
+VIEWS = {"patient", "file_get"}  # М19: opening a card or a file — once per employee and id in VIEW_EVERY seconds
+VIEW_EVERY = 600
+_VIEWED: dict = {}
+_VLOCK = threading.Lock()
+
+
+def _worth_logging(user, name, args) -> bool:
+    if name not in VIEWS:
+        return True
+    if name == "file_get" and len(args) > 1 and args[1] == "thumb":
+        return False
+    import time
+    key, now = (user.get("id"), name, str(args[0] if args else "")[:40]), time.time()
+    with _VLOCK:
+        if now - _VIEWED.get(key, 0) < VIEW_EVERY:
+            return False
+        if len(_VIEWED) > 5000:
+            _VIEWED.clear()
+        _VIEWED[key] = now
+    return True
 
 
 def _brief(args) -> str:
@@ -158,7 +179,8 @@ class ClinicServer:
         user = self.auth.require(token, name)
         set_current_user(user)
         try:
-            result = getattr(self.api, name)(*args)
+            with request_scope(ip):
+                result = getattr(self.api, name)(*args)
         finally:
             set_current_user(None)
         if name == "patient":
@@ -169,8 +191,10 @@ class ClinicServer:
                 result["records"] = []
             if not perms.intersection({"billing", "payments"}):
                 result["invoices"] = []
-        if name in AUDITED:  # 3.7.2: the arguments of a connection check are a login and a password — never written
-            self.auth.log(user, AUDITED[name], "" if name in SECRET_ARGS else _brief(args), ip)
+        if name in AUDITED and _worth_logging(user, name, args):
+            # 3.7.2: the arguments of a connection check are a login and a password — never written
+            brief = "" if name in SECRET_ARGS else _brief(args[:1] if name in FIRST_ARG_ONLY else args)
+            self.auth.log(user, AUDITED[name], brief, ip)
         return result
 
     # --------------------------------------------------------------- start --
@@ -235,13 +259,15 @@ class ClinicServer:
                     elif kind == "p2p":
                         import p2p
                         try:
-                            result = p2p.handle(name, args[0] if args and isinstance(args[0], dict) else {}, ip)
+                            with request_scope(ip):
+                                result = p2p.handle(name, args[0] if args and isinstance(args[0], dict) else {}, ip)
                         except p2p.P2PError as e:
                             return self._json(e.code if e.code >= 400 else 400, {"error": str(e)})
                     elif kind == "tablet":
                         from tablet import TabletError
                         try:
-                            result = srv.api._tablet_public(name, args, self.headers.get("X-Tablet-Key", ""), ip)
+                            with request_scope(ip):  # М18: no employee here — every permission check refuses
+                                result = srv.api._tablet_public(name, args, self.headers.get("X-Tablet-Key", ""), ip)
                         except TabletError as e:
                             return self._json(403, {"error": str(e), "tablet": True})
                     else:

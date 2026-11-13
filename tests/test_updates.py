@@ -280,9 +280,10 @@ check("no checks while downloading", not calls, len(calls))
 updates.UPDATER.state["downloading"] = False
 updates.UPDATER.check = real_check
 
-# ======================================================================= any employee may update
-for m in ("update_status", "update_check", "update_download", "update_install"):
+# ======================================================================= any employee sees and downloads updates
+for m in ("update_status", "update_check", "update_download"):
     check(f"{m} for any employee", authm.METHOD_PERMS.get(m) == authm.ANY_USER, authm.METHOD_PERMS.get(m))
+check("3.8.1 (М20): installing needs «Настройки»", authm.METHOD_PERMS.get("update_install") == "settings")
 check("installing stays in the journal", "update_install" in authm.AUDITED)
 import main  # noqa: E402
 
