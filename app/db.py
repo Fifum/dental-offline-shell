@@ -131,6 +131,9 @@ def repoint(conn, col, old, new, skip=()) -> int:
 
 # tables whose visit_id is not ours to move: the Dentist Plus mirror, and the stock write-off keyed by the visit id itself
 VISIT_REF_SKIP = ("visits", "visits_archive", "local_visits", "dp_payments", "stock_visit_use")
+# tables whose patient_id does not keep a card in purge(): the cached card details themselves, and the Dentist Plus
+# history that is never purged (it would keep every card for ever)
+PATIENT_REF_SKIP = ("patient_extras", "visits_archive", "dp_payments")
 
 
 class DB:
@@ -172,6 +175,12 @@ class DB:
                     "push_status TEXT", "push_error TEXT", "push_at TEXT", "remote_id TEXT"):
             if col.split()[0] not in rcols:
                 self.conn.execute(f"ALTER TABLE records ADD COLUMN {col}")
+        if "dp_sent" not in rcols:
+            # review minor 11: what a record put into its Dentist Plus visit (JSON of fields) travels with the row, so a
+            # computer that becomes the main one does not append the same text again; the old local marks move over
+            self.conn.execute("ALTER TABLE records ADD COLUMN dp_sent TEXT")
+            self.conn.execute("""UPDATE records SET dp_sent=(SELECT value FROM meta WHERE key='dp_record_sent:' || records.id)
+                                 WHERE EXISTS(SELECT 1 FROM meta WHERE key='dp_record_sent:' || records.id)""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS ix_records_date ON records(date)")
         # 3.3: the clinic's settings of the transfer to Dentist Plus (sections, reminder) — the same on every computer
         self.conn.execute("CREATE TABLE IF NOT EXISTS dp_settings(k TEXT PRIMARY KEY, v TEXT, updated_at TEXT)")
@@ -359,14 +368,12 @@ class DB:
             # keep patients that still have visits or local notes
             c.execute("""DELETE FROM patient_extras WHERE patient_id NOT IN (SELECT patient_id FROM visits WHERE patient_id IS NOT NULL)
                          AND patient_id NOT IN (SELECT patient_id FROM notes)""")
-            c.execute("""DELETE FROM patients WHERE COALESCE(local,0)=0
-                         AND id NOT IN (SELECT patient_id FROM visits WHERE patient_id IS NOT NULL)
-                         AND id NOT IN (SELECT patient_id FROM notes WHERE patient_id IS NOT NULL)
-                         AND id NOT IN (SELECT patient_id FROM local_visits WHERE patient_id IS NOT NULL)
-                         AND id NOT IN (SELECT patient_id FROM records WHERE patient_id IS NOT NULL)
-                         AND id NOT IN (SELECT patient_id FROM documents WHERE patient_id IS NOT NULL)
-                         AND id NOT IN (SELECT patient_id FROM invoices WHERE patient_id IS NOT NULL)
-                         AND (detail_synced_at IS NULL OR detail_synced_at < ?)""", (border,))
+            # review minor 10: a card stays while any table of ours names it (payments, edits, memberships, consents,
+            # CRM…), found by the column like db.repoint; the Dentist Plus mirrors that are never purged do not count
+            refs = tables_with(c, "patient_id", skip=PATIENT_REF_SKIP)
+            used = "".join(f'\n AND id NOT IN (SELECT patient_id FROM "{t}" WHERE patient_id IS NOT NULL)' for t in refs)
+            c.execute(f"""DELETE FROM patients WHERE COALESCE(local,0)=0{used}
+                          AND (detail_synced_at IS NULL OR detail_synced_at < ?)""", (border,))
 
     def log_sync(self, started, ok, message, counts):
         with self.tx() as c:

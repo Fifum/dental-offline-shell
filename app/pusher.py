@@ -28,7 +28,7 @@ import re
 from datetime import datetime
 
 import conflicts
-from api_client import ApiError, OfflineError
+from api_client import ApiError, AuthError, OfflineError
 from normalize import as_id, get, visit_fields
 
 log = logging.getLogger("push")
@@ -233,10 +233,13 @@ class Pusher:
         return body
 
     def _mark(self, table, rid, status, error="", remote_id=None, done=False, sig=None):
-        """`sig` — for a visit sent: db.visit_sig of the row as it was sent (the row may have changed meanwhile)."""
+        """`sig` — for a visit sent: db.visit_sig of the row as it was sent (the row may have changed meanwhile);
+        for a record sent: the JSON of the fields it put into the Dentist Plus visit (records.dp_sent)."""
         extra = ", transferred_by=COALESCE(transferred_by, ?)" if done and table == "records" else ""
         if done and table == "local_visits" and sig is not None:
             extra, extra_args = ", pushed_sig=?", (sig,)
+        elif extra and sig is not None:  # review minor 11: travels with the row, so a new main computer knows it
+            extra, extra_args = extra + ", dp_sent=?", (AUTO_WHO, sig)
         else:
             extra_args = (AUTO_WHO,) if extra else ()
         with self.db.tx() as cx:
@@ -375,6 +378,9 @@ class Pusher:
                     cx.execute("UPDATE patients SET push_status=?, push_error=? WHERE id=? AND push_status='sending'",
                                (p["push_status"], p["push_error"], p["id"]))
                 raise
+            except AuthError as e:  # review minor 9: the login failed, the POST was never sent — a plain retryable error
+                self._mark("patients", p["id"], "error", str(e))
+                raise
             except ApiError as e:
                 self._mark("patients", p["id"], "unknown", str(e))
                 continue
@@ -429,6 +435,9 @@ class Pusher:
             try:
                 code, data = self.c.write(spec["method"], spec["path"].replace("{id}", str(target)), body)
             except OfflineError:
+                raise
+            except AuthError as ex:  # review minor 9: not sent
+                self._mark("patient_edits", e["id"], "error", str(ex))
                 raise
             except ApiError as ex:
                 self._mark("patient_edits", e["id"], "unknown", str(ex))
@@ -532,6 +541,9 @@ class Pusher:
                     self._mark("local_visits", v["id"], "unknown", "Сервер ответил успехом, но запись не найдена — проверьте в Dentist Plus")
             except OfflineError:
                 raise
+            except AuthError as e:  # review minor 9: not sent
+                self._mark("local_visits", v["id"], "error", str(e))
+                raise
             except ApiError as e:
                 self._mark("local_visits", v["id"], "unknown" if e.status is None else "error", str(e))
         return True
@@ -590,14 +602,12 @@ class Pusher:
                 if e.status == 404:
                     self._mark("records", r["id"], "error", "Визит не найден в Dentist Plus — возможно, его удалили")
                     continue
-                if e.status is None:
+                if e.status is None or isinstance(e, AuthError):
                     raise
                 self._mark("records", r["id"], "error", str(e))
                 continue
-            try:
-                sent_before = json.loads(self.db.meta_get(f"dp_record_sent:{r['id']}") or "{}")
-            except ValueError:
-                sent_before = {}
+            sent_before = record_sent(self.db, r)
+            sent_now = json.dumps(ours, ensure_ascii=False)
             changes = {}
             for field, text in ours.items():
                 was = str((cur or {}).get(field) or "").strip()
@@ -612,17 +622,18 @@ class Pusher:
                 elif text not in was:  # the doctor already wrote something there: ours goes after it
                     changes[field] = was + "\n\n" + text
             if not changes:
-                self._mark("records", r["id"], "sent", "Уже было в визите Dentist Plus", target, done=True)
+                self._mark("records", r["id"], "sent", "Уже было в визите Dentist Plus", target, done=True, sig=sent_now)
                 continue
             try:
-                code = self._put_visit(target, changes, "records", r["id"])
+                code = self._put_visit(target, changes, "records", r["id"], sig=sent_now)
             except OfflineError:
+                raise
+            except AuthError as e:  # review minor 9: not sent
+                self._mark("records", r["id"], "error", str(e))
                 raise
             except ApiError as e:
                 self._mark("records", r["id"], "unknown" if e.status is None else "error", str(e))
                 continue
-            if code is not None and 200 <= code < 300:
-                self.db.meta_set(f"dp_record_sent:{r['id']}", json.dumps(ours, ensure_ascii=False))
             if code in (401, 403):
                 return False
         return True
@@ -632,6 +643,20 @@ class Pusher:
             if self.push_visits():
                 self.push_records()
         return self.counts
+
+
+def record_sent(db, r) -> dict:
+    """What a record already put into its Dentist Plus visit: records.dp_sent (replicated, review minor 11), else the
+    local meta mark of 3.7–3.8.0 (a main computer still on 3.8.0 writes only that)."""
+    for raw in (r.get("dp_sent"), db.meta_get(f"dp_record_sent:{r['id']}")):
+        if raw:
+            try:
+                v = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(v, dict):
+                return v
+    return {}
 
 
 def merge_pushed_patients(db):

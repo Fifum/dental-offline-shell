@@ -16,6 +16,8 @@ from __future__ import annotations
 import base64
 import json
 import socket
+import sqlite3
+import threading
 import time
 import zlib
 from datetime import date, timedelta
@@ -151,10 +153,42 @@ def unavailable_text(name: str) -> str:
 
 
 # ------------------------------------------------------------------ main side --
-def _rows(db, sql, args=()):
-    with db._lock:
-        cur = db.conn.execute(sql, args)
-        return {"cols": [d[0] for d in cur.description], "rows": [list(r) for r in cur.fetchall()]}
+def _rows(cx, sql, args=()):
+    cur = cx.execute(sql, args)
+    return {"cols": [d[0] for d in cur.description], "rows": [list(r) for r in cur.fetchall()]}
+
+
+# review minor 13: the built copy, kept per stamp (followers ask every minute, the copy changes every 5 minutes),
+# built by one thread at a time
+_CACHE: dict = {}
+_BUILD = threading.Lock()
+
+
+def _read(db, full, border) -> dict:
+    """Every table of the copy in one read transaction on a connection of its own (WAL: the app's writes go on);
+    the shared connection under db._lock only when a second one cannot be opened."""
+    def read(cx):
+        tables = {t: _rows(cx, f"SELECT * FROM {t}") for t in TABLES}
+        tables["patients"] = _rows(cx, "SELECT * FROM patients WHERE COALESCE(local,0)=0")
+        tables["visits_archive"] = (_rows(cx, "SELECT * FROM visits_archive") if full
+                                    else _rows(cx, "SELECT * FROM visits_archive WHERE start >= ?", (border,)))
+        meta = dict.fromkeys(META)
+        meta.update(cx.execute(f"SELECT key, value FROM meta WHERE key IN ({','.join('?' * len(META))})", META).fetchall())
+        return {"tables": tables, "meta": meta}
+    cx = None
+    if db.path not in ("", ":memory:"):
+        try:
+            cx = sqlite3.connect(db.path, timeout=30)
+        except sqlite3.Error:
+            pass
+    if cx is None:
+        with db._lock:
+            return read(db.conn)
+    try:
+        cx.execute("BEGIN")
+        return read(cx)
+    finally:
+        cx.close()
 
 
 def snapshot(db, since="", full=False) -> dict:
@@ -167,14 +201,17 @@ def snapshot(db, since="", full=False) -> dict:
         return {"stamp": "", "error": error, "same": True}
     if since == stamp and not full:
         return {"stamp": stamp, "error": error, "same": True}
-    tables = {t: _rows(db, f"SELECT * FROM {t}") for t in TABLES}
-    tables["patients"] = _rows(db, "SELECT * FROM patients WHERE COALESCE(local,0)=0")
     border = (date.today() - timedelta(days=int(config.load_settings().get("days_back") or 30))).isoformat()
-    tables["visits_archive"] = (_rows(db, "SELECT * FROM visits_archive") if full
-                                else _rows(db, "SELECT * FROM visits_archive WHERE start >= ?", (border,)))
-    meta = {k: db.meta_get(k) for k in META}
-    body = {"tables": tables, "meta": meta, "archive_from": "" if full else border}
-    z = base64.b64encode(zlib.compress(json.dumps(body, ensure_ascii=False).encode("utf-8"), 6)).decode()
+    key = (db.path, stamp, bool(full), "" if full else border)
+    with _BUILD:
+        z = _CACHE.get(key)
+        if z is None:
+            body = _read(db, full, border)
+            body["archive_from"] = "" if full else border
+            z = base64.b64encode(zlib.compress(json.dumps(body, ensure_ascii=False).encode("utf-8"), 6)).decode()
+            for k in [k for k in _CACHE if k[0] == db.path and k[1] != stamp]:
+                del _CACHE[k]  # an older copy is never asked again
+            _CACHE[key] = z
     return {"stamp": stamp, "error": error, "same": False, "z": z, "host": socket.gethostname()}
 
 
