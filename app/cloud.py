@@ -156,8 +156,10 @@ def file_whole(p, row) -> bool:
         return False
     if not row.get("sha256"):
         return True
-    sig = (st.st_size, st.st_mtime_ns)
-    if _whole.get(str(p)) == sig:
+    sig = (st.st_size, st.st_mtime_ns, row["sha256"])
+    # a file written in the last seconds may have been rewritten within the same mtime tick: hash it again
+    fresh = time.time_ns() - st.st_mtime_ns < 3_000_000_000
+    if not fresh and _whole.get(str(p)) == sig:
         return True
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -166,7 +168,8 @@ def file_whole(p, row) -> bool:
     if h.hexdigest() != row["sha256"]:
         log.warning("file %s: damaged (checksum mismatch)", p.name)
         return False
-    _whole[str(p)] = sig
+    if not fresh:
+        _whole[str(p)] = sig
     return True
 
 
