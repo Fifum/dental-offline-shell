@@ -11,6 +11,7 @@ from datetime import date, timedelta
 import json
 
 import config
+import dp_main  # noqa: F401 — imported at start: dp_main._STARTED is the start of the program (push_wait)
 from api_client import ApiError, DentistPlusClient, OfflineError
 from normalize import as_id, get, utcnow, visit_fields
 
@@ -134,7 +135,12 @@ class SyncWorker(threading.Thread):
                 raise OfflineError("Нет интернета")
             self._set(online=True, phase="Авторизация…")
             client.auth()
-            if s.get("transfer_mode") == "auto" and self.db.pending_count():
+            if s.get("transfer_mode") == "auto":
+                self.db.reopen_changed_visits()  # review 2026-11 (К3): sent visits changed since go again
+            wait = dp_main.push_wait(self.db) if s.get("transfer_mode") == "auto" else ""
+            if wait and self.db.pending_count():
+                counts["push_waiting"] = wait  # review 2026-11 (В17): not before the clinic network brought the latest rows
+            elif s.get("transfer_mode") == "auto" and self.db.pending_count():
                 from pusher import Pusher
                 self._set(phase="Отправка изменений в Dentist Plus…", progress=2)
                 pushed = Pusher(self.db, client, s).run()
@@ -144,7 +150,7 @@ class SyncWorker(threading.Thread):
             from pusher import apply_patient_edits
             apply_patient_edits(self.db)
             self.db.purge(int(s["days_back"]))
-            self.db.cleanup_transferred(started)
+            self.db.cleanup_transferred(started, int(s["days_back"]))
             from pusher import merge_pushed_patients
             merge_pushed_patients(self.db)
             self.db.meta_set("last_ok", utcnow())
@@ -154,6 +160,8 @@ class SyncWorker(threading.Thread):
             if p:
                 note = f" · отправлено в DP: {p['sent']}" + (f", ошибок: {p['errors']}" if p["errors"] else "") + \
                        (f", проверить вручную: {p['unknown'] + p['warnings']}" if p["unknown"] or p["warnings"] else "")
+            if counts.get("push_waiting"):
+                note += " · отправка в DP ждёт обмена с компьютерами клиники"
             self.db.log_sync(started, True, "Успешно" + note, counts)
             self._set(running=False, phase="Готово", progress=100, last_ok=utcnow(), last_error="")
             return True
@@ -215,10 +223,12 @@ class SyncWorker(threading.Thread):
             counts["branches_error"] = str(e)
 
         self._set(phase="Врачи…", progress=6)
+        doctor_ids = set()
         try:
             doctors = list(c.paged("doctors", per_page=per_page))
             self.db.upsert_doctors(doctors)
             counts["doctors"] = len(doctors)
+            doctor_ids = {str(d["id"]) for d in doctors if isinstance(d, dict) and d.get("id") is not None}
         except ApiError as e:
             counts["doctors_error"] = str(e)
 
@@ -280,6 +290,11 @@ class SyncWorker(threading.Thread):
             total_visits += len(rows)
         counts["visits"] = total_visits
         counts["visits_to"] = (end if far else near_end).isoformat()
+        # review 2026-11 (В3): doctors gone from GET /doctors (also those only named by visits — assistants, deleted
+        # doctors) are dropped, or kept inactive while something here names them; the schedule skips them
+        pruned = self.db.prune_doctors(doctor_ids)
+        if pruned["deleted"] or pruned["inactive"]:
+            counts["doctors_pruned"] = pruned
         if far:
             self.db.meta_set("visits_far_at", str(int(time.time())))
             self.db.meta_set("visits_far_to", end.isoformat())
@@ -353,7 +368,8 @@ class SyncWorker(threading.Thread):
         def failed(pid, e, final):
             """Count the reason; a transient one is retried (now one by one, or by the next sync)."""
             reason = _card_reason(e)
-            transient = reason in ("HTTP 429", "HTTP 5xx", "нет ответа")
+            # review 2026-11 (В3): a 401 is a token renewed by another thread meanwhile — asked again, not lost
+            transient = reason in ("HTTP 429", "HTTP 5xx", "нет ответа", "HTTP 401")
             if transient and not final:
                 slow.set()
                 deferred.append(pid)
@@ -472,6 +488,8 @@ class SyncWorker(threading.Thread):
                 counts["dp_schedule_saved"] = n["saved"]
                 if n["skipped"]:
                     counts["dp_schedule_skipped"] = n["skipped"]
+                if n.get("failed"):
+                    counts["dp_schedule_failed"] = n["failed"]  # {doctor id: "HTTP 404"}
             except ApiError as e:
                 counts["schedule_error"] = str(e)
 
@@ -501,9 +519,12 @@ class SyncWorker(threading.Thread):
                             str(p.get("payment_type") or ""), json.dumps(p, ensure_ascii=False), now))
 
     def _pull_schedule(self, c: DentistPlusClient, a: date, b: date) -> int:
-        """GET /schedule per doctor in windows of up to 31 days (the answer is capped at 100 rows)."""
-        doctors = [d["id"] for d in self.db.q("SELECT id FROM doctors")]
+        """GET /schedule per doctor in windows of up to 31 days (the answer is capped at 100 rows).
+        Review 2026-11 (В3): a doctor whose schedule fails is logged (id, HTTP code) and keeps the rows saved before;
+        the others go on. Only doctors of GET /doctors are asked."""
+        doctors = self.db.active_doctor_ids()
         rows = []
+        failed: dict[str, str] = {}
 
         def fetch(doc, x, y):
             items = c.request("schedule", {"doctor_id": doc, "date_from": x.isoformat(), "date_to": y.isoformat()})
@@ -514,15 +535,26 @@ class SyncWorker(threading.Thread):
             return [i for i in items if isinstance(i, dict)]
 
         for doc in doctors:
-            x = a
-            while x <= b:
-                y = min(b, x + timedelta(days=30))
-                rows += fetch(doc, x, y)
-                x = y + timedelta(days=1)
+            got = []
+            try:
+                x = a
+                while x <= b:
+                    y = min(b, x + timedelta(days=30))
+                    got += fetch(doc, x, y)
+                    x = y + timedelta(days=1)
+            except OfflineError:
+                raise
+            except ApiError as e:
+                failed[str(doc)] = f"HTTP {e.status}" if e.status else str(e)[:120]
+                log.warning("schedule of doctor %s not loaded: %s", doc, failed[str(doc)])
+                continue
+            rows += got
         now = utcnow()
         skipped = 0
         with self.db.tx() as cx:
-            cx.execute("DELETE FROM dp_schedule WHERE day >= ? AND day <= ?", (a.isoformat(), b.isoformat()))
+            keep = sorted(failed)
+            cx.execute(f"DELETE FROM dp_schedule WHERE day >= ? AND day <= ? AND doctor_id NOT IN ({','.join('?' * len(keep))})",
+                       (a.isoformat(), b.isoformat(), *keep))
             for r in rows:
                 day, doc = str(r.get("day") or "")[:10], as_id(r.get("doctor_id"))
                 if not day or not doc or not r.get("time_from") or not r.get("time_to"):
@@ -533,7 +565,7 @@ class SyncWorker(threading.Thread):
                             str(r["time_from"])[:5], str(r["time_to"])[:5], now))
             saved = cx.execute("SELECT COUNT(*) FROM dp_schedule WHERE day >= ? AND day <= ?",
                                (a.isoformat(), b.isoformat())).fetchone()[0]
-        return {"received": len(rows), "saved": saved, "skipped": skipped}
+        return {"received": len(rows), "saved": saved, "skipped": skipped, **({"failed": failed} if failed else {})}
 
 
 def diagnostics(s: dict, db=None) -> dict:

@@ -86,6 +86,51 @@ _RAW_CHAIR = """COALESCE(json_extract(data,'$.chair.title'), json_extract(data,'
 _TO_ARCHIVE = f"""INSERT OR REPLACE INTO visits_archive(id, patient_id, doctor_id, branch_id, start, "end", status, title, chair, updated_at)
                   SELECT id, patient_id, doctor_id, branch_id, start, "end", status, title, {_RAW_CHAIR}, synced_at FROM visits"""
 
+# What Dentist Plus got of a local visit: its working fields. `pushed_sig` keeps this text as sent; a row whose fields
+# differ from it (changed here during the send, or merged with an edit from another computer) is to be sent again.
+VISIT_SIG_COLS = ("patient_id", "doctor_id", "branch_id", "start", "end", "status", "title", "comment", "chair", "action")
+
+
+def visit_sig_sql(alias="lv"):
+    return "json_array(" + ", ".join(f'{alias}."{c}"' for c in VISIT_SIG_COLS) + ")"
+
+
+KEEP_PUSHED_DAYS = 7   # a sent visit stays (hidden) this long, so an edit made meanwhile on another computer finds it
+
+
+def tables_with(conn, col, skip=()) -> list[str]:
+    """Every table of the database that has the column `col`."""
+    out = []
+    for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall():
+        if t not in skip and any(r[1] == col for r in conn.execute(f'PRAGMA table_info("{t}")')):
+            out.append(t)
+    return out
+
+
+def repoint(conn, col, old, new, skip=()) -> int:
+    """References `col`=old -> new in every table that has the column (inside the caller's transaction). A table whose
+    key holds the column gets the row copied and the old one deleted (so the other computers see both); a row that
+    already exists under the new id stays as it is."""
+    import sqlite3 as _sq
+    n = 0
+    for t in tables_with(conn, col, skip):
+        info = conn.execute(f'PRAGMA table_info("{t}")').fetchall()
+        if any(r[1] == col and r[5] for r in info):
+            names = ", ".join(f'"{r[1]}"' for r in info)
+            sel = ", ".join("?" if r[1] == col else f'"{r[1]}"' for r in info)
+            n += conn.execute(f'INSERT OR IGNORE INTO "{t}"({names}) SELECT {sel} FROM "{t}" WHERE "{col}"=?', (new, old)).rowcount
+            conn.execute(f'DELETE FROM "{t}" WHERE "{col}"=?', (old,))
+            continue
+        try:
+            n += conn.execute(f'UPDATE "{t}" SET "{col}"=? WHERE "{col}"=?', (new, old)).rowcount
+        except _sq.IntegrityError:
+            n += conn.execute(f'UPDATE OR IGNORE "{t}" SET "{col}"=? WHERE "{col}"=?', (new, old)).rowcount
+    return n
+
+
+# tables whose visit_id is not ours to move: the Dentist Plus mirror, and the stock write-off keyed by the visit id itself
+VISIT_REF_SKIP = ("visits", "visits_archive", "local_visits", "dp_payments", "stock_visit_use")
+
 
 class DB:
     def __init__(self, path=DB_PATH):
@@ -116,6 +161,8 @@ class DB:
             self.conn.execute("ALTER TABLE local_visits ADD COLUMN push_force INTEGER DEFAULT 0")
         if "series_id" not in lv:  # recurring visits: every visit of one series shares the id
             self.conn.execute("ALTER TABLE local_visits ADD COLUMN series_id TEXT")
+        if "pushed_sig" not in lv:  # review 2026-11: what Dentist Plus got (replicated with the row), see VISIT_SIG_COLS
+            self.conn.execute("ALTER TABLE local_visits ADD COLUMN pushed_sig TEXT")
         # 3.3: who marked a record «перенесено в Dentist Plus» and when it was last copied for Dentist Plus
         # (the columns travel to the other computers with the row, see replica.read_row)
         rcols = {r[1] for r in self.conn.execute("PRAGMA table_info(records)")}
@@ -208,9 +255,40 @@ class DB:
                 if d.get("id") is None:
                     continue
                 br = get(d, "branch_id", "branch.id", "branches.0.id", "branches.0")
-                c.execute("INSERT OR REPLACE INTO doctors VALUES(?,?,?,?,?)",
+                c.execute("INSERT OR REPLACE INTO doctors(id, name, branch_id, data, synced_at) VALUES(?,?,?,?,?)",
                           (str(d["id"]), person_name(d), str(br) if br is not None and not isinstance(br, dict) else None,
                            json.dumps(d, ensure_ascii=False), now))
+
+    def prune_doctors(self, keep_ids) -> dict:
+        """Review 2026-11 (В3): doctors that GET /doctors no longer returns are deleted when nothing here names them,
+        else kept for the names of old visits and records but listed in meta «doctors_inactive» (the schedule skips them)."""
+        keep = {str(x) for x in keep_ids}
+        out = {"deleted": 0, "inactive": 0}
+        if not keep:  # an empty or failed list never wipes the doctors
+            return out
+        with self.tx() as c:
+            gone = [str(r[0]) for r in c.execute("SELECT id FROM doctors") if str(r[0]) not in keep]
+            refs = tables_with(c, "doctor_id", skip=("doctors", "dp_schedule"))
+            persons = tables_with(c, "person")
+            inactive = []
+            for did in gone:
+                used = any(c.execute(f'SELECT 1 FROM "{t}" WHERE doctor_id=? LIMIT 1', (did,)).fetchone() for t in refs) or \
+                    any(c.execute(f'SELECT 1 FROM "{t}" WHERE person=? LIMIT 1', (f"d:{did}",)).fetchone() for t in persons)
+                if used:
+                    inactive.append(did)
+                else:
+                    c.execute("DELETE FROM doctors WHERE id=?", (did,))
+                    out["deleted"] += 1
+            out["inactive"] = len(inactive)
+            c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('doctors_inactive', ?)", (json.dumps(sorted(inactive)),))
+        return out
+
+    def active_doctor_ids(self) -> list[str]:
+        try:
+            off = set(json.loads(self.meta_get("doctors_inactive") or "[]"))
+        except ValueError:
+            off = set()
+        return [str(d["id"]) for d in self.q("SELECT id FROM doctors ORDER BY id") if str(d["id"]) not in off]
 
     def _patient_row(self, p: dict):
         name = person_name(p)
@@ -325,10 +403,39 @@ class DB:
         n = sum(self.one(f"SELECT COUNT(*) n FROM {t} WHERE transferred=0")["n"] for t in self.LOCAL_TABLES)
         return n + self.one("SELECT COUNT(*) n FROM patients WHERE local=1 AND COALESCE(transferred,0)=0")["n"]
 
-    def cleanup_transferred(self, before: str):
-        """Visit edits already typed into Dentist Plus are dropped once a later sync brought them back."""
+    def visit_sig(self, row: dict) -> str:
+        """The pushed_sig text of a local visit row (the same text SQLite makes in visit_sig_sql)."""
+        return self.one("SELECT json_array(" + ", ".join("?" for _ in VISIT_SIG_COLS) + ") AS s",
+                        [row.get(c) for c in VISIT_SIG_COLS])["s"]
+
+    def reopen_changed_visits(self) -> int:
+        """Review 2026-11 (К3): a sent visit whose fields are no longer what Dentist Plus got — an edit merged in from
+        another computer, or one made here while it was being sent — is pending again (its remote id stays, so the
+        change goes as an edit of that Dentist Plus visit)."""
         with self.tx() as c:
-            c.execute("DELETE FROM local_visits WHERE transferred=1 AND transferred_at < ?", (before,))
+            return c.execute(f"""UPDATE local_visits SET transferred=0, transferred_at=NULL, push_status=NULL, push_error=NULL,
+                                 push_force=0 WHERE id IN (SELECT lv.id FROM local_visits lv WHERE lv.transferred=1
+                                 AND lv.pushed_sig IS NOT NULL AND lv.pushed_sig <> {visit_sig_sql()})""").rowcount
+
+    def cleanup_transferred(self, before: str, days_back: int | None = None):
+        """Visit edits already in Dentist Plus are dropped once a later sync brought them back.
+        Review 2026-11 (К3, В4): a visit sent automatically (it has its Dentist Plus id) goes only when that id is in
+        `visits`, and only KEEP_PUSHED_DAYS after the send (an edit made meanwhile on a computer without the network
+        then merges into it instead of coming back as a new visit) or once it is older than the mirror; references
+        to it (records, invoices…) move to the Dentist Plus id first. Rows changed since the send stay."""
+        keep = (datetime.now() - timedelta(days=KEEP_PUSHED_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        past = (date.today() - timedelta(days=int(days_back if days_back is not None else 30))).isoformat()
+        with self.tx() as c:
+            rows = c.execute(f"""SELECT lv.id, lv.remote_id FROM local_visits lv WHERE lv.transferred=1 AND lv.transferred_at < ?
+                                 AND (lv.pushed_sig IS NULL OR lv.pushed_sig = {visit_sig_sql()})
+                                 AND (lv.remote_id IS NULL OR lv.start < ?
+                                      OR (lv.remote_id IN (SELECT id FROM visits) AND lv.transferred_at < ?))""",
+                             (before, past, keep)).fetchall()
+            for r in rows:
+                if r["remote_id"] and str(r["remote_id"]) != str(r["id"]):
+                    repoint(c, "visit_id", r["id"], str(r["remote_id"]), VISIT_REF_SKIP)
+                c.execute("DELETE FROM local_visits WHERE id=?", (r["id"],))
+        return len(rows)
 
     # ----------------------------------------------------------- reads --
     def counts(self):
@@ -342,13 +449,16 @@ class DB:
     # synced visits hidden by a local edit + local visits (new or edited), one combined view.
     # A local row that was sent automatically and already came back from Dentist Plus is hidden:
     # the Dentist Plus version is shown instead (no duplicates).
-    LV_ACTIVE = """NOT (lv.transferred=1 AND lv.push_status IN ('sent','warn')
-                        AND COALESCE(lv.remote_id, lv.origin_id) IN (SELECT id FROM visits))"""
+    # Review 2026-11: a sent row changed since (pushed_sig differs) stays shown, and hides the Dentist Plus visit it was sent as.
+    LV_ACTIVE = f"""NOT (lv.transferred=1 AND lv.push_status IN ('sent','warn')
+                        AND COALESCE(lv.remote_id, lv.origin_id) IN (SELECT id FROM visits)
+                        AND (lv.pushed_sig IS NULL OR lv.pushed_sig = {visit_sig_sql()}))"""
     ALL_VISITS = f"""
         SELECT v.id, NULL AS origin_id, v.patient_id, v.doctor_id, v.branch_id, v.start, v."end",
                v.status, v.title, '' AS comment, 0 AS local, NULL AS action, v.data AS data, NULL AS chair_local,
                NULL AS series_id
         FROM visits v WHERE v.id NOT IN (SELECT lv.origin_id FROM local_visits lv WHERE lv.origin_id IS NOT NULL AND {LV_ACTIVE})
+              AND v.id NOT IN (SELECT lv.remote_id FROM local_visits lv WHERE lv.remote_id IS NOT NULL AND {LV_ACTIVE})
         UNION ALL
         SELECT lv.id, lv.origin_id, lv.patient_id, lv.doctor_id, lv.branch_id, lv.start, lv."end",
                lv.status, lv.title, lv.comment, 1 AS local, lv.action,
