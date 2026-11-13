@@ -171,11 +171,12 @@ def firewall_rule_name() -> str:
 
 
 def firewall_commands(exe, tcp=TCP_PORT, udp=UDP_PORT) -> list[str]:
-    """netsh commands for an inbound rule: the program's ports, Private and domain networks only.
-    Without it Windows shows «Разрешить доступ?» on the first start. A «Public» network (a café, a hotel) stays
-    closed: there the clinic's server must not be reachable — the clinic's Wi-Fi is made «Private» instead."""
+    """netsh commands for an inbound rule: the program's ports, Private and Public networks (and a domain one).
+    Without it Windows shows «Разрешить доступ?» on the first start, and on a «Public» network blocks the clinic.
+    Public stays open on purpose: many clinic Wi-Fi networks are «Public» in Windows and the computers must see
+    each other (3.7.2+: only the main one talks to Dentist Plus). Sign-in attempts are limited atomically instead."""
     name = firewall_rule_name()
-    base = f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" profile=private,domain enable=yes'
+    base = f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" profile=private,public,domain enable=yes'
     return [f'netsh advfirewall firewall delete rule name="{name}"',
             f"{base} protocol=TCP localport={tcp}",
             f"{base} protocol=UDP localport={udp}"]
@@ -189,9 +190,6 @@ def firewall_ok(exe) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     out = (r.stdout or b"").decode("cp866", "replace").lower()
-    if any(("public" in ln or "общ" in ln) for ln in out.splitlines()
-           if ln.strip().startswith(("profiles", "профил"))):
-        return False  # a rule of an older version also open on «Public» networks: made again without it
     return r.returncode == 0 and os.path.normcase(exe).lower() in out and str(TCP_PORT) in out and str(UDP_PORT) in out
 
 

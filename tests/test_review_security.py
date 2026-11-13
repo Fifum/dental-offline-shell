@@ -130,7 +130,7 @@ check("К9: others get 429", codes.get(429, 0) >= 100 - A.MAX_FAILS, codes)
 au._fails.clear()
 import installer  # noqa: E402
 cmds = " ".join(installer.firewall_commands("C:\\x\\App.exe"))
-check("К9: firewall rule not on «Public» networks", "public" not in cmds and "profile=private,domain" in cmds, cmds)
+check("К9: firewall rule keeps the clinic reachable on «Public» Wi-Fi", "profile=private,public,domain" in cmds, cmds)
 
 # ================================================================ В16: negative Content-Length, socket timeout
 s = socket.create_connection(("127.0.0.1", PORT))
