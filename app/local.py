@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 import plans
-from normalize import person_name
+from normalize import person_name, phone as card_phone
 
 SURFACES = ("o", "m", "d", "v", "l")  # occlusal/incisal, mesial, distal, vestibular, oral (lingual/palatal)
 SURF_STATES = ("Кариес", "Пломба", "Временная пломба")
@@ -72,6 +72,8 @@ class Local:
     @staticmethod
     def _card_value(raw: dict, key: str) -> str:
         v = raw.get(key)
+        if key == "phone":  # the card shows normalize.phone (phone / mphone / mobile …): compare with what was shown
+            v = card_phone(raw)
         if key == "birth_date" and not v:
             v = raw.get("date_of_birth")
         v = str(v or "").strip()
