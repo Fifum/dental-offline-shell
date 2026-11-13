@@ -85,6 +85,25 @@ def cost_estimate(s=None) -> dict:
     return {"per_1000_tokens": price, "per_dictation": round(one, 2), "per_month_10_doctors": round(one * 10 * 15 * 22)}
 
 
+def endpoint_error(url: str, what: str = "ключ и данные передаются открыто (http — только для ИИ на этом компьютере)") -> str:
+    """Logins and keys go only over https; plain http only to this computer (a local model). '' when fine."""
+    from urllib.parse import urlsplit  # noqa: PLC0415
+    try:
+        u = urlsplit(str(url or "").strip())
+        host = (u.hostname or "").lower()
+    except ValueError:
+        return "Неверный адрес сервиса"
+    if u.scheme not in ("http", "https") or not host:
+        return "Адрес сервиса должен начинаться с https://"
+    if u.scheme == "http" and host not in ("localhost", "127.0.0.1", "::1"):
+        return f"Адрес сервиса должен начинаться с https:// — по http {what}"
+    return ""
+
+
+def _dest(s: dict) -> str:
+    return (s.get("base_url") or PROVIDERS.get(s.get("provider"), {}).get("base_url") or "").strip().rstrip("/")
+
+
 def save(f: dict) -> dict:
     cur = settings()
     new = {k: f[k] for k in ("provider", "base_url", "model", "folder", "scope") if k in f}
@@ -97,6 +116,12 @@ def save(f: dict) -> dict:
     merged = {**cur, **new}
     if merged["provider"] not in PROVIDERS:
         raise ValueError("Неизвестный сервис ИИ")
+    if not f.get("key") and merged["key_enc"] and _dest(merged) != _dest(cur):
+        merged["key_enc"] = ""  # the saved key never goes to another address: type it again for the new one
+    if merged["provider"] != "local" and merged["base_url"]:
+        bad = endpoint_error(merged["base_url"])
+        if bad:
+            raise ValueError(bad)
     if merged["enabled"]:
         if not merged["model"]:
             raise ValueError("Скачайте модель ниже — после скачивания она включится сама" if merged["provider"] == "local"

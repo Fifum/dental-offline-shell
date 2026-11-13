@@ -2208,11 +2208,12 @@ class Api:
         import p2p
         return p2p.NODE.status() if p2p.NODE else {"configured": p2p.configured(), "peers": []}
 
-    def p2p_accept(self, node):
+    def p2p_accept(self, node, code=""):
+        """`code` is the one the director saw and compared with the new computer's screen."""
         self._director("Подключать компьютеры к сети клиники")
         import p2p
         try:
-            return p2p.accept_pair(node)
+            return p2p.accept_pair(node, code)
         except p2p.P2PError as e:
             raise ValueError(str(e)) from None
 
@@ -2465,6 +2466,15 @@ class Api:
                     raise ValueError(f"Поле «{name}»: укажите целое число") from None
         if new.get("password"):
             upd["pass_enc"] = config.protect(new["password"])
+        if "base_url" in upd:
+            upd["base_url"] = str(upd["base_url"] or "").strip()
+            if upd["base_url"].rstrip("/") != str(cur.get("base_url") or "").rstrip("/"):
+                from ai import endpoint_error
+                bad = endpoint_error(upd["base_url"], "логин и пароль передаются открыто")
+                if bad:
+                    raise ValueError(bad)
+                if cur.get("pass_enc") and not new.get("password"):  # the saved password never goes to another address
+                    raise ValueError("Адрес API изменился — введите пароль API ещё раз")
         old = config.load_settings()
         if old.get("demo") != upd.get("demo", old.get("demo")):
             import cloud
@@ -2488,6 +2498,14 @@ class Api:
     def test_connection(self, login: str = "", password: str = "", base_url: str = ""):
         from api_client import ApiError, DentistPlusClient
         s = config.load_settings()
+        base_url = str(base_url or "").strip()
+        if base_url and base_url.rstrip("/") != str(s.get("base_url") or "").rstrip("/"):
+            from ai import endpoint_error
+            bad = endpoint_error(base_url, "логин и пароль передаются открыто")
+            if bad:
+                return {"ok": False, "message": bad}
+            if not login or not password:  # the saved login and password never go to another address
+                return {"ok": False, "message": "Для другого адреса API введите логин и пароль заново"}
         c = DentistPlusClient(base_url or s["base_url"], login or s["login"], password or config.unprotect(s.get("pass_enc", "")))
         if not c.login or not c.password:
             return {"ok": False, "message": "Укажите логин и пароль API"}

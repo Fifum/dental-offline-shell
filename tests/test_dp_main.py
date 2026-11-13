@@ -128,7 +128,7 @@ try:
     A.run("r = p2p.create_clinic(db=db, fresh=True)")
     B.run(f"r = node.join([{{'ip': '127.0.0.1', 'port': {A.port}}}])")
     wait("A sees B asking to join", lambda: A.run("r = p2p.pending_pairs()"))
-    A.run(f"r = p2p.accept_pair({B.node!r})")
+    A.run(f"r = p2p.accept_pair({B.node!r}, {B.run('r = node.joiner.code')!r})")  # the code on B's screen
     wait("B joined", lambda: B.run("r = node.joiner.state == 'done' and p2p.configured()"))
     A.run(SETUP)
     B.run(SETUP)  # the same login typed in on the second computer too — as in the clinic

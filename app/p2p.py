@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -213,6 +214,8 @@ def _box_key(shared: bytes, node: str) -> bytes:
 
 PAIRS: dict = {}          # node → request from a new computer (kept in memory: a request lives minutes)
 _PLOCK = threading.Lock()
+_PAIR_HITS: dict = {}     # ip → times of its pair requests (a few a minute are enough for a real computer)
+PAIR_PER_IP, PAIR_IP_WINDOW = 5, 60
 
 
 def _clean_pairs():
@@ -235,9 +238,23 @@ def _pair_request(body, ip):
         raise P2PError("Неверный запрос")
     with _PLOCK:
         _clean_pairs()
+        now = time.time()
+        hits = [t for t in _PAIR_HITS.get(ip, []) if now - t < PAIR_IP_WINDOW]
+        for k in [k for k, v in _PAIR_HITS.items() if not v or now - v[-1] >= PAIR_IP_WINDOW]:
+            _PAIR_HITS.pop(k, None)
+        if len(hits) >= PAIR_PER_IP:
+            _PAIR_HITS[ip] = hits
+            raise P2PError("Слишком много запросов на подключение. Подождите минуту.", 429)
+        _PAIR_HITS[ip] = hits + [now]
         if node not in PAIRS and len(PAIRS) >= MAX_PAIRS:
             raise P2PError("Слишком много запросов на подключение. Подождите несколько минут.", 429)
         cur = PAIRS.get(node)
+        if cur and cur["state"] == "wait" and cur["pub"] != pub:
+            # the key of a waiting request is never replaced: someone else may be posing as that computer
+            cur["state"] = "rejected"
+            log.warning("pairing request for %s with another key from %s (first from %s): both refused", node, ip, cur["ip"])
+            raise P2PError("Для этого компьютера уже ждёт запрос с другим ключом — оба запроса отменены. "
+                           "Отправьте запрос ещё раз и сверьте код с директором.", 409)
         if not cur or cur["pub"] != pub or cur["state"] == "rejected":
             PAIRS[node] = {"node": node, "name": name, "host": str(body.get("host") or "")[:80], "pub": pub,
                            "code": pair_code(pub), "ip": ip, "at": time.time(), "state": "wait", "grant": None,
@@ -264,8 +281,9 @@ def pending_pairs() -> list:
                 for p in PAIRS.values() if p["state"] == "wait"]
 
 
-def accept_pair(node) -> dict:
-    """The director said «Принять»: seal the clinic key for exactly that computer's public key."""
+def accept_pair(node, code) -> dict:
+    """The director said «Принять» after comparing `code` with the new computer's screen:
+    seal the clinic key for exactly the public key that code was made of."""
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     k = clinic_key()
@@ -277,6 +295,8 @@ def accept_pair(node) -> dict:
         p = PAIRS.get(str(node or ""))
         if not p or p["state"] != "wait":
             raise P2PError("Запрос уже обработан или устарел")
+        if not code or not hmac.compare_digest(str(code).replace(" ", ""), p["code"]):
+            raise P2PError("Код этого запроса изменился — подключение не выполнено. Отправьте запрос с нового компьютера ещё раз.")
         eph = X25519PrivateKey.generate()
         box_key = _box_key(eph.exchange(X25519PublicKey.from_public_bytes(p["pub"])), p["node"])
         peers = [{"ip": x["ip"], "port": x["port"]} for x in (NODE.live_list() if NODE else [])]

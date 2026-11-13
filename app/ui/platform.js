@@ -172,14 +172,15 @@ async function loadUpdatePanel(check) {
 const NET_ASKED = {};
 function netPairRequests(st) {
   for (const r of st.pair_requests || []) {
-    if (NET_ASKED[r.node]) continue;
-    NET_ASKED[r.node] = 1;
+    const k = `${r.node}|${r.code}`;  // a request with another key is another question
+    if (NET_ASKED[k]) continue;
+    NET_ASKED[k] = 1;
     (async () => {
       const yes = await ask(`Новый компьютер «${r.host || r.name}» просит подключиться — принять?`, {ok: "Принять", cancel: "Отклонить",
         text: `Код на экране нового компьютера: ${String(r.code).replace(/(\d{3})(\d{3})/, "$1 $2")}. Принимайте, только если код совпадает и это компьютер вашей клиники: он получит все данные клиники.`
           + (r.has_data ? "\n\nНа нём уже есть свои пациенты и записи — они объединятся с данными клиники." : "")});
       try {
-        if (yes) { await api.p2p_accept(r.node); toast(`Компьютер «${r.host || r.name}» подключён к клинике. Данные начнут приходить на него через несколько секунд.`); }
+        if (yes) { await api.p2p_accept(r.node, r.code); toast(`Компьютер «${r.host || r.name}» подключён к клинике. Данные начнут приходить на него через несколько секунд.`); }
         else { await api.p2p_reject(r.node); toast("Подключение отклонено"); }
       } catch (e) { toast(errText(e), true); }
     })();

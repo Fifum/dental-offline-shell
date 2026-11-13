@@ -96,16 +96,32 @@ def _rmtree_quiet(path):
     shutil.rmtree(path, ignore_errors=True)
 
 
+def _fsync_tree(path):
+    """Unpacked files reach the disk before the switch: a power cut right after it must not leave empty files."""
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                with open(os.path.join(root, f), "r+b") as fh:
+                    os.fsync(fh.fileno())
+            except OSError:
+                pass
+
+
 def install_zip(zip_path, target_dir) -> str:
     """Unpack the program folder from `zip_path` into `target_dir`, replacing an older version. Returns the exe path.
 
-    New files go to a side folder first; then the old _internal is moved away and the new one moved in, so a
-    failure halfway leaves either the old or the new version, never a mix."""
+    New files go to a side folder first; then each old item is moved away and the new one moved in. If any move
+    fails, the items already switched are put back, so the folder keeps the old version, never a mix."""
     os.makedirs(target_dir, exist_ok=True)
     stage = os.path.join(target_dir, f".new-{os.getpid()}")
     _rmtree_quiet(stage)
-    with zipfile.ZipFile(zip_path) as z:
-        z.extractall(stage)
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            z.extractall(stage)
+        _fsync_tree(stage)
+    except Exception:
+        _rmtree_quiet(stage)
+        raise
     exe_name = config.BRAND["exe"] + ".exe"
     if not os.path.exists(os.path.join(stage, exe_name)):
         _rmtree_quiet(stage)
@@ -115,11 +131,32 @@ def install_zip(zip_path, target_dir) -> str:
             _rmtree_quiet(os.path.join(target_dir, old))
     trash = os.path.join(target_dir, f".old-{os.getpid()}")
     os.makedirs(trash, exist_ok=True)
-    for name in os.listdir(stage):
-        dst = os.path.join(target_dir, name)
-        if os.path.exists(dst):
-            os.replace(dst, os.path.join(trash, name))
-        os.replace(os.path.join(stage, name), dst)
+    done = []  # (name, old item moved to trash, new item moved in)
+    try:
+        for name in sorted(os.listdir(stage), key=lambda n: n == exe_name):  # the exe last: it starts the rest
+            dst = os.path.join(target_dir, name)
+            step = [name, False, False]
+            done.append(step)
+            if os.path.lexists(dst):
+                os.replace(dst, os.path.join(trash, name))
+                step[1] = True
+            os.replace(os.path.join(stage, name), dst)
+            step[2] = True
+    except Exception:
+        restored = True
+        for name, moved_old, moved_new in reversed(done):
+            dst = os.path.join(target_dir, name)
+            try:
+                if moved_new:
+                    os.replace(dst, os.path.join(stage, name))
+                if moved_old:
+                    os.replace(os.path.join(trash, name), dst)
+            except OSError:
+                restored = False
+        _rmtree_quiet(stage)
+        if restored:
+            _rmtree_quiet(trash)
+        raise
     _rmtree_quiet(stage)
     _rmtree_quiet(trash)  # an old exe still held by the system is removed on the next update
     return os.path.join(target_dir, exe_name)
@@ -134,10 +171,11 @@ def firewall_rule_name() -> str:
 
 
 def firewall_commands(exe, tcp=TCP_PORT, udp=UDP_PORT) -> list[str]:
-    """netsh commands for an inbound rule: the program's ports, Private and Public networks (and a domain one).
-    Without it Windows shows «Разрешить доступ?» on the first start, and on a «Public» network blocks the clinic."""
+    """netsh commands for an inbound rule: the program's ports, Private and domain networks only.
+    Without it Windows shows «Разрешить доступ?» on the first start. A «Public» network (a café, a hotel) stays
+    closed: there the clinic's server must not be reachable — the clinic's Wi-Fi is made «Private» instead."""
     name = firewall_rule_name()
-    base = f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" profile=private,public,domain enable=yes'
+    base = f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" profile=private,domain enable=yes'
     return [f'netsh advfirewall firewall delete rule name="{name}"',
             f"{base} protocol=TCP localport={tcp}",
             f"{base} protocol=UDP localport={udp}"]
@@ -151,6 +189,9 @@ def firewall_ok(exe) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     out = (r.stdout or b"").decode("cp866", "replace").lower()
+    if any(("public" in ln or "общ" in ln) for ln in out.splitlines()
+           if ln.strip().startswith(("profiles", "профил"))):
+        return False  # a rule of an older version also open on «Public» networks: made again without it
     return r.returncode == 0 and os.path.normcase(exe).lower() in out and str(TCP_PORT) in out and str(UDP_PORT) in out
 
 

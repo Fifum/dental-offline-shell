@@ -354,6 +354,7 @@ class _Conn:
 def make_handler(cloud: Cloud):
     class Handler(BaseHTTPRequestHandler):
         server_version = "DentalDeskCloud/1"
+        timeout = 30  # a slow or silent client does not hold a thread forever
 
         def _send(self, code, body: bytes, ctype="application/json; charset=utf-8"):
             self.send_response(code)
@@ -367,7 +368,12 @@ def make_handler(cloud: Cloud):
             self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
         def _body(self):
-            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if n < 0:  # -1 would read until the client closes, past MAX_BODY
+                raise CloudError("Неверный запрос", 400)
             if n > MAX_BODY:
                 raise CloudError("Слишком большой запрос", 413)
             return self.rfile.read(n) if n else b""
