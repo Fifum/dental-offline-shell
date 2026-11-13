@@ -178,6 +178,8 @@ class ClinicServer:
         srv = self
 
         class Handler(SimpleHTTPRequestHandler):
+            timeout = 30  # a slow or silent client does not hold a thread forever
+
             def __init__(self, *a, **kw):
                 super().__init__(*a, directory=srv.ui_dir, **kw)
 
@@ -208,7 +210,12 @@ class ClinicServer:
             def do_POST(self):
                 ip = self.client_address[0]
                 is_local = ip in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
-                length = int(self.headers.get("Content-Length") or 0)
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    length = -1
+                if length < 0:  # -1 would read until the client closes, past MAX_BODY
+                    return self._json(400, {"error": "Неверный запрос"})
                 if length > MAX_BODY:
                     return self._json(413, {"error": "Слишком большой запрос"})
                 try:

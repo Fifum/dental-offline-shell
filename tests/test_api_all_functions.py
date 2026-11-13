@@ -196,7 +196,7 @@ config.save_settings({"demo": True})
 t("password stored encrypted", lambda: (api.save_settings({"password": "секрет"}), json.load(open(config.SETTINGS_PATH, encoding="utf-8"))["pass_enc"])[1],
   lambda r: r.startswith("dpapi:") and config.unprotect(r) == "секрет")
 t("test_connection bad host", lambda: api.test_connection("u", "p", "http://127.0.0.1:9/partner"), lambda r: r["ok"] is False)
-t("diagnostics bad host", lambda: (api.save_settings({"base_url": "http://127.0.0.1:9/partner", "login": "u"}), api.diagnostics())[1], lambda r: "Ошибка" in r)
+t("diagnostics bad host", lambda: (api.save_settings({"base_url": "http://127.0.0.1:9/partner", "login": "u", "password": "p"}), api.diagnostics())[1], lambda r: "Ошибка" in r)
 
 print(f"\nOK: {OK[0]}   FAIL: {len(FAIL)}")
 for f in FAIL:

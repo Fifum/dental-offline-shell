@@ -2,7 +2,7 @@
 /* Stock: materials (balances, supplier invoices, write-offs, stock count, norms per service) and equipment. */
 S.stockTab = "balance";
 let STK = {units: [], move_kinds: {}, eq_status: {}};
-const qtyFmt = (n, u) => `${(Math.round((+n || 0) * 1000) / 1000).toLocaleString("ru-RU")}${u ? " " + u : ""}`;
+const qtyFmt = (n, u) => `${(Math.round((+n || 0) * 1000) / 1000).toLocaleString("ru-RU")}${u ? " " + esc(u) : ""}`;  // HTML: the unit is escaped
 const DOC_KIND = {receipt: "Приходная накладная", writeoff: "Акт списания материалов", inventory: "Инвентаризация",
   transfer: "Перемещение материалов", visit: "Списание по приёму"};  // 3.5: places and visits of Dentist Plus
 const hasPlaces = () => (STK.locations || []).length > 1;
@@ -69,7 +69,7 @@ async function stockBalance() {
     ${docDiff ? `<div class="warn-line">Есть приход или списание без документов: остаток «по документам» отличается от фактического. Его видите только вы (право «Бухгалтерия»).</div>` : ""}
     <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Код</th><th>Материал</th><th>Раздел</th><th class="num">Остаток</th>${docDiff ? '<th class="num" title="Только движения с документами">По документам</th>' : ""}<th class="num">Минимум</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr></thead><tbody>${
       rows.map(m => `<tr data-m="${esc(m.id)}" class="${m.balance < 0 ? "neg" : ""} ${m.exp_state ? "exp-" + m.exp_state : ""}"><td class="muted">${esc(m.code)}</td><td class="lnk"><b>${esc(m.name)}</b>${expLine(m)}</td><td>${esc(m.category)}</td>
-        <td class="num" ${m.total_balance !== undefined ? `title="Во всей клинике: ${esc(qtyFmt(m.total_balance, m.unit))}"` : ""}><b>${qtyFmt(m.balance, m.unit)}</b></td>${docDiff ? `<td class="num ${Math.abs(m.balance - m.balance_doc) > 1e-9 ? "warn-t" : "muted"}">${qtyFmt(m.balance_doc, m.unit)}</td>` : ""}<td class="num muted">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td><td class="num">${money(m.price)}</td><td class="num">${money(m.value)}</td>
+        <td class="num" ${m.total_balance !== undefined ? `title="Во всей клинике: ${qtyFmt(m.total_balance, m.unit)}"` : ""}><b>${qtyFmt(m.balance, m.unit)}</b></td>${docDiff ? `<td class="num ${Math.abs(m.balance - m.balance_doc) > 1e-9 ? "warn-t" : "muted"}">${qtyFmt(m.balance_doc, m.unit)}</td>` : ""}<td class="num muted">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td><td class="num">${money(m.price)}</td><td class="num">${money(m.value)}</td>
         <td class="pills">${m.balance < 0 ? '<span class="pill st-cancel">меньше нуля</span>' : m.low ? '<span class="pill st-cancel">заканчивается</span>' : m.exp_state ? "" : '<span class="pill st-ok">есть</span>'}${m.exp_state === "expired" ? '<span class="pill exp-pill expired">просрочено</span>' : m.exp_state === "soon" ? '<span class="pill exp-pill soon">истекает срок</span>' : ""}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>${q || low || exp ? "Ничего не найдено" : "Склад пока пуст"}</b><span>${edit ? "Добавьте материалы и оформите приход по накладной" : ""}</span></div>`}</div>`;
   let t; $("#stQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { S.stockQ = e.target.value; stockBalance().then(() => { const i = $("#stQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
@@ -96,7 +96,7 @@ function editMaterial(m, {onSaved} = {}) {
         ${m.id ? `<label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>` : `<label class="fl">Начальный остаток<input class="input" id="mStart" type="number" step="any" min="0"></label>`}</div>
       ${m.id ? "" : `<label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>`}
       <label class="fl">Комментарий<input class="input" id="mCom" value="${esc(m.comment || "")}"></label>
-      <datalist id="mUnits">${STK.units.map(u => `<option value="${u}">`).join("")}</datalist>
+      <datalist id="mUnits">${STK.units.map(u => `<option value="${esc(u)}">`).join("")}</datalist>
       <datalist id="mCats">${[...new Set((S.stockRows || []).map(r => r.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join("")}</datalist>
       <div class="auth-err" id="mErr"></div></div>
     <div class="m-f">${m.id ? `<button class="btn ghost small danger" id="mDel">Убрать из справочника</button>` : ""}<span class="muted">Когда остаток опустится до минимума, материал попадёт в «Заканчиваются»</span>

@@ -181,7 +181,7 @@ except Exception as e:
                                                         method="POST"), timeout=5).read()
     check("poll for an unknown computer tells nothing", json.loads(raw) == {"state": "unknown"})
 
-    A.run(f"r = p2p.accept_pair({B.node!r})")
+    A.run(f"r = p2p.accept_pair({B.node!r}, {B.run('r = node.joiner.code')!r})")  # the code on B's screen
     wait("B joined the clinic", lambda: B.run("r = node.joiner.state == 'done' and p2p.configured()"))
     check("same clinic now", B.run("r = p2p.clinic_id()") == clinic)
     check("B is a member, may not make a second director", B.run("r = auth.state('', True)['can_bootstrap']") is False)
@@ -266,7 +266,7 @@ except Exception as e:
     C = Node("C")
     C.run(f"r = node.join([{{'ip': '127.0.0.1', 'port': {A.port}}}, {{'ip': '127.0.0.1', 'port': {B.port}}}])")
     wait("B shows the request too", lambda: B.run("r = p2p.pending_pairs()"))
-    B.run(f"r = p2p.accept_pair({C.node!r})")
+    B.run(f"r = p2p.accept_pair({C.node!r}, {C.run('r = node.joiner.code')!r})")  # the code on C's screen
     wait("C joined via B", lambda: C.run("r = p2p.clinic_id()") == clinic)
     wait("C has the same data as A", lambda: not same_data(A, C), timeout=30)
     wait("A's pending request for C is cleared", lambda: A.run("r = p2p.pending_pairs()") == [])

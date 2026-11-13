@@ -484,15 +484,26 @@ class Auth:
                       (_now(), uid, name, action, str(detail)[:500], ip))
 
     def _throttle(self, key):
+        """Count the attempt now, under the lock: parallel requests cannot all see «no fails yet».
+        Returns its mark; `_passed` gives it back when the attempt turns out right."""
         with self._flock:
-            t = [x for x in self._fails.get(key, []) if time.time() - x < LOCK_SECONDS]
-            self._fails[key] = t
+            now = time.time()
+            t = [x for x in self._fails.get(key, []) if now - x < LOCK_SECONDS]
             if len(t) >= MAX_FAILS:
+                self._fails[key] = t
                 raise AuthError(f"Слишком много неудачных попыток. Подождите {LOCK_SECONDS} секунд.", 429)
+            t.append(now)
+            self._fails[key] = t
+            return now
+
+    def _passed(self, key, mark):
+        with self._flock:
+            t = self._fails.get(key, [])
+            if mark in t:
+                t.remove(mark)
 
     def _fail(self, key):
-        with self._flock:
-            self._fails.setdefault(key, []).append(time.time())
+        """The attempt was already counted by `_throttle`."""
 
     def _new_session(self, user, ip, agent):
         token = secrets.token_urlsafe(32)
@@ -549,10 +560,11 @@ class Auth:
         if len(login) < 3 or any(ch.isspace() for ch in login):
             raise AuthError("Логин: от 3 символов, без пробелов", 400)
         pw = _check_new_password(f.get("password"))
-        self._throttle("reg:" + ip)
+        mark = self._throttle("reg:" + ip)
         if self.db.one("SELECT 1 AS x FROM users WHERE login=?", (login,)):
             self._fail("reg:" + ip)
             raise AuthError("Такой логин уже занят", 409)
+        self._passed("reg:" + ip, mark)
         wanted = f.get("role") if f.get("role") in roles() and f.get("role") != "director" else ""
         with self.db.tx() as c:
             c.execute("INSERT INTO users(login, name, position, role, pass_hash, status, created_at) VALUES(?,?,?,?,?,?,?)",
@@ -564,12 +576,13 @@ class Auth:
     def login(self, login, password, ip, agent):
         login = _clean_login(login)
         key = f"{login}|{ip}"
-        self._throttle(key)
+        mark = self._throttle(key)
         u = self.db.one("SELECT * FROM users WHERE login=?", (login,))
         if not u or not check_password(str(password or ""), u["pass_hash"]):
             self._fail(key)
             self.log(None, "Неудачный вход", login, ip)
             raise AuthError("Неверный логин или пароль")
+        self._passed(key, mark)
         if u["status"] == "pending":
             raise AuthError("Заявка ещё не одобрена директором", 403)
         if u["status"] != "active":
@@ -589,23 +602,26 @@ class Auth:
 
     def pin_login(self, uid, pin, ip, agent):
         key = f"pin|{ip}"
-        self._throttle(key)
+        mark = self._throttle(key)
         try:
             u = self.db.one("SELECT * FROM users WHERE id=?", (int(uid),))
         except (TypeError, ValueError):
             u = None
         if not u or u["status"] != "active" or not u.get("pin_hash"):
             raise AuthError("Для этого сотрудника вход по ПИН-коду не включён — войдите по паролю")
-        if (u.get("pin_fails") or 0) >= PIN_MAX_FAILS:
+        # take the attempt before the slow check: parallel requests cannot all see «0 fails»
+        with self.db.tx() as c:
+            took = c.execute("UPDATE users SET pin_fails=COALESCE(pin_fails,0)+1 WHERE id=? AND COALESCE(pin_fails,0)<?",
+                             (u["id"], PIN_MAX_FAILS)).rowcount == 1
+        if not took:
             raise AuthError(f"ПИН-код заблокирован после {PIN_MAX_FAILS} ошибок. Войдите по логину и паролю — ПИН снова заработает.", 403)
         if not check_password(str(pin or ""), u["pin_hash"]):
             self._fail(key)
-            with self.db.tx() as c:
-                c.execute("UPDATE users SET pin_fails=COALESCE(pin_fails,0)+1 WHERE id=?", (u["id"],))
-            left = PIN_MAX_FAILS - (u.get("pin_fails") or 0) - 1
+            left = PIN_MAX_FAILS - ((self.db.one("SELECT pin_fails FROM users WHERE id=?", (u["id"],)) or {}).get("pin_fails") or 0)
             self.log(None, "Неверный ПИН-код", u["name"], ip)
             raise AuthError("Неверный ПИН-код" + (f". Осталось попыток: {left}" if left > 0 else
                                                   ". ПИН заблокирован — войдите по логину и паролю"))
+        self._passed(key, mark)
         with self.db.tx() as c:
             c.execute("UPDATE users SET pin_fails=0 WHERE id=?", (u["id"],))
         self.log(u, "Вход по ПИН-коду", ip=ip)
@@ -691,6 +707,18 @@ class Auth:
         return self.db.one("SELECT COUNT(*) AS n FROM users WHERE role='director' AND status='active' AND id<>?",
                            (except_id,))["n"]
 
+    def _not_director(self, actor):
+        return bool(actor) and actor.get("role") != "director"
+
+    def _only_grant_own(self, actor, granted):
+        """The right «Сотрудники» is not the director: nobody gives rights they do not have themselves."""
+        if self._not_director(actor):
+            extra = set(granted) - set(self.effective_perms(actor))
+            if extra:
+                titles = dict(PERMS)
+                raise AuthError("Нельзя выдать права, которых нет у вас: " +
+                                ", ".join(titles.get(p, p) for p in sorted(extra)), 403)
+
     def staff_save(self, actor, f):
         uid = int(f.get("id") or 0)
         u = self.db.one("SELECT * FROM users WHERE id=?", (uid,))
@@ -703,11 +731,16 @@ class Auth:
         status = f.get("status", u["status"])
         if status not in ("active", "blocked", "pending"):
             raise AuthError("Неизвестный статус", 400)
+        if self._not_director(actor) and (u["role"] == "director" or role == "director"):
+            raise AuthError("Назначать директора и менять учётную запись директора может только директор", 403)
         if u["role"] == "director" and (role != "director" or status != "active") and not self._directors_left(uid):
             raise AuthError("В программе должен остаться хотя бы один директор", 400)
         perms = f.get("perms")
         perms_json = (json.dumps({"perms": [p for p in perms if p in PERM_KEYS], "known": PERM_KEYS})
                       if isinstance(perms, list) and role != "director" else None)
+        if status == "active":
+            had = set(self.effective_perms(u)) if u["status"] == "active" else set()
+            self._only_grant_own(actor, set(self.effective_perms({"role": role, "perms": perms_json})) - had)
         approved = u["status"] == "pending" and status == "active"
         with self.db.tx() as c:
             c.execute("UPDATE users SET name=?, position=?, role=?, perms=?, status=?, doctor_id=?, "
@@ -748,6 +781,7 @@ class Auth:
         if base not in BASE_ROLES:
             raise AuthError("Выберите, на какую роль похожа должность", 400)
         perms = [p for p in (f.get("perms") or []) if p in PERM_KEYS]
+        self._only_grant_own(actor, set(perms) - set((rs.get(key) or {}).get("perms") or []))
         if key and key == (actor or {}).get("role") and "staff" not in perms:
             raise AuthError("Нельзя убрать у своей должности право «Сотрудники» — иначе вы не сможете вернуть его", 400)
         new = not key
@@ -766,6 +800,7 @@ class Auth:
         key = str(key or "")
         if key not in ROLES or key == "director":
             raise AuthError("Вернуть можно только встроенную должность", 400)
+        self._only_grant_own(actor, set(ROLES[key]["perms"]) - set(roles(self.db)[key]["perms"]))
         with self.db.tx() as c:
             c.execute("DELETE FROM staff_roles WHERE key=?", (key,))
         self.log(actor, "Права должности как в программе", ROLES[key]["title"])
@@ -797,6 +832,8 @@ class Auth:
         u = self.db.one("SELECT * FROM users WHERE id=?", (int(uid),))
         if not u:
             raise AuthError("Сотрудник не найден", 404)
+        if self._not_director(actor) and u["role"] == "director":
+            raise AuthError("Пароль директора может сбросить только директор", 403)
         pw = _check_new_password(new)
         with self.db.tx() as c:
             c.execute("UPDATE users SET pass_hash=? WHERE id=?", (hash_password(pw), u["id"]))

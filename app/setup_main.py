@@ -36,7 +36,9 @@ def main():
     try:
         exe = installer.install_zip(_payload(), installer.install_dir())
     except Exception as e:  # noqa: BLE001
-        installer.message(f"Не удалось установить {config.BRAND['name']}: {e}\n\nЗакройте программу и запустите файл ещё раз.")
+        # install_zip put the old version back; this same file repairs the folder when run again
+        installer.message(f"Не удалось установить {config.BRAND['name']}: {e}\n\nЗакройте программу и запустите этот файл ещё раз:\n"
+                          f"{os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else sys.argv[0])}")
         return 1
     try:
         installer.make_shortcuts(exe)
