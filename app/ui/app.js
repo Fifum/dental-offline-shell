@@ -108,6 +108,14 @@ function toast(t, bad) {
   const el = $("#toast"); el.textContent = t; el.className = "toast" + (bad ? " bad" : ""); el.hidden = false; clearTimeout(toastT);
   toastT = setTimeout(() => { el.classList.add("out"); toastT = setTimeout(() => { el.hidden = true; el.classList.remove("out"); }, 160); }, bad ? 4800 : 3200);
 }
+/** В6: the button stays off until the action ends — a double click or a second Enter does nothing. */
+async function busy(btn, fn) {
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  try { return await fn(); } finally { btn.disabled = false; }
+}
+/** Request id of a window: the server does a money action sent twice with it only once. */
+const reqId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 const money = n => (Math.round((+n || 0) * 100) / 100).toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2}) + " ₽";
 const nowLocal = () => { const d = new Date(); return `${iso(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 let REF = null;
@@ -469,9 +477,10 @@ function openNewPatient(q = "") {
     return p;
   };
   mkSourceList().then(list => { const sel = $("#npSrc", box); if (sel) sel.innerHTML += list.map(x => `<option>${esc(x)}</option>`).join(""); });
-  $("#npSave", box).onclick = async () => { const p = await save(); if (!p) return; closeModal(); toast("Пациент добавлен"); refreshStatus(); openPatient(p.id, S.view === "patient" ? S.prevView : S.view); };
-  if ($("#npSaveBook", box)) $("#npSaveBook", box).onclick = async () => { const p = await save(); if (!p) return; closeModal(); refreshStatus();
-    openBooking({patient_id: p.id, patient_name: p.name, start: `${S.day} ${pad(Math.min(20, new Date().getHours() + 1))}:00`}); };
+  const npSave = $("#npSave", box), npBook = $("#npSaveBook", box);
+  npSave.onclick = () => !(npBook && npBook.disabled) && busy(npSave, async () => { const p = await save(); if (!p) return; closeModal(); toast("Пациент добавлен"); refreshStatus(); openPatient(p.id, S.view === "patient" ? S.prevView : S.view); });
+  if (npBook) npBook.onclick = () => !npSave.disabled && busy(npBook, async () => { const p = await save(); if (!p) return; closeModal(); refreshStatus();
+    openBooking({patient_id: p.id, patient_name: p.name, start: `${S.day} ${pad(Math.min(20, new Date().getHours() + 1))}:00`}); });
 }
 $("#tbAddPatient").onclick = () => openNewPatient();
 /* 3.7: change the card of a patient. A Dentist Plus patient: the change goes to «Перенос» (or by itself with the

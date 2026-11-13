@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS insurance_docs(
 CREATE TABLE IF NOT EXISTS insurance_registries(
     id TEXT PRIMARY KEY, insurer_id TEXT, number TEXT, date_from TEXT, date_to TEXT, invoice_ids TEXT, total REAL,
     status TEXT, created_at TEXT, created_by TEXT, sent_at TEXT, paid_at TEXT, paid_total REAL, note TEXT);
+-- answers to money actions by the request id of the window (a double click is done once); local, kept 3 days
+CREATE TABLE IF NOT EXISTS client_requests(rid TEXT PRIMARY KEY, result TEXT, at TEXT);
 """
 
 DEPOSIT = "Из аванса"
@@ -131,6 +133,8 @@ class Finance:
         for r in self.db.q(f"""SELECT i.id, i.total, i.created_at, (SELECT COALESCE(SUM(amount),0) FROM payments WHERE invoice_id=i.id) AS paid
                                FROM invoices i WHERE i.patient_id=? AND {INV} AND COALESCE(i.insurer_id,'')=''
                                ORDER BY i.created_at""", (pid,)):
+            if (r["total"] or 0) < 0:  # К7: a negative invoice (made before the checks) is never money to give back
+                continue
             over = round((r["paid"] or 0) - (r["total"] or 0), 2)
             if over > 0.009:
                 out.append({"invoice_id": r["id"], "amount": over, "title": f"Переплата по счёту от {_fmt(r['created_at'])}"})
@@ -263,12 +267,15 @@ class Finance:
             self._status(iid)
         return rows
 
-    def before_invoice_delete(self, iid):
-        """Deleting an invoice gives the advance spent on it back to the patient (both sides of the move go)."""
+    def check_invoice_delete(self, iid):
         used = self.db.one("""SELECT COUNT(*) AS n FROM membership_uses u JOIN memberships m ON m.id=u.membership_id
                               WHERE m.invoice_id=? AND u.invoice_id<>?""", (iid, iid))["n"]
         if used:
             raise ValueError("Этим счётом продан абонемент, и по нему уже были услуги. Сначала уберите услуги «по абонементу» из других счетов.")
+
+    def before_invoice_delete(self, iid):
+        """Deleting an invoice gives the advance spent on it back to the patient (both sides of the move go)."""
+        self.check_invoice_delete(iid)
         for g in {r["link_id"] for r in self.db.q("SELECT link_id FROM payments WHERE invoice_id=? AND kind='deposit_use'", (iid,))}:
             rows = self.db.q("SELECT id, invoice_id FROM payments WHERE link_id=? AND kind='deposit_use'", (g,))
             with self.db.tx() as c:
@@ -567,16 +574,27 @@ class Finance:
                                float(it.get("qty") or 1), _now()))
 
     # ============================================================ cash shifts --
+    def _window(self, sh):
+        """(from, to, «to» included) of the shift. В10: a shift left open (two computers opened one each without the
+        network) ends where the next shift begins, so the same money is never counted by two shifts."""
+        a, b, incl = sh["opened_at"], sh["closed_at"] or "9999", True
+        nxt = self.db.one("SELECT opened_at FROM cash_shifts WHERE id<>? AND (opened_at>? OR (opened_at=? AND id>?)) "
+                          "ORDER BY opened_at, id LIMIT 1", (sh["id"], a, a, sh["id"]))
+        if nxt and nxt["opened_at"] <= b:
+            b, incl = nxt["opened_at"], False
+        return a, b, incl
+
     def _shift_numbers(self, sh) -> dict:
-        a, b = sh["opened_at"], sh["closed_at"] or "9999"
+        a, b, incl = self._window(sh)
+        le = "<=" if incl else "<"
         def pays(method):
-            return round(self.db.one("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE method=? AND created_at>=? AND created_at<=?",
+            return round(self.db.one(f"SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE method=? AND created_at>=? AND created_at{le}?",
                                      (method, a, b))["s"], 2)
         def certs(method):
-            return round(self.db.one("SELECT COALESCE(SUM(amount),0) AS s FROM certificates WHERE method=? AND sold_at>=? AND sold_at<=?",
+            return round(self.db.one(f"SELECT COALESCE(SUM(amount),0) AS s FROM certificates WHERE method=? AND sold_at>=? AND sold_at{le}?",
                                      (method, a, b))["s"], 2) if self._has("certificates") else 0.0
-        refunds = round(self.db.one("""SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE kind='refund' AND method=?
-                                       AND created_at>=? AND created_at<=?""", (CASH, a, b))["s"], 2)
+        refunds = round(self.db.one(f"""SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE kind='refund' AND method=?
+                                       AND created_at>=? AND created_at{le}?""", (CASH, a, b))["s"], 2)
         moves = self.db.q("SELECT * FROM cash_moves WHERE shift_id=? ORDER BY at", (sh["id"],))
         m_in = round(sum(m["amount"] for m in moves if m["kind"] == "in"), 2)
         m_out = round(sum(m["amount"] for m in moves if m["kind"] == "out"), 2)
@@ -585,7 +603,7 @@ class Finance:
         expected = round((sh["open_cash"] or 0) + cash + cert_cash + m_in - m_out, 2)
         card = round(pays(CARD) + certs(CARD), 2)
         sbp = round(pays(SBP) + certs(SBP), 2)
-        n = self.db.one("SELECT COUNT(*) AS n FROM payments WHERE created_at>=? AND created_at<=? AND amount>0 AND COALESCE(kind,'')=''",
+        n = self.db.one(f"SELECT COUNT(*) AS n FROM payments WHERE created_at>=? AND created_at{le}? AND amount>0 AND COALESCE(kind,'')=''",
                         (a, b))["n"]
         return {"cash_in": round(cash - refunds, 2), "refunds_cash": round(-refunds, 2), "cert_cash": cert_cash, "moves_in": m_in,
                 "moves_out": m_out, "expected_cash": expected, "card": card, "sbp": sbp, "moves": moves, "payments": n}
@@ -605,9 +623,14 @@ class Finance:
         return sh
 
     def shift_current(self) -> dict:
-        r = self.db.one("SELECT id FROM cash_shifts WHERE status='open' ORDER BY opened_at DESC LIMIT 1")
+        opened = self.db.q("SELECT id FROM cash_shifts WHERE status='open' ORDER BY opened_at DESC, id DESC")
         last = self.db.one("SELECT counted_cash, closed_at, closed_by FROM cash_shifts WHERE status='closed' ORDER BY closed_at DESC LIMIT 1")
-        return {"shift": self.shift(r["id"]) if r else None, "last_left": round(last["counted_cash"] or 0, 2) if last else 0.0,
+        # В10: shifts are replicated; two computers without the network may each open one — the older ones are shown to close
+        extra = [self.shift(r["id"]) for r in opened[1:]]
+        return {"shift": self.shift(opened[0]["id"]) if opened else None, "extra": extra,
+                "warning": (f"Открыто несколько кассовых смен ({len(opened)}) — так бывает после работы без сети. "
+                            "Закройте лишние: пересчитайте наличные по каждой.") if extra else "",
+                "last_left": round(last["counted_cash"] or 0, 2) if last else 0.0,
                 "last_closed": last["closed_at"] if last else None, "in_reasons": MOVE_IN, "out_reasons": MOVE_OUT}
 
     def shift_open(self, f, who="") -> dict:
@@ -648,7 +671,12 @@ class Finance:
 
     def shift_close(self, f, who="") -> dict:
         f = f or {}
-        cur = self.shift_current()["shift"]
+        if f.get("id"):  # В10: the shift the cashier closes, not «the last open one»
+            cur = self.shift(f["id"])
+            if not cur or cur["status"] != "open":
+                raise ValueError("Эта смена уже закрыта или не найдена — обновите экран")
+        else:
+            cur = self.shift_current()["shift"]
         if not cur:
             raise ValueError("Открытой смены нет")
         if f.get("counted_cash") in (None, ""):

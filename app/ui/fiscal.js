@@ -1,7 +1,8 @@
 "use strict";
 /* Fiscal receipts: shift, X/Z reports, receipts of the day, returns, register settings. */
 const RCPT_ST = {done: ["Пробит", "st-ok"], test: ["Тестовый", "st-come"], error: ["Ошибка", "st-cancel"], pending: ["Печатается…", ""],
-  refunded: ["Возвращён", ""], not_required: ["Не нужен", ""]};
+  unknown: ["Результат неизвестен", "st-cancel"], refunded: ["Возвращён", ""], not_required: ["Не нужен", ""]};
+const RCPT_OPEN = ["pending", "unknown"];  // К6: the receipt may be on paper — check the register before printing again
 
 /** No receipt is needed: organisation's transfer, bonuses, an insurance company, the minus side of an advance move. */
 function finNoReceipt(p) {
@@ -12,12 +13,14 @@ function receiptPill(p) {
   const r = p.receipt;
   if (!r) return finNoReceipt(p) ? `<span class="pill">чек не нужен</span>` : (canAny("fiscal", "payments") ? `<button class="linkbtn" data-print-pay="${esc(p.id)}">пробить чек</button>` : `<span class="pill st-cancel">без чека</span>`);
   const [t, c] = RCPT_ST[r.status] || [r.status, ""];
+  if (!r.id) return `<span class="pill ${c}" title="Чек пробит на другом компьютере">чек: ${t.toLowerCase()}</span>`;
   return `<button class="pill ${c} pill-btn-lite" data-rcpt="${esc(r.id)}" title="Открыть чек">чек: ${t.toLowerCase()}</button>`;
 }
 
 function receiptToast(r, okText) {
   if (!r) return toast(okText);
   if (r.status === "error") return toast(`${okText}, но чек не пробит: ${r.error}. Повторите в разделе «Касса».`, true);
+  if (RCPT_OPEN.includes(r.status)) return toast(`${okText}, но результат чека неизвестен: ${r.error || "касса не ответила"}. Проверьте на кассе, напечатан ли он, — в разделе «Касса».`, true);
   if (r.status === "not_required") return toast(`${okText}. ${r.message}`);
   toast(`${okText}. ${r.status === "test" ? "Тестовый чек" : "Чек пробит"}${r.fd ? ", ФД № " + r.fd : ""}`);
 }
@@ -36,13 +39,15 @@ async function renderFiscal(day) {
     : sh.state === "expired" ? `<span class="bad-t">Смена № ${esc(sh.number ?? "")} открыта больше 24 часов — закройте её (Z-отчёт)</span>`
     : "Смена закрыта — откроется сама с первым чеком";
   const f = can("fiscal");
-  const paid = new Set(rows.filter(r => r.kind === "sell" && ["done", "test"].includes(r.status)).map(r => r.payment_id));
-  const noReceipt = ((S.cash || {}).payments || []).filter(p => !paid.has(p.id) && !finNoReceipt(p) && !rows.some(r => r.payment_id === p.id && r.status === "error"));
+  const paid = new Set(rows.filter(r => r.kind === "sell" && ["done", "test", ...RCPT_OPEN].includes(r.status)).map(r => r.payment_id));
+  // the mark on the payment comes from the computer the receipt was printed on
+  const noReceipt = ((S.cash || {}).payments || []).filter(p => !paid.has(p.id) && !p.receipt_state && !finNoReceipt(p) && !rows.some(r => r.payment_id === p.id && r.status === "error"));
   el.innerHTML = `<div class="fiscal-bar ${st.test ? "test" : ""}">
       <div class="fb-main"><b>${esc(st.driver_title)}</b>${st.test ? '<span class="pill st-come">чеки не фискальные</span>' : ""}<span class="muted">${shiftTxt}</span></div>
       ${f ? `<div class="fb-acts">${sh.state === "opened" || sh.state === "expired" ? "" : `<button class="btn ghost small" id="fOpen">Открыть смену</button>`}
         <button class="btn ghost small" id="fX">X-отчёт</button>${sh.state === "opened" || sh.state === "expired" ? `<button class="btn small" id="fZ">Закрыть смену (Z-отчёт)</button>` : ""}</div>` : ""}</div>
     ${st.failed ? `<div class="warn-line bad">Не пробито чеков: ${st.failed}. Проверьте кассу (бумага, связь, смена) и нажмите «Повторить».</div>` : ""}
+    ${st.unknown ? `<div class="warn-line bad">Чеков с неизвестным результатом: ${st.unknown}. Касса могла их напечатать — сверьте с кассой и нажмите «Проверить».</div>` : ""}
     ${noReceipt.length ? `<div class="warn-line">Оплаты за день без чека: ${noReceipt.length}. ${noReceipt.map(p => `<button class="linkbtn" data-print-pay="${esc(p.id)}">${hm(p.created_at)} · ${esc(p.patient_name || "")} · ${money(p.amount)}</button>`).join(" ")}</div>` : ""}
     <div class="pbody" style="margin-top:12px"><div class="pb-head"><b>Чеки за день</b></div>
       ${rows.length ? `<table class="tbl"><thead><tr><th>Время</th><th>Чек</th><th>Пациент</th><th>Расчёт</th><th class="num">Сумма</th><th>Статус</th><th>ФД / ФП</th><th>Кассир</th><th></th></tr></thead><tbody>${
@@ -51,16 +56,29 @@ async function renderFiscal(day) {
           <td class="muted">${esc(r.payments.map(x => x.type === "cash" ? "наличные" : "безналичные").join(", "))}</td><td class="num"><b>${money(r.total)}</b></td>
           <td><span class="pill ${c}">${t}</span>${r.status === "error" ? `<small class="bad-t" style="display:block;max-width:260px">${esc(r.error || "")}</small>` : ""}</td>
           <td class="muted">${r.fd ? `${esc(r.fd)} / ${esc(r.fp)}` : "—"}</td><td class="muted">${esc(r.user_name || "")}</td>
-          <td class="acts">${r.status === "error" && canAny("fiscal", "payments") ? `<button class="btn ghost small" data-retry="${esc(r.id)}">Повторить</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`
+          <td class="acts">${r.status === "error" && canAny("fiscal", "payments") ? `<button class="btn ghost small" data-retry="${esc(r.id)}">Повторить</button>`
+            : RCPT_OPEN.includes(r.status) && canAny("fiscal", "payments") ? `<button class="btn ghost small" data-retry="${esc(r.id)}" data-unknown="1">Проверить</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`
         : `<div class="empty"><b>Чеков за этот день нет</b></div>`}</div>`;
   const on = (id, fn) => { const b = $(id); if (b) b.onclick = fn; };
   const act = (fn, ok) => async () => { try { await fn(); toast(ok); } catch (e) { toast(errText(e), true); } renderFiscal(day); };
   on("#fOpen", act(() => api.fiscal_open_shift(), "Смена открыта"));
   on("#fX", act(() => api.fiscal_x_report(), "X-отчёт напечатан"));
   on("#fZ", async () => { if (await ask("Закрыть смену?", {icon: "print", ok: "Закрыть смену", text: "Касса напечатает Z-отчёт. Новая смена откроется сама с первым чеком."})) act(() => api.fiscal_close_shift(), "Смена закрыта, Z-отчёт напечатан")(); });
-  $$("#fiscalPanel [data-retry]").forEach(b => b.onclick = async e => { e.stopPropagation(); try { receiptToast(await api.fiscal_retry(b.dataset.retry), "Повтор"); } catch (x) { toast(errText(x), true); } renderFiscal(day); });
+  $$("#fiscalPanel [data-retry]").forEach(b => b.onclick = async e => { e.stopPropagation();
+    const checked = b.dataset.unknown ? await askUnknownReceipt() : null; if (b.dataset.unknown && !checked) return;
+    await busy(b, async () => { try { receiptToast(await api.fiscal_retry(b.dataset.retry, checked), "Повтор"); } catch (x) { toast(errText(x), true); } });
+    renderFiscal(day); });
   $$("#fiscalPanel [data-print-pay]").forEach(b => b.onclick = async () => { try { receiptToast(await api.fiscal_for_payment(b.dataset.printPay, ""), "Готово"); } catch (x) { toast(errText(x), true); } renderFiscal(day); });
   $$("#fiscalPanel tr[data-r]").forEach(tr => tr.onclick = () => openReceipt(tr.dataset.r, () => renderFiscal(day)));
+}
+
+/** К6: a receipt with an unknown result: the cashier checks the register → "printed" / "not_printed" / null (cancel). */
+async function askUnknownReceipt() {
+  if (await ask("Чек напечатан на кассе?", {icon: "print", ok: "Да, напечатан", cancel: "Нет / не знаю",
+    text: "Касса не сообщила результат. Посмотрите последний чек на кассе (или отчёт о текущем состоянии расчётов). Если чек есть — отметьте его пробитым, повторно печатать не нужно."})) return "printed";
+  if (await ask("Пробить чек ещё раз?", {icon: "print", danger: true, ok: "Пробить", cancel: "Отмена",
+    text: "Пробивайте только если на кассе этого чека точно нет — иначе пациент получит два чека."})) return "not_printed";
+  return null;
 }
 
 async function openReceipt(id, after) {
@@ -81,14 +99,15 @@ async function openReceipt(id, after) {
       ${r.contact ? `<div class="rc-row"><span>Эл. адрес покупателя</span><span>${esc(r.contact)}</span></div>` : ""}
       ${r.fd ? `<div class="rc-f">ФН ${esc(r.fn)} · ФД № ${esc(r.fd)} · ФП ${esc(r.fp)}${r.shift ? " · смена " + esc(r.shift) : ""}${r.number ? " · чек " + esc(r.number) : ""}</div>` : ""}
     </div>
-    <div><span class="pill ${c}">${t}</span> ${r.status === "error" ? `<span class="bad-t">${esc(r.error || "")}</span>` : ""}</div></div>
+    <div><span class="pill ${c}">${t}</span> ${r.status === "error" || RCPT_OPEN.includes(r.status) ? `<span class="bad-t">${esc(r.error || "")}</span>` : ""}</div></div>
     <div class="m-f"><span class="muted">${r.patient_name ? esc(r.patient_name) : ""}</span>
       ${r.kind === "sell" && ["done", "test"].includes(r.status) && !r.refunded && can("fiscal") ? `<button class="btn ghost danger" id="rcRefund">Чек возврата</button>` : ""}
-      ${r.status === "error" && canAny("fiscal", "payments") ? `<button class="btn ghost" id="rcRetry">Повторить</button>` : ""}
+      ${(r.status === "error" || RCPT_OPEN.includes(r.status)) && canAny("fiscal", "payments") ? `<button class="btn ghost" id="rcRetry">${r.status === "error" ? "Повторить" : "Проверить"}</button>` : ""}
       <button class="btn ghost" id="rcPrint">Печать копии</button><button class="btn" data-close>Закрыть</button></div>`);
   const on = (s, f) => { const el = $(s, box); if (el) el.onclick = f; };
   on("#rcPrint", () => { $("#printArea").innerHTML = `<div class="receipt print">${$("#rcptBody").innerHTML}<div class="rc-f">Копия, не является кассовым чеком</div></div>`; window.print(); });
-  on("#rcRetry", async () => { try { receiptToast(await api.fiscal_retry(r.id), "Повтор"); closeModal(); if (after) after(); } catch (e) { toast(errText(e), true); } });
+  on("#rcRetry", async () => { const checked = RCPT_OPEN.includes(r.status) ? await askUnknownReceipt() : null; if (RCPT_OPEN.includes(r.status) && !checked) return;
+    try { receiptToast(await api.fiscal_retry(r.id, checked), "Повтор"); closeModal(); if (after) after(); } catch (e) { toast(errText(e), true); } });
   on("#rcRefund", async () => {
     if (!(await ask(`Пробить чек возврата на ${money(r.total)}?`, {danger: true, ok: "Пробить возврат", text: "Деньги пациенту нужно вернуть тем же способом, каким он платил."}))) return;
     try { receiptToast(await api.fiscal_refund(r.id), "Возврат оформлен"); closeModal(); afterChange(); if (after) after(); } catch (e) { toast(errText(e), true); }

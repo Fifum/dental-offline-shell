@@ -2,6 +2,8 @@
 
 Certificates: sold for money (the sale is shown in the day's cash), redeemed as a payment method
 «Сертификат» with the certificate's code; the balance goes down and comes back if the payment is deleted.
+The balance is the face value minus the redemptions (`cert_moves`, replicated row by row); the column `balance`
+is only a copy of it, so redemptions on two computers never overwrite each other.
 
 Bonuses: a percent of every money payment is credited (off until the clinic sets the percent); bonuses pay
 a part of an invoice («Бонусы», at most `max_share` percent of it). A family shares one bonus account.
@@ -103,10 +105,21 @@ class Loyalty:
                        str(f.get("note") or "")[:300]))
         return self.certificate(code)
 
+    BAL = "ROUND(certificates.amount - (SELECT COALESCE(SUM(m.amount),0) FROM cert_moves m WHERE m.cert_id=certificates.id), 2)"
+
+    def _sync_balance(self, c, cert_id=None):
+        """Bring the stored copy of the balance in line with the redemptions (В11)."""
+        c.execute(f"UPDATE certificates SET balance={self.BAL} WHERE {'id=? AND ' if cert_id else ''}"
+                  f"ABS(COALESCE(balance,0) - {self.BAL}) > 0.004", (cert_id,) if cert_id else ())
+
     def certificate(self, code) -> dict:
-        r = self.db.one("SELECT * FROM certificates WHERE code=?", (norm_code(code),))
+        r = self.db.one(f"SELECT *, {self.BAL} AS real_balance FROM certificates WHERE code=?", (norm_code(code),))
         if not r:
             raise ValueError("Сертификат с таким номером не найден")
+        if abs((r["balance"] or 0) - r["real_balance"]) > 0.004:  # e.g. after merging edits from another computer
+            with self.db.tx() as cx:
+                self._sync_balance(cx, r["id"])
+        r["balance"] = r.pop("real_balance")
         r["expired"] = bool(r["expires"] and r["expires"] < date.today().isoformat())
         r["usable"] = r["status"] == "active" and not r["expired"] and r["balance"] > 0.009
         r["moves"] = self.db.q("""SELECT m.amount, m.at, p.name AS patient_name FROM cert_moves m LEFT JOIN payments pay ON pay.id=m.payment_id
@@ -114,9 +127,10 @@ class Loyalty:
         return r
 
     def certificates(self, status="active") -> dict:
-        rows = self.db.q("SELECT * FROM certificates ORDER BY sold_at DESC")
+        rows = self.db.q(f"SELECT *, {self.BAL} AS real_balance FROM certificates ORDER BY sold_at DESC")
         today = date.today().isoformat()
         for r in rows:
+            r["balance"] = r.pop("real_balance")
             r["expired"] = bool(r["expires"] and r["expires"] < today)
         if status == "active":
             rows = [r for r in rows if r["status"] == "active" and not r["expired"] and r["balance"] > 0.009]
@@ -135,8 +149,8 @@ class Loyalty:
     def redeem(self, code, amount, payment_id):
         c = self.check_redeem(code, amount)
         with self.db.tx() as cx:
-            cx.execute("UPDATE certificates SET balance=ROUND(balance-?,2) WHERE id=?", (amount, c["id"]))
             cx.execute("INSERT INTO cert_moves(cert_id, payment_id, amount, at) VALUES(?,?,?,?)", (c["id"], payment_id, amount, _now()))
+            self._sync_balance(cx, c["id"])
 
     def cancel_certificate(self, code) -> dict:
         c = self.certificate(code)
@@ -252,5 +266,5 @@ class Loyalty:
         with self.db.tx() as c:
             c.execute("DELETE FROM bonus_moves WHERE payment_id=?", (payment_id,))
             for m in c.execute("SELECT id, cert_id, amount FROM cert_moves WHERE payment_id=?", (payment_id,)).fetchall():
-                c.execute("UPDATE certificates SET balance=ROUND(balance+?,2) WHERE id=?", (m[2], m[1]))
                 c.execute("DELETE FROM cert_moves WHERE id=?", (m[0],))
+                self._sync_balance(c, m[1])

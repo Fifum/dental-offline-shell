@@ -926,14 +926,51 @@ class Api:
             t += line - line * float(it.get("discount") or 0) / 100
         return round(t - t * float(inv.get("discount") or 0) / 100, 2)
 
+    def _paid_edit(self, inv):
+        """В14: once an invoice has payments, its services and sum change only with «Оплаты» or «Бухгалтерия».
+        Returns the old total when they change (it goes to the journal), None when they stay."""
+        old = self._db.one("SELECT items, total, discount, kind FROM invoices WHERE id=?", (inv.get("id"),)) if inv.get("id") else None
+        if not old or (old["kind"] or "invoice") != "invoice" or not self._db.one("SELECT 1 AS x FROM payments WHERE invoice_id=?", (inv["id"],)):
+            return None
+
+        def sig(items, disc):
+            return ([(str(x.get("title") or ""), round(float(x.get("price") or 0), 2), float(x.get("qty") or 1),
+                      float(x.get("discount") or 0)) for x in items], float(disc or 0))
+        try:
+            same = (sig(json.loads(old["items"] or "[]"), old["discount"]) == sig(inv.get("items") or [], inv.get("discount"))
+                    and abs(self._inv_total(inv) - (old["total"] or 0)) < 0.009)
+        except (TypeError, ValueError, AttributeError):
+            same = False
+        if same:
+            return None
+        perms, _ = self._my_perms()
+        if not perms & {"payments", "accounting"}:
+            raise ValueError("По счёту уже есть оплаты: услуги и сумму может менять сотрудник с правом «Оплаты» или «Бухгалтерия»")
+        return round(old["total"] or 0, 2)
+
+    def _journal(self, action, detail):
+        u = self._me()
+        try:
+            with self._db.tx() as c:
+                c.execute("INSERT INTO audit(at, user_id, user_name, action, detail, ip) VALUES(?,?,?,?,?,?)",
+                          (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), (u or {}).get("id"), (u or {}).get("name") or self._who() or "",
+                           action, str(detail)[:500], ""))
+        except Exception:  # noqa: BLE001 — no journal in a bare database
+            pass
+
     def save_invoice(self, inv):
         is_inv = (inv.get("kind") or "invoice") != "plan"
         before = self._pst.status_of(inv.get("id")) if not is_inv and inv.get("id") else None
+        old_total = None
         if is_inv:
+            old_total = self._paid_edit(inv)
             self._fin.check_uses(inv)  # lines «по абонементу» cost 0 and need visits left on the membership
             if inv.get("insurer_id"):
                 self._fin.check_payer(inv, self._inv_total(inv))
         iid = self._local.save_invoice(inv)
+        if old_total is not None:
+            new = (self._db.one("SELECT total, patient_id FROM invoices WHERE id=?", (iid,)) or {})
+            self._journal("Изменён счёт с оплатами", f"Счёт {iid}, пациент {new.get('patient_id') or ''}: сумма {old_total:g} → {(new.get('total') or 0):g} ₽")
         self._mot.stamp_invoice(iid, self._me())  # 3.4: own sales of an administrator (motivation)
         if is_inv:
             self._fin.write_uses(iid, inv.get("items"))
@@ -1028,21 +1065,70 @@ class Api:
         return out
 
     def delete_invoice(self, iid):
-        for p in self._db.q("SELECT id FROM payments WHERE invoice_id=?", (iid,)):
+        pays = self._db.q("SELECT id, kind FROM payments WHERE invoice_id=?", (iid,))
+        for p in pays:
             if self._fiscal.payment_has_receipt(p["id"]):
                 raise ValueError("По оплатам этого счёта пробиты чеки. Сначала оформите чеки возврата (раздел «Касса»).")
+        self._fin.check_invoice_delete(iid)
+        if any((p["kind"] or "") != "deposit_use" for p in pays):  # К8: real money goes only with «Оплаты»
+            raise ValueError("По счёту есть оплаты. Сначала удалите оплаты (это может сотрудник с правом «Оплаты»), затем счёт.")
+        gone = {p["id"] for p in pays}
+        for g in {r["link_id"] for r in self._db.q("SELECT link_id FROM payments WHERE invoice_id=? AND kind='deposit_use'", (iid,))}:
+            gone |= {r["id"] for r in self._db.q("SELECT id FROM payments WHERE link_id=? AND kind='deposit_use'", (g,))}
         self._fin.before_invoice_delete(iid)  # the advance spent on it goes back to the patient
         self._local.delete_invoice(iid)
+        for pid in gone:
+            self._loyal.on_payment_deleted(pid)
         self._fin.after_invoice_delete(iid)
         self._stock.on_invoice(iid)  # invoice gone: its automatic write-off goes back to stock
         return True
 
+    # В6: an action sent twice with the same request id (double click, a repeated request) is done once
+    _req_lock = threading.Lock()
+    _req_busy: dict = {}
+
+    def _once(self, rid, method, fn, keep=lambda out: True):
+        rid = str(rid or "").strip()[:80]
+        if not rid:
+            return fn()
+        key = f"{method}:{rid}"
+        while True:
+            with self._req_lock:
+                row = self._db.one("SELECT result FROM client_requests WHERE rid=?", (key,))
+                if row:
+                    return json.loads(row["result"])
+                ev = self._req_busy.get(key)
+                mine = ev is None
+                if mine:
+                    ev = self._req_busy[key] = threading.Event()
+            if mine:
+                break
+            ev.wait(180)  # the first one is still running: then its stored answer is returned
+        try:
+            out = fn()
+            if keep(out):
+                with self._db.tx() as c:
+                    c.execute("DELETE FROM client_requests WHERE at < ?", ((datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S"),))
+                    c.execute("INSERT OR REPLACE INTO client_requests(rid, result, at) VALUES(?,?,?)",
+                              (key, json.dumps(out, ensure_ascii=False, default=str), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            return out
+        finally:
+            with self._req_lock:
+                self._req_busy.pop(key, None)
+            ev.set()
+
     def add_payment(self, p):
+        p = p or {}
+        return self._once(p.get("request_id"), "add_payment", lambda: self._add_payment(p), lambda out: out.get("ok"))
+
+    def _add_payment(self, p):
         import loyalty
         method = p.get("method") or "Наличные"
         try:
             amount = round(float(p.get("amount") or 0), 2)
             inv = self._db.one("SELECT patient_id FROM invoices WHERE id=?", (p.get("invoice_id"),)) if p.get("invoice_id") else None
+            if p.get("invoice_id") and not inv:  # В13
+                raise ValueError("Счёт удалён на другом компьютере — откройте карточку заново")
             patient = inv["patient_id"] if inv else p.get("patient_id")
             if not inv and method not in loyalty.MONEY_METHODS:
                 raise ValueError("Аванс принимается деньгами: наличными, картой, по СБП или переводом")
@@ -1081,7 +1167,8 @@ class Api:
         rows = self._fin.group_rows(pay_id)  # a move of the advance or a refund goes as a whole
         for r in rows:
             if self._fiscal.payment_has_receipt(r["id"]):
-                raise ValueError("По этой оплате пробит чек. Сначала оформите чек возврата (раздел «Касса»), затем удалите оплату.")
+                raise ValueError("По этой оплате пробит чек (или он отправлен на кассу и результат неизвестен). "
+                                 "Сначала оформите чек возврата (раздел «Касса»), затем удалите оплату.")
             if self._fiscal.refund_printed(r["id"]):
                 raise ValueError("По этому возврату пробит чек возврата — удалить возврат нельзя.")
         self._fin.can_delete(pay_id)
@@ -1113,6 +1200,9 @@ class Api:
 
     def refund(self, f):
         f = f or {}
+        return self._once(f.get("request_id"), "refund", lambda: self._refund(f))
+
+    def _refund(self, f):
         r = self._fin.refund(f, self._who())
         import fiscal
         fs = fiscal.settings()
@@ -1175,6 +1265,9 @@ class Api:
     def cash_move(self, f):
         """Money put into or taken out of the drawer; «Расход из кассы» can go to the expenses at once."""
         f = f or {}
+        return self._once(f.get("request_id"), "cash_move", lambda: self._cash_move(f))
+
+    def _cash_move(self, f):
         eid = None
         if f.get("kind") == "out" and f.get("expense"):
             cur = self._fin.shift_current()["shift"]
@@ -1440,8 +1533,8 @@ class Api:
     def fiscal_receipt(self, rid):
         return self._fiscal.receipt(rid)
 
-    def fiscal_retry(self, rid):
-        return self._fiscal.retry(rid, self._who())
+    def fiscal_retry(self, rid, checked=None):
+        return self._fiscal.retry(rid, self._who(), checked if checked in ("printed", "not_printed") else None)
 
     def fiscal_refund(self, rid):
         return self._fiscal.refund(rid, self._who())

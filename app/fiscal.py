@@ -7,11 +7,17 @@ Drivers:
 
 The payment is always saved first. A receipt that failed (no paper, shift over 24 h, device off)
 stays in the list with the reason and can be printed again from the cash screen.
+
+A receipt whose result is not known (the register did not answer in time, the program was closed while printing)
+is «unknown», never printed again by itself: the cashier checks the register first. ATOL tasks keep their uuid,
+so a repeat asks the register about the same task instead of printing a second receipt. Every payment carries
+`receipt_state` (payments are replicated, receipts are not), so the other computers see that it has a receipt.
 """
 from __future__ import annotations
 
 import json
 import random
+import sqlite3
 import threading
 import time
 import uuid
@@ -26,6 +32,12 @@ CREATE TABLE IF NOT EXISTS receipts(
     fn TEXT, fd TEXT, fp TEXT, shift TEXT, number TEXT, fiscal_at TEXT, user_name TEXT, created_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_receipts_payment ON receipts(payment_id);
 """
+LIVE = ("pending", "unknown", "done", "test")  # a receipt that is (or may be) on paper
+# one live receipt per payment and kind (and per returned receipt)
+LIVE_INDEX = """CREATE UNIQUE INDEX IF NOT EXISTS ux_receipts_live ON receipts(payment_id, kind, COALESCE(refund_of, ''))
+                WHERE status IN ('pending','unknown','done','test')"""
+UNKNOWN_MSG = ("Результат этого чека неизвестен: касса могла его напечатать. Проверьте на кассе последний чек, "
+               "затем отметьте, напечатан ли он.")
 
 DEFAULTS = {
     "enabled": False,
@@ -51,6 +63,10 @@ METHOD_TITLES = {"fullPayment": "Полный расчёт", "partialPayment": "
 
 class FiscalError(ValueError):
     """Shown to the user as is (the server turns ValueError into a readable 400 answer)."""
+
+
+class FiscalUnknown(FiscalError):
+    """The task may have reached the register: the receipt may be on paper. Never printed again by itself."""
 
 
 def _now():
@@ -130,21 +146,27 @@ class AtolWebDriver:
         self.timeout = timeout
         self.http = session or requests.Session()
 
-    def _task(self, task):
+    def _task(self, task, uid=None):
+        """`uid` of an earlier task: the web server keeps tasks by uuid (409 on a repeat), so its result is read
+        instead of printing again."""
         import requests
-        uid = str(uuid.uuid4())
+        uid = uid or str(uuid.uuid4())
         try:
             r = self.http.post(f"{self.url}/api/v2/requests", json={"uuid": uid, "request": [task]}, timeout=10)
         except requests.RequestException as e:
-            raise FiscalError(f"Нет связи с веб-сервером драйвера АТОЛ ({self.url}). Проверьте, что драйвер запущен.") from e
-        if r.status_code not in (200, 201):
+            if isinstance(e, requests.ConnectTimeout) or "NewConnectionError" in repr(e) or "establish a new connection" in str(e):
+                raise FiscalError(f"Нет связи с веб-сервером драйвера АТОЛ ({self.url}). Проверьте, что драйвер запущен.") from e
+            raise FiscalUnknown("Драйвер АТОЛ не ответил на задание. Результат чека проверьте на кассе.") from e
+        if r.status_code == 409:
+            pass  # this uuid is already there: a repeat of the same task — read its result
+        elif r.status_code not in (200, 201):
             raise FiscalError(f"Драйвер АТОЛ отклонил задание: HTTP {r.status_code} {r.text[:200]}")
         end = time.time() + self.timeout
         while time.time() < end:
             try:
                 res = self.http.get(f"{self.url}/api/v2/requests/{uid}", timeout=10).json()
             except (requests.RequestException, ValueError) as e:
-                raise FiscalError("Драйвер АТОЛ перестал отвечать. Результат чека проверьте на кассе.") from e
+                raise FiscalUnknown("Драйвер АТОЛ перестал отвечать. Результат чека проверьте на кассе.") from e
             items = res.get("results") or []
             if items and items[0].get("status") in ("ready", "error", "interrupted", "blocked"):
                 it = items[0]
@@ -153,7 +175,7 @@ class AtolWebDriver:
                     raise FiscalError(f"Касса: {msg}")
                 return it.get("result") or {}
             time.sleep(0.4)
-        raise FiscalError("Касса не ответила за минуту. Проверьте на кассе, напечатан ли чек, прежде чем пробивать снова.")
+        raise FiscalUnknown("Касса не ответила за минуту. Проверьте на кассе, напечатан ли чек, прежде чем пробивать снова.")
 
     @staticmethod
     def _operator(op):
@@ -189,7 +211,7 @@ class AtolWebDriver:
                 "payments": [{"type": p["type"], "sum": p["sum"]} for p in r["payments"]], "total": r["total"]}
         if r.get("contact"):
             task["clientInfo"] = {"emailOrPhone": r["contact"]}
-        fp = (self._task(task).get("fiscalParams") or {})
+        fp = (self._task(task, r.get("uuid")).get("fiscalParams") or {})
         return {"fn": str(fp.get("fnNumber", "")), "fd": str(fp.get("fiscalDocumentNumber", "")),
                 "fp": str(fp.get("fiscalDocumentSign", "")), "shift": str(fp.get("shiftNumber", "")),
                 "number": str(fp.get("fiscalReceiptNumber", "")), "fiscal_at": str(fp.get("fiscalDocumentDateTime", "") or _now())}
@@ -298,10 +320,41 @@ class ShtrihDriver:
 class Fiscal:
     def __init__(self, db, driver_override=None):
         self.db = db
-        db.conn.executescript(SCHEMA)
-        db.conn.commit()
+        with db._lock:
+            db.conn.executescript(SCHEMA)
+            if "ext_uuid" not in {r[1] for r in db.conn.execute("PRAGMA table_info(receipts)")}:
+                db.conn.execute("ALTER TABLE receipts ADD COLUMN ext_uuid TEXT")  # the ATOL task of the receipt
+            if "receipt_state" not in {r[1] for r in db.conn.execute("PRAGMA table_info(payments)")}:
+                db.conn.execute("ALTER TABLE payments ADD COLUMN receipt_state TEXT")
+            try:
+                db.conn.execute(LIVE_INDEX)
+            except sqlite3.IntegrityError:  # receipts printed twice before the index: the checks in code still hold
+                pass
+            db.conn.commit()
         self._lock = threading.Lock()  # one register, one operation at a time
         self._override = driver_override
+        self._busy = set()  # receipts being sent to the register now
+        self._busy_lock = threading.Lock()
+        for r in db.q("SELECT DISTINCT payment_id FROM receipts WHERE payment_id IS NOT NULL"):  # marks of older receipts
+            with db.tx() as c:
+                self._mark(c, r["payment_id"])
+
+    @staticmethod
+    def _mark(c, payment_id):
+        """Copy the receipt state of a payment to the payment row (replicated): done / test / refunded / unknown."""
+        if not payment_id:
+            return
+        rows = c.execute("SELECT id, kind, status, refund_of FROM receipts WHERE payment_id=?", (payment_id,)).fetchall()
+        own = [r for r in rows if r[1] == "sell" or (r[1] == "refund" and not r[3])]
+        done = [r for r in own if r[2] in ("done", "test")]
+        st = None
+        if done:
+            back = all(any(x[3] == d[0] and x[2] in ("done", "test") for x in rows) for d in done)
+            st = "refunded" if back else done[0][2]
+        elif any(r[2] in ("pending", "unknown") for r in own):
+            st = "unknown"
+        c.execute("UPDATE payments SET receipt_state=? WHERE id=? AND COALESCE(receipt_state,'')<>COALESCE(?,'')",
+                  (st, payment_id, st))
 
     def driver(self, s=None):
         if self._override:
@@ -330,7 +383,8 @@ class Fiscal:
         s = settings()
         out = {"enabled": s["enabled"], "driver": s["driver"], "driver_title": DRIVERS.get(s["driver"]),
                "test": s["driver"] == "emulator", "auto": s["auto"], "shift": None, "error": None,
-               "failed": self.db.one("SELECT COUNT(*) AS n FROM receipts WHERE status='error'")["n"]}
+               "failed": self.db.one("SELECT COUNT(*) AS n FROM receipts WHERE status='error'")["n"],
+               "unknown": self.db.one("SELECT COUNT(*) AS n FROM receipts WHERE status IN ('pending','unknown')")["n"]}
         if s["enabled"]:
             try:
                 out["shift"] = self._call(lambda: self.driver(s).shift_status())
@@ -396,23 +450,80 @@ class Fiscal:
                 "patient_id": p["patient_id"], "invoice_id": p["invoice_id"]}
 
     def _print(self, rid, body, user):
-        """Send a stored receipt to the register and record the result."""
-        r = self.db.one("SELECT * FROM receipts WHERE id=?", (rid,))
-        task = {"kind": r["kind"], "items": json.loads(r["items"]), "payments": json.loads(r["payments"]), "total": r["total"],
-                "taxation": body.get("taxation") or settings()["taxation"], "operator": self._operator(user),
-                "contact": r["contact"] or "", "electronically": bool(body.get("electronically"))}
-        drv = self.driver()
+        """Send a stored receipt to the register and record the result. The receipt is «pending» (with the uuid of
+        its ATOL task) before anything goes to the register; an answer that may hide a printed receipt makes it
+        «unknown», a clear refusal of the register makes it «error» (safe to print again)."""
+        with self._busy_lock:
+            if rid in self._busy:
+                raise FiscalError("Этот чек сейчас печатается — подождите")
+            self._busy.add(rid)
         try:
-            res = self._call(lambda: drv.receipt(task))
-        except FiscalError as e:
+            r = self.db.one("SELECT * FROM receipts WHERE id=?", (rid,))
+            s = settings()
+            task = {"kind": r["kind"], "items": json.loads(r["items"]), "payments": json.loads(r["payments"]), "total": r["total"],
+                    "taxation": body.get("taxation") or s["taxation"], "operator": self._operator(user),
+                    "contact": r["contact"] or "", "electronically": bool(body.get("electronically")),
+                    "uuid": r.get("ext_uuid") or str(uuid.uuid4())}
+            drv = self.driver(s)
+            try:
+                with self.db.tx() as c:
+                    c.execute("UPDATE receipts SET status='pending', error=NULL, ext_uuid=?, driver=? WHERE id=?", (task["uuid"], s["driver"], rid))
+                    self._mark(c, r["payment_id"])
+            except sqlite3.IntegrityError:
+                raise FiscalError("По этой оплате уже есть пробитый чек") from None
+            try:
+                with self._lock:
+                    res = drv.receipt(task)
+            except FiscalUnknown as e:
+                self._set(rid, r["payment_id"], "unknown", str(e))
+                return self.receipt(rid)
+            except FiscalError as e:  # the register refused: nothing printed, the next try is a new task
+                self._set(rid, r["payment_id"], "error", str(e), clear_uuid=True)
+                return self.receipt(rid)
+            except Exception as e:  # noqa: BLE001 — failed somewhere in the middle: the result is not known
+                self._set(rid, r["payment_id"], "unknown", f"Ошибка кассы: {e}. Результат чека проверьте на кассе.")
+                return self.receipt(rid)
             with self.db.tx() as c:
-                c.execute("UPDATE receipts SET status='error', error=?, driver=? WHERE id=?", (str(e), settings()["driver"], rid))
+                c.execute("""UPDATE receipts SET status=?, error=NULL, fn=?, fd=?, fp=?, shift=?, number=?, fiscal_at=?
+                             WHERE id=?""", ("test" if drv.test else "done", res["fn"], res["fd"], res["fp"],
+                                            res["shift"], res["number"], res["fiscal_at"], rid))
+                self._mark(c, r["payment_id"])
             return self.receipt(rid)
+        finally:
+            with self._busy_lock:
+                self._busy.discard(rid)
+
+    def _set(self, rid, payment_id, status, error, clear_uuid=False):
         with self.db.tx() as c:
-            c.execute("""UPDATE receipts SET status=?, error=NULL, driver=?, fn=?, fd=?, fp=?, shift=?, number=?, fiscal_at=?
-                         WHERE id=?""", ("test" if drv.test else "done", settings()["driver"], res["fn"], res["fd"], res["fp"],
-                                        res["shift"], res["number"], res["fiscal_at"], rid))
-        return self.receipt(rid)
+            c.execute(f"UPDATE receipts SET status=?, error=?{', ext_uuid=NULL' if clear_uuid else ''} WHERE id=?", (status, error, rid))
+            self._mark(c, payment_id)
+
+    def _new(self, rid, kind, payment_id, invoice_id, patient_id, items, pays, total, contact, user, refund_of=None):
+        """Insert a «pending» receipt; refuses when the payment already has a live one (checked and written in
+        one transaction, and the unique index guards the same)."""
+        try:
+            with self.db.tx() as c:
+                live = c.execute(f"""SELECT status FROM receipts WHERE payment_id=? AND kind=? AND COALESCE(refund_of,'')=?
+                                     AND status IN ({','.join('?' * len(LIVE))})""", (payment_id, kind, refund_of or "", *LIVE)).fetchone()
+                mark = None
+                if not refund_of:
+                    m = c.execute("SELECT receipt_state FROM payments WHERE id=?", (payment_id,)).fetchone()
+                    mark = m[0] if m else None
+                if live or mark:
+                    st = live[0] if live else mark
+                    what = "Возврат по этому чеку" if refund_of else "Чек возврата по этой операции" if kind == "refund" else "Чек по этой оплате"
+                    if st in ("pending", "unknown"):
+                        raise FiscalError(f"{what} уже отправлен на кассу, результат неизвестен. Проверьте кассу и решите в разделе «Касса».")
+                    raise FiscalError(f"{what} уже {'оформлен' if refund_of else 'пробит'}" + ("" if live else " на другом компьютере"))
+                c.execute(f"DELETE FROM receipts WHERE payment_id=? AND kind=? AND COALESCE(refund_of,'')=? AND status='error'",
+                          (payment_id, kind, refund_of or ""))
+                c.execute("""INSERT INTO receipts(id, kind, payment_id, invoice_id, patient_id, refund_of, items, payments, total, contact,
+                             status, user_name, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          (rid, kind, payment_id, invoice_id, patient_id, refund_of, items, pays, total,
+                           str(contact or "").strip()[:100], "pending", user, _now()))
+                self._mark(c, payment_id)
+        except sqlite3.IntegrityError:
+            raise FiscalError("Чек по этой оплате уже печатается") from None
 
     def for_payment(self, payment_id, contact="", user="", electronically=False):
         p = self.db.one("SELECT amount, kind FROM payments WHERE id=?", (payment_id,))
@@ -420,19 +531,13 @@ class Fiscal:
             if p["kind"] == "refund":
                 return self.for_refund(payment_id, contact, user, electronically)
             return {"status": "not_required", "message": "Перенос аванса между счетами — чек не нужен"}
-        if self.db.one("SELECT 1 AS x FROM receipts WHERE payment_id=? AND kind='sell' AND status IN ('done','test')", (payment_id,)):
-            raise FiscalError("Чек по этой оплате уже пробит")
         body = self.build_for_payment(payment_id)
         if body is None:
             m = (self.db.one("SELECT method FROM payments WHERE id=?", (payment_id,)) or {}).get("method")
             return {"status": "not_required", "message": "Оплата бонусами — отдельный чек не нужен" if m == "Бонусы" else "Оплата от организации по безналу — чек не нужен"}
         rid = "C-" + uuid.uuid4().hex[:10]
-        with self.db.tx() as c:
-            c.execute("DELETE FROM receipts WHERE payment_id=? AND kind='sell' AND status='error'", (payment_id,))
-            c.execute("""INSERT INTO receipts(id, kind, payment_id, invoice_id, patient_id, items, payments, total, contact, status,
-                         user_name, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                      (rid, "sell", payment_id, body["invoice_id"], body["patient_id"], json.dumps(body["items"], ensure_ascii=False),
-                       json.dumps(body["payments"]), body["total"], str(contact or "").strip()[:100], "pending", user, _now()))
+        self._new(rid, "sell", payment_id, body["invoice_id"], body["patient_id"], json.dumps(body["items"], ensure_ascii=False),
+                  json.dumps(body["payments"]), body["total"], contact, user)
         return self._print(rid, {**body, "electronically": electronically}, user)
 
     def for_refund(self, payment_id, contact="", user="", electronically=False):
@@ -441,9 +546,6 @@ class Fiscal:
         p = self.db.one("SELECT * FROM payments WHERE id=?", (payment_id,))
         if not p or (p["amount"] or 0) >= 0 or p["kind"] != "refund":
             raise FiscalError("Возврат не найден")
-        if self.db.one("SELECT 1 AS x FROM receipts WHERE payment_id=? AND kind='refund' AND refund_of IS NULL AND status IN ('done','test')",
-                       (payment_id,)):
-            raise FiscalError("Чек возврата по этой операции уже пробит")
         ptype = PAY_TYPE.get(p["method"], "cash")
         if ptype is None:
             return {"status": "not_required", "message": "Возврат по безналу организации — чек не нужен"}
@@ -454,24 +556,43 @@ class Fiscal:
                   "quantity": 1, "price": amount, "amount": amount, "paymentMethod": "advance" if adv else "fullPayment",
                   "paymentObject": "payment" if adv else "service", "tax": s["tax"]}]
         rid = "C-" + uuid.uuid4().hex[:10]
-        with self.db.tx() as c:
-            c.execute("DELETE FROM receipts WHERE payment_id=? AND kind='refund' AND refund_of IS NULL AND status='error'", (payment_id,))
-            c.execute("""INSERT INTO receipts(id, kind, payment_id, invoice_id, patient_id, items, payments, total, contact, status,
-                         user_name, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                      (rid, "refund", payment_id, p["invoice_id"], p["patient_id"], json.dumps(items, ensure_ascii=False),
-                       json.dumps([{"type": ptype, "sum": amount}]), amount, str(contact or "").strip()[:100], "pending", user, _now()))
+        self._new(rid, "refund", payment_id, p["invoice_id"], p["patient_id"], json.dumps(items, ensure_ascii=False),
+                  json.dumps([{"type": ptype, "sum": amount}]), amount, contact, user)
         return self._print(rid, {"taxation": s["taxation"], "electronically": electronically}, user)
 
-    def refund_printed(self, payment_id) -> bool:
-        return bool(self.db.one("SELECT 1 AS x FROM receipts WHERE payment_id=? AND kind='refund' AND refund_of IS NULL "
-                                "AND status IN ('done','test')", (payment_id,)))
+    def _state(self, payment_id):
+        p = self.db.one("SELECT amount, receipt_state FROM payments WHERE id=?", (payment_id,))
+        return (p or {}).get("amount") or 0, (p or {}).get("receipt_state")
 
-    def retry(self, rid, user=""):
+    def refund_printed(self, payment_id) -> bool:
+        """True while a refund row has a return receipt (or one whose result is unknown) — here or on another computer."""
+        amount, st = self._state(payment_id)
+        if amount < 0 and st in ("done", "test", "unknown"):
+            return True
+        return bool(self.db.one("SELECT 1 AS x FROM receipts WHERE payment_id=? AND kind='refund' AND refund_of IS NULL "
+                                "AND status IN ('pending','unknown','done','test')", (payment_id,)))
+
+    def retry(self, rid, user="", checked=None):
+        """Print a failed receipt again. A receipt with an unknown result needs the cashier's answer after checking
+        the register: checked='printed' marks it printed, 'not_printed' sends it again (ATOL: the same task)."""
         r = self.db.one("SELECT * FROM receipts WHERE id=?", (rid,))
         if not r:
             raise FiscalError("Чек не найден")
         if r["status"] in ("done", "test"):
             raise FiscalError("Чек уже пробит")
+        with self._busy_lock:
+            if rid in self._busy:
+                raise FiscalError("Этот чек сейчас печатается — подождите")
+        if r["status"] in ("pending", "unknown"):
+            if checked == "printed":
+                with self.db.tx() as c:
+                    c.execute("UPDATE receipts SET status=?, error=? WHERE id=?",
+                              ("test" if (r["driver"] or settings()["driver"]) == "emulator" else "done",
+                               f"Кассир проверил кассу: чек напечатан ({user or 'без имени'}, {_now()})", rid))
+                    self._mark(c, r["payment_id"])
+                return self.receipt(rid)
+            if checked != "not_printed":
+                raise FiscalError(UNKNOWN_MSG)
         return self._print(rid, {}, user)
 
     def refund(self, rid, user=""):
@@ -479,24 +600,23 @@ class Fiscal:
         r = self.db.one("SELECT * FROM receipts WHERE id=?", (rid,))
         if not r or r["kind"] != "sell" or r["status"] not in ("done", "test"):
             raise FiscalError("Возврат можно оформить только по пробитому чеку прихода")
-        if self.db.one("SELECT 1 AS x FROM receipts WHERE refund_of=? AND status IN ('done','test')", (rid,)):
-            raise FiscalError("По этому чеку возврат уже оформлен")
         nid = "C-" + uuid.uuid4().hex[:10]
-        with self.db.tx() as c:
-            c.execute("DELETE FROM receipts WHERE refund_of=? AND status='error'", (rid,))
-            c.execute("""INSERT INTO receipts(id, kind, payment_id, invoice_id, patient_id, refund_of, items, payments, total, contact,
-                         status, user_name, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                      (nid, "refund", r["payment_id"], r["invoice_id"], r["patient_id"], rid, r["items"], r["payments"], r["total"],
-                       r["contact"], "pending", user, _now()))
+        self._new(nid, "refund", r["payment_id"], r["invoice_id"], r["patient_id"], r["items"], r["payments"], r["total"],
+                  r["contact"], user, refund_of=rid)
         return self._print(nid, {}, user)
 
     def receipt(self, rid):
         r = self.db.one("""SELECT r.*, p.name AS patient_name FROM receipts r LEFT JOIN patients p ON p.id=r.patient_id
                            WHERE r.id=?""", (rid,))
         if r:
+            r.pop("ext_uuid", None)
             r["items"] = json.loads(r["items"] or "[]")
             r["payments"] = json.loads(r["payments"] or "[]")
             r["refunded"] = bool(self.db.one("SELECT 1 AS x FROM receipts WHERE refund_of=? AND status IN ('done','test')", (rid,)))
+            if r["status"] == "pending":
+                with self._busy_lock:
+                    if rid not in self._busy:  # left «pending» by a closed program: the result is not known
+                        r["status"] = "unknown"
         return r
 
     def receipts(self, day=None, status=None):
@@ -511,8 +631,13 @@ class Fiscal:
         return [self.receipt(x["id"]) for x in self.db.q(sql + " ORDER BY r.created_at DESC", args)]
 
     def payment_has_receipt(self, payment_id):
-        """True while the payment has a printed receipt that was not returned."""
-        for r in self.db.q("SELECT id FROM receipts WHERE payment_id=? AND kind='sell' AND status IN ('done','test')", (payment_id,)):
+        """True while the payment has a receipt that was not returned — printed, being printed or with an unknown
+        result — here or on another computer (the mark on the payment travels with it)."""
+        amount, st = self._state(payment_id)
+        if amount >= 0 and st in ("done", "test", "unknown"):
+            return True
+        for r in self.db.q("SELECT id FROM receipts WHERE payment_id=? AND kind='sell' AND status IN ('pending','unknown','done','test')",
+                           (payment_id,)):
             if not self.db.one("SELECT 1 AS x FROM receipts WHERE refund_of=? AND status IN ('done','test')", (r["id"],)):
                 return True
         return False
@@ -527,6 +652,14 @@ class Fiscal:
                     st = {"id": r["id"], "status": r["status"]}
                 elif r["kind"] == "refund" and r["status"] in ("done", "test") and st:
                     st["status"] = "refunded"
+            if st and st["status"] == "pending":
+                with self._busy_lock:
+                    if st["id"] not in self._busy:
+                        st["status"] = "unknown"
+            if not st:  # printed on another computer: only the mark of the payment is here
+                mark = self._state(pid)[1]
+                if mark:
+                    st = {"id": None, "status": mark, "elsewhere": True}
             if st:
                 out[pid] = st
         return out
