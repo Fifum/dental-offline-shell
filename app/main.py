@@ -2341,9 +2341,22 @@ class Api:
             upd["write_map"] = json.loads(upd["write_map"] or "{}")
         if "patient_extras" in upd and isinstance(upd["patient_extras"], str):
             upd["patient_extras"] = json.loads(upd["patient_extras"] or "[]")
-        for k in ("interval_min", "days_back", "days_forward", "chunk_days", "per_page", "day_start", "day_end", "slot_min"):
-            if k in upd:
-                upd[k] = int(upd[k])
+        num_names = {"interval_min": "Обновлять каждые, мин", "days_back": "Дней назад", "days_forward": "Дней вперёд",
+                     "chunk_days": "Размер окна запроса, дней", "per_page": "Записей на страницу",
+                     "day_start": "Рабочий день, начало", "day_end": "Рабочий день, конец", "slot_min": "Шаг сетки, мин"}
+        for k, name in num_names.items():
+            if k in upd:  # an empty or non-numeric field used to crash int('')
+                v = upd[k]
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    upd[k] = int(v)
+                    continue
+                v = str(v if v is not None else "").strip()
+                if not v:
+                    raise ValueError(f"Заполните поле «{name}»")
+                try:
+                    upd[k] = int(v)
+                except ValueError:
+                    raise ValueError(f"Поле «{name}»: укажите целое число") from None
         if new.get("password"):
             upd["pass_enc"] = config.protect(new["password"])
         old = config.load_settings()

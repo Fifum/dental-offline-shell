@@ -33,6 +33,7 @@ function modal(html, {wide = false, onClose} = {}) {
   box.innerHTML = html;
   $("#modal").hidden = false;
   box._onClose = onClose;
+  box._dirty = false; box._gen = (box._gen || 0) + 1;
   const f = box.querySelector("[autofocus]"); if (f) setTimeout(() => f.focus(), 30);
   box.querySelectorAll("[data-close]").forEach(b => b.onclick = closeModal);
   return box;
@@ -47,7 +48,16 @@ function closeModal() {
   modalLeaveT = setTimeout(() => { if (!wrap.classList.contains("leaving")) return; wrap.hidden = true; wrap.classList.remove("leaving"); box.innerHTML = ""; }, 140);
   if (cb) cb();
 }
-document.getElementById("modal").addEventListener("mousedown", e => { if (e.target.id === "modal") closeModal(); });
+/* a click beside the dialog closes it only while nothing was typed or changed in it (a mis-click lost a dictated record) */
+const markModalDirty = e => { if (e.target.type !== "search") document.getElementById("modalBox")._dirty = true; };
+document.getElementById("modalBox").addEventListener("input", markModalDirty);
+document.getElementById("modalBox").addEventListener("change", markModalDirty);
+document.getElementById("modal").addEventListener("mousedown", async e => {
+  if (e.target.id !== "modal") return;
+  const box = document.getElementById("modalBox"), gen = box._gen;
+  if (box._dirty && !(await ask("Закрыть без сохранения?", {icon: "warn", ok: "Закрыть", cancel: "Вернуться", text: "Введённые данные не сохранятся."}))) return;
+  if (box._gen === gen) closeModal();  // not if another dialog opened meanwhile
+});
 /* ------------------------------------------- confirm / input dialogs (instead of the browser's own) */
 const ASK_ICONS = {
   question: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.8M12 17.2v.01"/></svg>',
@@ -1034,20 +1044,34 @@ function renderPatient(tab) {
 function get0(o, keys) { for (const k of keys) if (o && o[k] !== undefined && o[k] !== null && o[k] !== "") return o[k]; return ""; }
 
 /* ------------------------------------------------------------ settings */
-async function loadSettings() {
-  const s = await api.get_settings();
+/* Fill the Dentist Plus fields from get_settings(). parts: "conn" (connection), "store" («Что хранить»), "expert"
+   («Для специалиста»). After a save only the saved parts are filled, so unsaved edits in other panels stay. */
+function fillDpSettings(s, parts = ["conn", "store", "expert"]) {
   S.settings = s;
-  $("#sDemo").checked = !!s.demo; $("#sLogin").value = s.login || ""; $("#sPass").value = "";
-  $("#sPass").placeholder = s.has_password ? "сохранён — оставьте пустым" : "введите пароль";
-  $("#sBase").value = s.base_url; $("#sBack").value = s.days_back; $("#sFwd").value = s.days_forward; $("#sInt").value = s.interval_min;
-  $("#sDs").value = s.day_start; $("#sDe").value = s.day_end; $("#sAllPat").checked = !!s.sync_all_patients; $("#sAuto").checked = !!s.autostart;
-  $("#sFromP").value = s.visit_from_param; $("#sToP").value = s.visit_to_param; $("#sChunk").value = s.chunk_days; $("#sPer").value = s.per_page;
-  $("#sExtras").value = JSON.stringify(s.patient_extras, null, 1);
-  $("#sWriteMap").value = s.write_map && Object.keys(s.write_map).length ? JSON.stringify(s.write_map, null, 1) : "";
-  (s.transfer_mode === "auto" ? $("#tmAuto") : $("#tmManual")).checked = true;
-  $$(".mode-card").forEach(c => c.classList.toggle("on", c.querySelector("input").checked));
+  if (parts.includes("conn")) {
+    $("#sDemo").checked = !!s.demo; $("#sLogin").value = s.login || ""; $("#sPass").value = "";
+    $("#sPass").placeholder = s.has_password ? "сохранён — оставьте пустым" : "введите пароль";
+    $("#sBase").value = s.base_url;
+  }
+  if (parts.includes("store")) {
+    $("#sBack").value = s.days_back; $("#sFwd").value = s.days_forward; $("#sInt").value = s.interval_min;
+    $("#sDs").value = s.day_start; $("#sDe").value = s.day_end; $("#sAllPat").checked = !!s.sync_all_patients; $("#sAuto").checked = !!s.autostart;
+  }
+  if (parts.includes("expert")) {
+    $("#sFromP").value = s.visit_from_param; $("#sToP").value = s.visit_to_param; $("#sChunk").value = s.chunk_days; $("#sPer").value = s.per_page;
+    $("#sExtras").value = JSON.stringify(s.patient_extras, null, 1);
+    $("#sWriteMap").value = s.write_map && Object.keys(s.write_map).length ? JSON.stringify(s.write_map, null, 1) : "";
+  }
   loadDpMain();
   $("#dataDir").textContent = "Данные: " + s.data_dir;
+  $("#histTable tbody").innerHTML = s.history.map(h => `<tr><td>${fmtDT(h.finished)}</td><td class="${h.ok ? "ok-t" : "bad-t"}">${esc(h.message)}</td><td>${h.counts.visits ?? "—"}</td><td>${h.counts.patients ?? "—"}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">Ещё не было</td></tr>`;
+}
+async function loadSettings() {
+  const s = await api.get_settings();
+  fillDpSettings(s);
+  (s.transfer_mode === "auto" ? $("#tmAuto") : $("#tmManual")).checked = true;
+  $$(".mode-card").forEach(c => c.classList.toggle("on", c.querySelector("input").checked));
   $("#verLbl").textContent = "Версия " + (S.status.version || "");
   loadFiscalSettings();
   loadVoiceSettings();
@@ -1066,8 +1090,6 @@ async function loadSettings() {
       : "Компьютер не подключён к сети — другие компьютеры его не видят.") + (n.public ? `<div class="warn-line" style="margin-top:6px">${NET_PUBLIC_HINT}</div>` : "");
     if (typeof netClinicBind === "function") netClinicBind(n.clinic);
   }).catch(() => {});
-  $("#histTable tbody").innerHTML = s.history.map(h => `<tr><td>${fmtDT(h.finished)}</td><td class="${h.ok ? "ok-t" : "bad-t"}">${esc(h.message)}</td><td>${h.counts.visits ?? "—"}</td><td>${h.counts.patients ?? "—"}</td></tr>`).join("")
-    || `<tr><td colspan="4" class="muted">Ещё не было</td></tr>`;
 }
 /* 3.7.2: only one computer of the clinic talks to Dentist Plus (one API login: a new login logs the other one out) */
 async function loadDpMain() {
@@ -1103,6 +1125,7 @@ $$('input[name="tmode"]').forEach(r => r.onchange = async () => {
 $("#sDemo").onchange = async () => {
   const box = $("#sDemo"), demo = box.checked;
   if (demo === !!S.settings.demo) return;
+  msgBox = "#sMsg";
   if (!demo && !$("#sLogin").value.trim()) { box.checked = true; return msg("Чтобы выключить демо-режим, укажите логин API", false); }
   if (!(await ask(demo ? "Включить демо-режим?" : "Выключить демо-режим?", {icon: "warn", ok: demo ? "Включить" : "Выключить",
     text: demo ? "Сохранённые реальные данные будут удалены с этого компьютера (заметки останутся). Программа перестанет подключаться к Dentist Plus." : "Тестовые данные будут удалены, начнётся загрузка из Dentist Plus."}))) {
@@ -1110,11 +1133,11 @@ $("#sDemo").onchange = async () => {
   }
   box.disabled = true;
   try {
-    await api.save_settings(demo ? {demo} : {demo, login: $("#sLogin").value.trim(), password: $("#sPass").value});
+    const s = await api.save_settings(demo ? {demo} : {demo, login: $("#sLogin").value.trim(), password: $("#sPass").value});
     msg(demo ? "Демо-режим включён" : "Демо-режим выключен, загружаем данные из Dentist Plus", true);
     toast(demo ? "Демо-режим включён" : "Демо-режим выключен");
     S.lastLoaded = "x";
-    await loadSettings(); refreshStatus();
+    fillDpSettings(s, ["conn"]); refreshStatus();  // only the connection fields: the other panels keep their unsaved edits
   } catch (e) {
     box.checked = !demo;
     const t = String(e.message || e).replace(/^Error:\s*/, "");
@@ -1127,31 +1150,62 @@ let msgBox = "#sMsg";   // the message line next to the button that was pressed
 function msg(t, ok) {
   for (const id of ["#sMsg", "#sMsg2"]) { const m = $(id); if (m) { m.textContent = id === msgBox ? t : ""; m.className = "msg " + (ok ? "ok" : "bad"); } }
 }
+const STORE_NUMS = [["#sBack", "Дней назад"], ["#sFwd", "Дней вперёд"], ["#sInt", "Обновлять каждые, мин"],
+  ["#sDs", "Рабочий день, начало"], ["#sDe", "Рабочий день, конец"]];
+const EXPERT_NUMS = [["#sChunk", "Размер окна запроса, дней"], ["#sPer", "Записей на страницу"]];
+/* the first empty or non-numeric number field: its message (and the focus), before the server is asked */
+function badNumber(fields) {
+  for (const [id, name] of fields) {
+    const el = $(id), v = el.value.trim();
+    const t = (el.validity && el.validity.badInput) || (v && !/^-?\d+$/.test(v)) ? `Поле «${name}»: укажите целое число`
+      : !v ? `Заполните поле «${name}»` : "";
+    if (t) { const d = el.closest("details"); if (d) d.open = true; el.focus(); return t; }
+  }
+  return "";
+}
+const storeFields = () => ({days_back: $("#sBack").value, days_forward: $("#sFwd").value, interval_min: $("#sInt").value,
+  day_start: $("#sDs").value, day_end: $("#sDe").value, sync_all_patients: $("#sAllPat").checked, autostart: $("#sAuto").checked});
+// 3.7.2: a computer that takes the Dentist Plus data from the main one has no API login on purpose
+const dpFollower = () => !!(S.status && S.status.dp_main && S.status.dp_main.role === "follower");
 $("#sSave").onclick = () => { msgBox = "#sMsg"; return saveSettings(); };
-// «Что хранить» is its own panel: it gets its own button (the main one sits in the connection panel above)
-$("#sSave2").onclick = () => { msgBox = "#sMsg2"; return saveSettings(); };
+// «Что хранить» saves only its own fields: no API login check (followers have none) and no JSON of «Для специалиста»
+$("#sSave2").onclick = async () => {
+  msgBox = "#sMsg2";
+  const bad = badNumber(STORE_NUMS);
+  if (bad) return msg(bad, false);
+  $("#sSave").disabled = $("#sSave2").disabled = true;
+  try {
+    const s = await api.save_settings(storeFields());
+    msg("Сохранено", true);
+    S.lastLoaded = "x";  // the working hours change the schedule grid
+    fillDpSettings(s, ["store"]); refreshStatus();
+  } catch (e) { msg("Не удалось сохранить: " + errText(e), false); }
+  $("#sSave").disabled = $("#sSave2").disabled = false;
+};
 async function saveSettings() {
+  const bad = badNumber([...STORE_NUMS, ...EXPERT_NUMS]);
+  if (bad) return msg(bad, false);
   let extras;
   try { extras = JSON.parse($("#sExtras").value || "[]"); } catch (e) { return msg("Ошибка в JSON доп. разделов", false); }
   let writeMap;
   try { writeMap = JSON.parse($("#sWriteMap").value.trim() || "{}"); } catch (e) { return msg("Ошибка в JSON настроек записи в Dentist Plus", false); }
   const demo = $("#sDemo").checked;
-  if (!demo && !$("#sLogin").value.trim()) return msg("Укажите логин или включите демо-режим", false);
+  if (!demo && !dpFollower() && !$("#sLogin").value.trim()) return msg("Укажите логин или включите демо-режим", false);
   if (demo !== !!S.settings.demo && !(await ask(demo ? "Включить демо-режим?" : "Выключить демо-режим?", {icon: "warn", ok: demo ? "Включить" : "Выключить", text: demo ? "Сохранённые реальные данные будут удалены с этого компьютера (заметки останутся)." : "Тестовые данные будут удалены, начнётся загрузка из Dentist Plus."}))) return;
   $("#sSave").disabled = $("#sSave2").disabled = true;
   try {
-    await api.save_settings({demo, login: $("#sLogin").value.trim(), password: $("#sPass").value, base_url: $("#sBase").value.trim(),
-      days_back: $("#sBack").value, days_forward: $("#sFwd").value, interval_min: $("#sInt").value, day_start: $("#sDs").value, day_end: $("#sDe").value,
-      sync_all_patients: $("#sAllPat").checked, autostart: $("#sAuto").checked, visit_from_param: $("#sFromP").value.trim(),
+    const s = await api.save_settings({demo, login: $("#sLogin").value.trim(), password: $("#sPass").value, base_url: $("#sBase").value.trim(),
+      ...storeFields(), visit_from_param: $("#sFromP").value.trim(),
       visit_to_param: $("#sToP").value.trim(), chunk_days: $("#sChunk").value, per_page: $("#sPer").value, patient_extras: extras,
       write_map: writeMap});
     msg("Сохранено. Синхронизация запущена.", true);
     S.lastLoaded = "x";
-    await loadSettings(); refreshStatus();
-  } catch (e) { msg("Не удалось сохранить: " + e, false); }
+    fillDpSettings(s); refreshStatus();  // only the Dentist Plus fields: the other panels keep their unsaved edits
+  } catch (e) { msg("Не удалось сохранить: " + errText(e), false); }
   $("#sSave").disabled = $("#sSave2").disabled = false;
 }
 $("#sTest").onclick = async () => {
+  msgBox = "#sMsg";
   msg("Проверяем…", true);
   const r = await api.test_connection($("#sLogin").value.trim(), $("#sPass").value, $("#sBase").value.trim());
   msg(r.message, r.ok);
