@@ -33,6 +33,10 @@ class OfflineError(ApiError):
     pass
 
 
+class AuthError(ApiError):
+    """POST /auth answered an error (or no token): a write that needed the login was never sent."""
+
+
 def connect_failed(e) -> bool:
     """True when the request never reached the server (no connection, DNS, refused, connect timeout, TLS handshake):
     then nothing was written. Any other connection error (dropped while sending or reading the answer) may come
@@ -88,10 +92,10 @@ class DentistPlusClient:
             raise OfflineError(f"Нет связи с сервером: {e.__class__.__name__}")
         data = self._json(r)
         if r.status_code >= 400:
-            raise ApiError(self._err_text(data) or f"Ошибка авторизации (HTTP {r.status_code})", r.status_code)
+            raise AuthError(self._err_text(data) or f"Ошибка авторизации (HTTP {r.status_code})", r.status_code)
         token = get(data, "token", "access_token", "data.token", "data.access_token", "api_token") if isinstance(data, dict) else None
         if not token:
-            raise ApiError("Сервер не вернул токен авторизации")
+            raise AuthError("Сервер не вернул токен авторизации", r.status_code)
         self.token = token
         self.token_exp = self._exp(data.get("expires_at") if isinstance(data, dict) else None)
         self.s.headers["Authorization"] = f"Bearer {token}"
@@ -165,7 +169,8 @@ class DentistPlusClient:
         """POST/PUT/PATCH. Returns (status_code, json). Never retries a write after it reached the
         server (avoids duplicates); only a failure to connect (nothing was sent) is reported as offline. A connection
         dropped later may come after the server did the write: the result is unknown (ApiError, status None).
-        401 (token expired) and 429 (too many requests) mean the server did not do the write, so those are repeated."""
+        401 (token expired) and 429 (too many requests) mean the server did not do the write, so those are repeated.
+        A failed login on the way (AuthError) also means nothing was written: the caller may send again later."""
         self._ensure_token()
         url = f"{self.base}/{path.lstrip('/')}"
         reauth = True

@@ -153,6 +153,8 @@ class SyncWorker(threading.Thread):
                 counts["push_waiting"] = wait  # review 2026-11 (В17): not before the clinic network brought the latest rows
             elif s.get("transfer_mode") == "auto" and self.db.pending_count():
                 from pusher import Pusher
+                if not self.db.one("SELECT 1 FROM branches LIMIT 1"):
+                    self._branches_first(client, s, counts)  # review minor 12: a fresh base knows no branch to send to
                 self._set(phase="Отправка изменений в Dentist Plus…", progress=2)
                 pushed = Pusher(self.db, client, s).run()
                 counts["pushed"] = pushed
@@ -222,6 +224,19 @@ class SyncWorker(threading.Thread):
         self._set(running=False, phase=msg, last_error=msg)
 
     # ------------------------------------------------------------ steps --
+    def _branches_first(self, c: DentistPlusClient, s: dict, counts: dict):
+        """Branches and doctors before the very first send (POST /patients, /visits need a branch_id); _pull loads
+        them again right after, and prunes the doctors."""
+        self._set(phase="Филиалы…", progress=1)
+        per_page = int(s.get("per_page", 100))
+        try:
+            self.db.upsert_branches(list(c.paged("branches", per_page=per_page)))
+            self.db.upsert_doctors(list(c.paged("doctors", per_page=per_page)))
+        except OfflineError:
+            raise
+        except ApiError as e:
+            counts["branches_error"] = str(e)
+
     def _pull(self, c: DentistPlusClient, s: dict, counts: dict):
         per_page = int(s.get("per_page", 100))
 
