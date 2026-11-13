@@ -1123,8 +1123,14 @@ $("#sDemo").onchange = async () => {
   box.disabled = false;
 };
 $("#sWriteMapDef").onclick =async () => { $("#sWriteMap").value = JSON.stringify(await api.write_map_default(), null, 1); };
-function msg(t, ok) { const m = $("#sMsg"); m.textContent = t; m.className = "msg " + (ok ? "ok" : "bad"); }
-$("#sSave").onclick = async () => {
+let msgBox = "#sMsg";   // the message line next to the button that was pressed
+function msg(t, ok) {
+  for (const id of ["#sMsg", "#sMsg2"]) { const m = $(id); if (m) { m.textContent = id === msgBox ? t : ""; m.className = "msg " + (ok ? "ok" : "bad"); } }
+}
+$("#sSave").onclick = () => { msgBox = "#sMsg"; return saveSettings(); };
+// «Что хранить» is its own panel: it gets its own button (the main one sits in the connection panel above)
+$("#sSave2").onclick = () => { msgBox = "#sMsg2"; return saveSettings(); };
+async function saveSettings() {
   let extras;
   try { extras = JSON.parse($("#sExtras").value || "[]"); } catch (e) { return msg("Ошибка в JSON доп. разделов", false); }
   let writeMap;
@@ -1132,7 +1138,7 @@ $("#sSave").onclick = async () => {
   const demo = $("#sDemo").checked;
   if (!demo && !$("#sLogin").value.trim()) return msg("Укажите логин или включите демо-режим", false);
   if (demo !== !!S.settings.demo && !(await ask(demo ? "Включить демо-режим?" : "Выключить демо-режим?", {icon: "warn", ok: demo ? "Включить" : "Выключить", text: demo ? "Сохранённые реальные данные будут удалены с этого компьютера (заметки останутся)." : "Тестовые данные будут удалены, начнётся загрузка из Dentist Plus."}))) return;
-  $("#sSave").disabled = true;
+  $("#sSave").disabled = $("#sSave2").disabled = true;
   try {
     await api.save_settings({demo, login: $("#sLogin").value.trim(), password: $("#sPass").value, base_url: $("#sBase").value.trim(),
       days_back: $("#sBack").value, days_forward: $("#sFwd").value, interval_min: $("#sInt").value, day_start: $("#sDs").value, day_end: $("#sDe").value,
@@ -1143,8 +1149,8 @@ $("#sSave").onclick = async () => {
     S.lastLoaded = "x";
     await loadSettings(); refreshStatus();
   } catch (e) { msg("Не удалось сохранить: " + e, false); }
-  $("#sSave").disabled = false;
-};
+  $("#sSave").disabled = $("#sSave2").disabled = false;
+}
 $("#sTest").onclick = async () => {
   msg("Проверяем…", true);
   const r = await api.test_connection($("#sLogin").value.trim(), $("#sPass").value, $("#sBase").value.trim());
