@@ -304,7 +304,9 @@ with A:
     admin = {"id": 99, "role": "admin", "name": "Админ", "perms": None}
     authm.set_current_user(admin)
     refuses("admin cannot see the clinic key code", A.api.cloud_code, "директор")
-    refuses("3.1: admin may update the program (refused only for want of a downloaded file)", A.api.update_install, "Сначала скачайте")
+    refuses("3.8.1 (М20): an employee without «Настройки» may not install an update", A.api.update_install, "Настройки")
+    authm.set_current_user({**admin, "perms": json.dumps(["settings"])})
+    refuses("М20: with «Настройки» — refused only for want of a downloaded file", A.api.update_install, "Сначала скачайте")
     authm.set_current_user(None)
     new = [m for m in dir(Api) if m.startswith(("cloud_", "update_", "import_"))]
     check("every new method has a permission", all(m in authm.METHOD_PERMS for m in new), [m for m in new if m not in authm.METHOD_PERMS])

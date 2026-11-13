@@ -51,6 +51,24 @@ def _money(v):
     return x
 
 
+def _label_dups(db, rows):
+    """М1: each computer numbers its own orders (MAX+1), so two computers without a connection can give the same
+    number. The order made first keeps it; the later ones show «15-2», «15-3» (the same on every computer)."""
+    dups = {r["number"] for r in db.q("SELECT number FROM lab_orders WHERE number IS NOT NULL GROUP BY number HAVING COUNT(*)>1")}
+    if not dups or not any(r.get("number") in dups for r in rows):
+        return rows
+    rank = {}
+    for n in dups:
+        for i, x in enumerate(db.q("SELECT id FROM lab_orders WHERE number=? ORDER BY created_at, id", (n,))):
+            rank[x["id"]] = i + 1
+    for r in rows:
+        k = rank.get(r["id"], 1) if r.get("number") in dups else 1
+        r["dup"] = k > 1
+        if k > 1:
+            r["number"] = f"{r['number']}-{k}"
+    return rows
+
+
 class Lab:
     def __init__(self, db):
         self.db = db
@@ -86,6 +104,7 @@ class Lab:
                              ORDER BY CASE WHEN o.status IN ('new','sent','fitting','redo') THEN 0 ELSE 1 END, COALESCE(o.due_date,'9999'), o.created_at DESC""",
                           args)
         today = date.today().isoformat()
+        _label_dups(self.db, rows)
         for r in rows:
             r["status_text"] = STATUSES.get(r["status"], r["status"])
             r["overdue"] = bool(r["status"] in OPEN and r["due_date"] and r["due_date"] < today)

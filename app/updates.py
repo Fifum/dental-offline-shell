@@ -38,6 +38,7 @@ import config
 
 log = logging.getLogger("updates")
 CHECK_EVERY_S = 60
+INSTALL_GIVE_UP_S = 10 * 60  # М17: the installer waits for the program to close a few minutes at most
 FIRST_CHECK_S = 30
 MAX_SIZE = 600 * 1024 * 1024
 ENC = "aes-256-ctr"
@@ -375,10 +376,23 @@ class Updater:
             raise ValueError("Файл обновления изменился после скачивания — скачайте заново")
         if not getattr(sys, "frozen", False) and not os.environ.get("DD_UPDATE_RUN"):
             raise ValueError("Установка обновления работает только в установленной программе")
-        self.state["installing"] = True
-        subprocess.Popen([path], close_fds=True, creationflags=0x00000008 | 0x00000200)  # noqa: S603 — signed file
+        self.state.update(installing=True, error="")
+        self._installing_at = time.time()
+        try:
+            subprocess.Popen([path], close_fds=True, creationflags=0x00000008 | 0x00000200)  # noqa: S603 — signed file
+        except OSError as e:
+            self.state["installing"] = False
+            raise ValueError(f"Не удалось запустить установку обновления: {e}") from None
         log.info("update %s started: %s", doc.get("version"), path)
         return True
+
+    def installing(self) -> bool:
+        """М17: the installer closes this program; if it is still running long after, the installer gave up
+        (the program did not close, or the person pressed «Отмена») — back to normal, «Обновить» works again."""
+        if self.state["installing"] and time.time() - getattr(self, "_installing_at", 0) > INSTALL_GIVE_UP_S:
+            self.state.update(installing=False, error="Обновление не установилось: программа не закрылась. Нажмите «Обновить» ещё раз.")
+            log.warning("update: the installer did not close the program, giving up")
+        return self.state["installing"]
 
 
 def _sha256(path) -> str:
@@ -402,7 +416,7 @@ class UpdateWorker(threading.Thread):
     def run(self):
         time.sleep(float(os.environ.get("DD_UPDATE_DELAY", FIRST_CHECK_S)))
         while not self.stop_flag:
-            if source() and not UPDATER.state["downloading"] and not UPDATER.state["installing"]:
+            if source() and not UPDATER.state["downloading"] and not UPDATER.installing():
                 try:
                     UPDATER.check()
                 except Exception:  # noqa: BLE001 — never let the worker die

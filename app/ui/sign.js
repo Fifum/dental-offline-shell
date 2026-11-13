@@ -153,7 +153,7 @@ async function loadTabletSettings() {
       ${list.map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${esc(fmtDT(t.created_at))}</td><td>${esc(fmtDT(t.last_seen))}</td><td class="row-acts"><button class="linkbtn" data-rv="${esc(t.id)}">отключить</button></td></tr>`).join("")}
     </tbody></table>` : `<p class="muted">Планшетов пока нет.</p>`}
     <div class="row"><button class="btn" id="tbPair">Подключить планшет</button></div>
-    <p class="hint">Планшет должен быть в той же сети Wi-Fi, что и этот компьютер. Адрес для планшета: ${net.urls.length ? net.urls.map(u => `<code>${esc(u)}t</code>`).join(" или ") : "компьютер не подключён к сети"}.</p>
+    <p class="hint">Планшет должен быть в той же сети Wi-Fi, что и этот компьютер, — в рабочей сети клиники, не в гостевой для пациентов: анкеты и подписи идут по сети без шифрования. Адрес для планшета: ${net.urls.length ? net.urls.map(u => `<code>${esc(u)}t</code>`).join(" или ") : "компьютер не подключён к сети"}.</p>
     ${net.public ? `<div class="warn-line">${NET_PUBLIC_HINT}</div>` : ""}`;
   $$("[data-rv]", box).forEach(b => b.onclick = async () => { if (await ask("Отключить планшет?", {danger: true, ok: "Отключить", text: "Чтобы снова пользоваться им, его нужно будет подключить новым кодом."})) { await api.tablet_revoke(b.dataset.rv); loadTabletSettings(); } });
   $("#tbPair", box).onclick = async () => {

@@ -140,12 +140,13 @@ async function loadUpdatePanel(check) {
   const notes = st.available && st.notes ? `<details class="pl-notes"><summary>Что нового</summary><pre>${esc(st.notes)}</pre></details>` : "";
   const err = st.error ? `<div class="warn-line">${esc(st.error)}</div>` : "";
   const prog = st.downloading ? `<div class="pl-prog"><i style="width:${st.progress}%"></i></div><div class="muted">Скачиваем… ${st.progress}%</div>` : "";
-  const can = !client;  // 3.1: any employee may update (the file is signed and checked)
-  const btn = !st.available ? "" : st.ready ? `<button class="btn" id="upInstall" ${can ? "" : "disabled"}>Обновить сейчас</button>`
-    : `<button class="btn" id="upGet" ${can && !st.downloading ? "" : "disabled"}>Скачать обновление</button>`;
+  const may = !client && updMay();  // М20: «Настройки» and the program's own window on this computer
+  const btn = !st.available ? "" : st.ready ? `<button class="btn" id="upInstall" ${may ? "" : "disabled"}>Обновить сейчас</button>`
+    : `<button class="btn" id="upGet" ${may && !st.downloading ? "" : "disabled"}>Скачать обновление</button>`;
   box.innerHTML = `${head}${err}${notes}${prog}
     <div class="row">${btn}${st.configured ? `<button class="btn ghost" id="upCheck">Проверить сейчас</button>` : ""}<span class="msg" id="upMsg"></span></div>
     <p class="hint">${client ? "Этот компьютер подключён к серверу клиники: обновите программу на компьютере-сервере, а здесь — установщиком."
+      : !updLocal() ? "Обновление ставится в окне программы на том компьютере, где она установлена: так программа не закроется посреди чужого приёма."
       : "Программа сама проверяет новую версию раз в минуту. Файл обновления подписан разработчиком: программа проверяет подпись и контрольную сумму и не запустит чужой файл. Перед обновлением программа закроется и сохранит резервную копию."}</p>`;
   const c = $("#upCheck"); if (c) c.onclick = () => loadUpdatePanel(true);
   const g = $("#upGet");
@@ -189,7 +190,7 @@ function netPairRequests(st) {
 function netClinicHtml(c) {
   if (!c || !c.configured) return "";
   const ago = t => t ? fmtDT(t) : "ещё не было";
-  const peers = (c.peers || []).map(p => `<li><b>${esc(p.host || p.name || p.node)}</b> — ${p.online ? '<span class="ok-t">в сети</span>' : "не в сети"}, обмен: ${esc(ago(p.last_sync))}${p.error && p.online ? ` <span class="bad-t">${esc(p.error)}</span>` : ""}</li>`).join("");
+  const peers = (c.peers || []).map(p => `<li><b>${esc(p.host || p.name || p.node)}</b> — ${p.online ? '<span class="ok-t">в сети</span>' : "не в сети"}, обмен: ${esc(ago(p.last_sync))}${p.error && p.online ? ` <span class="bad-t">${esc(p.error)}</span>` : ""}${p.clock && !(p.error && p.online && p.error === p.clock) ? ` <span class="bad-t">${esc(p.clock)}</span>` : ""}</li>`).join("");
   const others = isDirector() && c.lone ? (c.others || []).map(o => `<div class="row" style="margin:6px 0"><span>В сети есть компьютер <b>${esc(o.host)}</b> (клиника «${esc(o.clinic_name)}»), ещё не объединённый с этим.</span><button class="btn small" data-join="${esc(o.clinic)}">Объединить с ним</button></div>`).join("") : "";
   const j = c.join && c.join.state === "wait" ? `<div class="warn-line" style="margin:6px 0">Запрос отправлен. Код для проверки: <b>${esc(c.join.code)}</b> — директор должен нажать «Принять» на том компьютере.</div>` : "";
   return `<div style="margin-bottom:8px">Клиника «<b>${esc(c.clinic_name)}</b>», этот компьютер: <b>${esc(c.computer)}</b>${c.paused ? ` <span class="bad-t">${esc(c.paused)}</span>` : ""}</div>
@@ -210,6 +211,8 @@ function netClinicBind() {
 /* banner for the director and the cloud subscription warning (called from refreshStatus) */
 function platformStatus(st) {
   netPairRequests(st);
+  const clk = st.net && st.net.clock && st.net.clock[0];  // М14: a wrong clock stops the exchange and decides conflicts
+  if (clk && S.clockWarned !== clk) { S.clockWarned = clk; toast(clk + ". Пока часы не исправлены, обмен с этим компьютером может не идти.", true); }
   const u = st.update;
   if (u && u.available) updateBanner(u);
   const c = st.cloud;
@@ -223,6 +226,8 @@ function platformStatus(st) {
 /* 3.1: «Вышла новая версия X.Y.Z» bottom right for every employee; «Обновить» downloads, checks and installs.
    Redrawn only when its state changes; the download progress is updated in place from the 3-second status. */
 const UPD = {hidden: "", want: false, busy: false, drawn: ""};
+const updLocal = () => /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+const updMay = () => updLocal() && can("settings");  // М20: the same rule as the server's update_install
 function updateBanner(u) {
   if (UPD.hidden === u.latest && !UPD.want) return;
   let el = $("#updBanner");
@@ -231,7 +236,7 @@ function updateBanner(u) {
   const pct = Math.max(0, Math.min(100, +u.progress || 0));
   if (UPD.drawn !== state + u.latest) {
     UPD.drawn = state + u.latest;
-    el.innerHTML = state === "new" ? `<span>Вышла новая версия <b>${esc(u.latest)}</b></span><button class="btn small" id="updGo">Обновить</button><button class="x" id="updClose" title="Скрыть" aria-label="Скрыть">×</button>`
+    el.innerHTML = state === "new" ? `<span>Вышла новая версия <b>${esc(u.latest)}</b>${updMay() ? "" : " — обновит директор в окне программы на этом компьютере"}</span>${updMay() ? `<button class="btn small" id="updGo">Обновить</button>` : ""}<button class="x" id="updClose" title="Скрыть" aria-label="Скрыть">×</button>`
       : state === "dl" ? `<div class="upd-dl"><span>Скачиваем версию <b>${esc(u.latest)}</b>… <b id="updPct">${pct}%</b></span><div class="pl-prog"><i id="updBar" style="width:${pct}%"></i></div></div>`
       : state === "go" ? `<span>Устанавливаем версию <b>${esc(u.latest)}</b> — программа сейчас закроется и откроется снова</span>`
       : `<span class="bad-t">${esc(u.error)}</span><button class="btn small" id="updGo">Повторить</button><button class="x" id="updClose" title="Скрыть" aria-label="Скрыть">×</button>`;

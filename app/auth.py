@@ -137,6 +137,44 @@ def set_current_user(user):
     _current.user = user
 
 
+LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
+class request_scope:
+    """М18/М20: this thread serves a network request from `ip`. Inside it a missing user means «refuse», not «the
+    program itself» (background jobs and startup run outside any request and keep full access)."""
+
+    def __init__(self, ip):
+        self.ip = str(ip or "")
+
+    def __enter__(self):
+        self.prev = (getattr(_current, "request", False), getattr(_current, "ip", ""))
+        _current.request, _current.ip = True, self.ip
+        return self
+
+    def __exit__(self, *exc):
+        _current.request, _current.ip = self.prev
+        return False
+
+
+def in_request() -> bool:
+    return bool(getattr(_current, "request", False))
+
+
+def acting_user():
+    """The calling employee; None only for the program itself. A network request without a checked user is refused."""
+    u = getattr(_current, "user", None)
+    if u is None and in_request():
+        raise AuthError("Войдите в программу заново")
+    return u
+
+
+def local_call() -> bool:
+    """The program's own window on this computer (or the program itself), not a session from another device."""
+    return not in_request() or getattr(_current, "ip", "") in LOOPBACK
+
+
+
 def current_user_name() -> str:
     u = getattr(_current, "user", None)
     return u["name"] if u else ""
@@ -301,7 +339,7 @@ METHOD_PERMS = {
     "dp_main_status": ANY_USER, "dp_main_claim": "settings",
     "p2p_status": "settings", "p2p_accept": "settings", "p2p_reject": "settings", "p2p_sync": ANY_USER,
     "p2p_join_other": "settings",
-    "update_status": ANY_USER, "update_check": ANY_USER, "update_download": ANY_USER, "update_install": ANY_USER,
+    "update_status": ANY_USER, "update_check": ANY_USER, "update_download": ANY_USER, "update_install": "settings",  # М20: and only in this computer's window
     "import_preview": "settings", "import_run": "settings", "import_dp_all": "settings",
 }
 
@@ -384,6 +422,12 @@ AUDITED = {
     "consent_revoke": "Отзыв согласия на запись приёма", "teeth_voice": "Зубная формула голосом",
     "day_expense_save": "Расход за день", "day_expense_delete": "Удаление расхода за день",
     "day_report_send": "Отчёт за день отправлен на почту", "day_report_settings_save": "Настройки отчёта за день на почту",
+    # М19
+    "voice_enroll": "Образец голоса сотрудника", "voice_delete": "Удаление образца голоса",
+    "local_ai_install": "Установка ИИ на компьютер", "local_ai_pull": "Скачивание модели ИИ",
+    "local_ai_delete": "Удаление модели ИИ", "speech_use": "Выбор модели распознавания речи",
+    "tablet_cancel": "Отмена задания на планшете",
+    "patient": "Открыта карточка пациента", "file_get": "Открыт файл пациента",  # only the id (server.py: once in 10 min)
 }
 
 SESSION_IDLE = timedelta(hours=12)
@@ -417,6 +461,15 @@ def check_password(password: str, stored: str) -> bool:
         return hmac.compare_digest(dk.hex(), want)
     except (ValueError, AttributeError):
         return False
+
+
+_DUMMY = []
+
+
+def _dummy_hash() -> str:
+    if not _DUMMY:
+        _DUMMY.append(hash_password(secrets.token_hex(8)))
+    return _DUMMY[0]
 
 
 def _token_hash(token: str) -> str:
@@ -561,14 +614,16 @@ class Auth:
             raise AuthError("Логин: от 3 символов, без пробелов", 400)
         pw = _check_new_password(f.get("password"))
         mark = self._throttle("reg:" + ip)
+        ph = hash_password(pw)  # М19: before the check — a taken login answers no faster than a free one
         if self.db.one("SELECT 1 AS x FROM users WHERE login=?", (login,)):
+            # the person must learn the login is taken to pick another; guessing is held by the throttle (5 a minute per address)
             self._fail("reg:" + ip)
             raise AuthError("Такой логин уже занят", 409)
         self._passed("reg:" + ip, mark)
         wanted = f.get("role") if f.get("role") in roles() and f.get("role") != "director" else ""
         with self.db.tx() as c:
             c.execute("INSERT INTO users(login, name, position, role, pass_hash, status, created_at) VALUES(?,?,?,?,?,?,?)",
-                      (login, name, str(f.get("position") or "").strip(), wanted, hash_password(pw), "pending", _now()))
+                      (login, name, str(f.get("position") or "").strip(), wanted, ph, "pending", _now()))
         user = self.db.one("SELECT * FROM users WHERE login=?", (login,))
         self.log(user, "Заявка на регистрацию", f"{name}, {f.get('position') or ''}", ip)
         return {"ok": True, "message": "Заявка отправлена. Войти можно будет после одобрения директором."}
@@ -578,7 +633,8 @@ class Auth:
         key = f"{login}|{ip}"
         mark = self._throttle(key)
         u = self.db.one("SELECT * FROM users WHERE login=?", (login,))
-        if not u or not check_password(str(password or ""), u["pass_hash"]):
+        # М19: an unknown login costs the same PBKDF2 as a known one — the answer time does not tell which logins exist
+        if not check_password(str(password or ""), u["pass_hash"] if u else _dummy_hash()) or not u:
             self._fail(key)
             self.log(None, "Неудачный вход", login, ip)
             raise AuthError("Неверный логин или пароль")

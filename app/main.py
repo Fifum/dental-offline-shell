@@ -20,6 +20,20 @@ log = logging.getLogger("app")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
+def _acting_user():
+    """М18: the calling employee; None only for the program itself (background jobs, startup). A network request
+    without a checked employee raises — the checks below (`u is None or …`) never let it through."""
+    from auth import acting_user
+    return acting_user()
+
+
+def _local_only(what):
+    """М20: only in the program's window on this computer, not from a session on another device."""
+    from auth import local_call
+    if not local_call():
+        raise ValueError(f"{what} можно только на этом компьютере, в окне программы")
+
+
 class Api:
     """Methods exposed to the web UI as window.pywebview.api.*"""
 
@@ -414,8 +428,7 @@ class Api:
     # ---------------------------------------------------------------- CRM --
     @staticmethod
     def _login():
-        from auth import _current
-        u = getattr(_current, "user", None)
+        u = _acting_user()
         return (u or {}).get("login") or ""
 
     def crm_summary(self):
@@ -556,8 +569,7 @@ class Api:
 
     @staticmethod
     def _me():
-        from auth import _current
-        return getattr(_current, "user", None)
+        return _acting_user()
 
     def set_visit_status(self, vid, status):
         return self._local.set_visit_status(vid, status)
@@ -1296,8 +1308,8 @@ class Api:
     # --------------------------------------- 2.14: expenses of the day, the day report by e-mail --
     @staticmethod
     def _my_perms():
-        from auth import PERM_KEYS, Auth, _current
-        u = getattr(_current, "user", None)
+        from auth import PERM_KEYS, Auth
+        u = _acting_user()
         return (set(Auth.effective_perms(u)) if u else set(PERM_KEYS)), u
 
     def day_expenses(self):
@@ -1706,8 +1718,8 @@ class Api:
         import addon
         st["addon"] = addon.info(s)  # 3.2: the director may switch the mode while others work
         try:
-            from auth import _current, Auth
-            u = getattr(_current, "user", None)
+            from auth import Auth
+            u = _acting_user()
             if u is None or {"stock_view", "stock_edit"} & set(Auth.effective_perms(u)):
                 mats = self._stock.materials()
                 st["stock_low"] = sum(1 for m in mats if m["low"] or m["balance"] < 0)
@@ -1717,39 +1729,39 @@ class Api:
             pass
         try:  # 3.6: the automatic plan statuses (at most every 10 minutes) and the abandoned plans to call about
             self._pst.tick()
-            from auth import _current, Auth
-            u = getattr(_current, "user", None)
+            from auth import Auth
+            u = _acting_user()
             if u is None or "marketing" in Auth.effective_perms(u):
                 st["plan_calls"] = self._pst.due_count()
         except Exception:  # noqa: BLE001
             log.exception("status 3.6")
         try:  # 3.5: the automatic write-off by visits (at most every 5 minutes, only in the mode «сразу») and the drafts
             self._sauto.tick()
-            from auth import _current, Auth
-            u = getattr(_current, "user", None)
+            from auth import Auth
+            u = _acting_user()
             if u is None or "stock_edit" in Auth.effective_perms(u):
                 st["stock_visits"] = self._sauto.draft_count()
         except Exception:  # noqa: BLE001
             log.exception("status 3.5")
         try:
-            from auth import _current, Auth
-            u = getattr(_current, "user", None)
+            from auth import Auth
+            u = _acting_user()
             if u is None or "lab" in Auth.effective_perms(u):
                 ls = self._lab.summary()
                 st["lab_due"] = ls["overdue"] + ls["fitting_today"]
         except Exception:  # noqa: BLE001
             pass
         try:
-            from auth import _current, Auth
-            u = getattr(_current, "user", None)
+            from auth import Auth
+            u = _acting_user()
             if u is None or "marketing" in Auth.effective_perms(u):
                 self._crm.auto()  # the rules run at most every 10 minutes
                 st["crm_due"] = self._crm.due_count((u or {}).get("login") or "")
         except Exception:  # noqa: BLE001
             log.exception("crm tasks")
         try:
-            from auth import _current, Auth
-            u = getattr(_current, "user", None)
+            from auth import Auth
+            u = _acting_user()
             if u is None or "settings" in Auth.effective_perms(u):
                 import backup
                 st["backup_warn"] = backup.warning()
@@ -1770,8 +1782,8 @@ class Api:
         except Exception:  # noqa: BLE001
             pass
         try:  # 2.14: the employee's rights now (the director may change a position while the employee works)
-            from auth import _current, Auth
-            u = getattr(_current, "user", None)
+            from auth import Auth
+            u = _acting_user()
             if u is not None:
                 st["me_perms"] = Auth.effective_perms(u)
             self._daily.tick(self._cash_for)  # the day report at the set time, at most every 5 minutes
@@ -1786,15 +1798,15 @@ class Api:
         except Exception:  # noqa: BLE001
             log.exception("status 3.3")
         try:  # 3.0: a new computer asks to join the clinic network — the director answers on any of his computers
-            from auth import _current
             import p2p
-            u = getattr(_current, "user", None)
+            u = _acting_user()
             if u is not None and u.get("role") == "director":
                 st["pair_requests"] = p2p.pending_pairs()
             if p2p.NODE:
                 ps = p2p.NODE.status()
                 st["net"] = {"peers": len(ps["peers"]), "online": sum(1 for p in ps["peers"] if p["online"]),
-                             "last_ok": ps["last_ok"], "conflicts_new": ps["conflicts_new"], "paused": ps["paused"]}
+                             "last_ok": ps["last_ok"], "conflicts_new": ps["conflicts_new"], "paused": ps["paused"],
+                             "clock": ps.get("clock") or []}  # М14
         except Exception:  # noqa: BLE001
             log.exception("status 3.0")
         return st
@@ -1870,8 +1882,7 @@ class Api:
         rec = speech.transcribe(audio, suffix, phrases, words=True)
         note = ""
         try:
-            from auth import _current
-            me = getattr(_current, "user", None)
+            me = _acting_user()
             cands = voices.candidates(self._db, doctor_id or None, me["id"] if me else None)
         except Exception:  # noqa: BLE001  (no staff table in a bare test database)
             cands = []
@@ -2098,8 +2109,8 @@ class Api:
     def offline_snapshot(self, days_back=1, days_forward=14):
         """Read-only copy for a client laptop: the schedule and the cards of patients in it, cut to what
         this employee may see. The laptop keeps it encrypted for the hours the server is unreachable."""
-        from auth import Auth, PERM_KEYS, _current
-        u = getattr(_current, "user", None)
+        from auth import Auth, PERM_KEYS
+        u = _acting_user()
         perms = set(Auth.effective_perms(u)) if u else set(PERM_KEYS)
         days_back, days_forward = max(0, min(int(days_back), 7)), max(1, min(int(days_forward), 31))
         today = date.today()
@@ -2167,8 +2178,7 @@ class Api:
 
     def backup_restore(self, where, name):
         import backup
-        from auth import _current
-        u = getattr(_current, "user", None)
+        u = _acting_user()
         if u is not None and u.get("role") != "director":
             raise ValueError("Восстанавливать базу из копии может только директор")
         import replica
@@ -2246,8 +2256,7 @@ class Api:
     # ------------------------------------------------- cloud, updates, import --
     @staticmethod
     def _director(what):
-        from auth import _current
-        u = getattr(_current, "user", None)
+        u = _acting_user()
         if u is not None and u.get("role") != "director":
             raise ValueError(f"{what} может только директор")
 
@@ -2319,7 +2328,12 @@ class Api:
         updates.UPDATER.start_download()
         return self.update_status()
 
-    def update_install(self):  # 3.1: any employee (signed and checked file, a backup on exit)
+    def update_install(self):
+        """М20: the right «Настройки» (auth.METHOD_PERMS) and only in this computer's own window: an employee signed in
+        from another device must not restart the program on this computer in the middle of an appointment."""
+        if "settings" not in self._my_perms()[0]:
+            raise ValueError("Обновить программу может директор или сотрудник с правом «Настройки»")
+        _local_only("Установить обновление")
         import updates
         updates.UPDATER.install()
         return True
@@ -2528,6 +2542,7 @@ class Api:
             return f"Ошибка: {e}"
 
     def open_data_dir(self):
+        _local_only("Открыть папку с данными")  # М20: it opens on this computer's screen, not the caller's
         os.startfile(str(config.data_dir()))  # noqa: S606
 
     # ------------------------------------------------ report for developer --
@@ -2570,6 +2585,7 @@ class Api:
         return {"ok": True, "path": str(path), "name": name, "text": text, "on_desktop": bool(desk) and str(path).startswith(desk)}
 
     def show_dev_report(self):
+        _local_only("Показать отчёт в папке")  # М20
         p = getattr(self, "_last_report", None)
         if not p or not os.path.exists(p):
             return False

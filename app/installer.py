@@ -22,6 +22,7 @@ import config
 
 DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 NO_WINDOW = 0x08000000
+CLOSE_WAIT_S = 120  # М17: how long the installer waits for the open program to save, back up and exit
 
 
 def install_dir() -> str:
@@ -72,10 +73,7 @@ def _locked(path) -> bool:
         return False
 
 
-def close_running(target, seconds=15) -> bool:
-    """Ask an open copy of the program to close (it saves everything on close) and wait until it is gone."""
-    if not _locked(target):
-        return True
+def _ask_close():
     try:
         import ctypes
         hwnd = ctypes.windll.user32.FindWindowW(None, config.APP_TITLE)
@@ -83,13 +81,34 @@ def close_running(target, seconds=15) -> bool:
             ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
     except Exception:  # noqa: BLE001
         pass
-    end = time.time() + seconds
+
+
+def close_running(target, seconds=CLOSE_WAIT_S) -> bool:
+    """Ask an open copy of the program to close (it saves everything and makes a backup on close) and wait until it
+    is gone. М17: the backup of a big database takes a while — wait long, and ask again every few seconds (a window
+    that was minimized or still starting may have missed the first request)."""
+    if not _locked(target):
+        return True
+    _ask_close()
+    end, again = time.time() + seconds, time.time() + 10
     while time.time() < end:
         time.sleep(0.25)
         if not _locked(target):
             time.sleep(0.5)  # let the old process finish writing its last backup and exit
             return True
+        if time.time() >= again:
+            _ask_close()
+            again = time.time() + 10
     return False
+
+
+def ask_retry(text) -> bool:
+    """«Повторить» / «Отмена» (no console, no Tk: the installer stays small). False where there is no window."""
+    try:
+        import ctypes
+        return ctypes.windll.user32.MessageBoxW(None, text, config.APP_TITLE, 0x5 | 0x30) == 4  # MB_RETRYCANCEL, IDRETRY
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _rmtree_quiet(path):

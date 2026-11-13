@@ -398,8 +398,13 @@ class Cloud:
                 except CloudError:
                     log.warning("row %s: cannot decrypt", row["key"][:12])
                     continue
-                # 3.0: the same versions as between computers in the clinic network (vv, ancestor, who made the row)
-                items.append({"t": obj["t"], "k": obj["k"], "row": obj["row"], "ver": row["ver"], "seq": row["seq"],
+                # 3.0: the same versions as between computers in the clinic network (vv, ancestor, who made the row).
+                # М15: since 3.8.1 the version text is sealed too — the cloud server cannot pick conflict winners by
+                # changing it; rows sealed by older computers have only the open one.
+                ver = obj.get("ver") or row["ver"]
+                if ver != row["ver"]:
+                    log.warning("row %s: the cloud's version differs from the sealed one — the sealed one is used", row["key"][:12])
+                items.append({"t": obj["t"], "k": obj["k"], "row": obj["row"], "ver": ver, "seq": row["seq"],
                               "vv": obj.get("vv") or replica.vv_of_ver(row["ver"]), "pbase": obj.get("pbase"),
                               "pvv": obj.get("pvv"), "origin": obj.get("origin") or ""})
             if items:
@@ -421,7 +426,7 @@ class Cloud:
             rk = keys.row_key(it["t"], it["ks"])
             byk[rk] = it
             changes.append({"key": rk, "ver": it["ver"], "base": it["base"],
-                            "data": keys.seal_row({"t": it["t"], "k": it["k"], "row": it["row"], "vv": it["vv"],
+                            "data": keys.seal_row({"t": it["t"], "k": it["k"], "row": it["row"], "vv": it["vv"], "ver": it["ver"],
                                                    "pbase": it["pbase"], "pvv": it.get("pvv"), "origin": it["origin"]}, rk)})
         r = h.post("/v1/push", {"changes": changes})
         for rk in r["accepted"]:

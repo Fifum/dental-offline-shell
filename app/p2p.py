@@ -146,13 +146,64 @@ def open_request(k: Keys, method, body: dict):
     if body.get("c") != k.clinic_id():
         raise P2PError("Компьютер другой клиники", 403)
     ts, node = int(body.get("t") or 0), str(body.get("n") or "")
-    if abs(time.time() - ts) > SKEW:
-        raise P2PError("Неверное время запроса", 403)
     try:
         data = k.open(base64.b64decode(body.get("d") or ""), _req_aad(method, node, ts))
     except (CloudError, ValueError):
         raise P2PError("Запрос не расшифрован", 403) from None
+    # М14: checked after the seal (it covers the time and the computer), so the time is the sender's own: say how far
+    # the clocks are apart instead of a bare «Неверное время запроса» (3.8.0 computers show this text as it is)
+    _note_skew(node, ts - time.time())
+    if abs(time.time() - ts) > SKEW:
+        raise P2PError(clock_message(socket.gethostname(), ts - time.time()), 403)
     return node, ts, json.loads(data.decode("utf-8"))
+
+
+# --------------------------------------------------------------- М14: clocks --
+# Versions of rows carry the time they were made: concurrent edits of one field are settled by it, and a request
+# older or newer than SKEW is refused. A computer whose clock went wrong (a BIOS battery, a manual change) must say so.
+CLOCK_WARN = 10 * 60
+OLD_SKEW_TEXT = "Неверное время запроса"  # what a 3.8.0 computer answers
+_SKEWS: dict = {}       # node or "ip:port" → (their clock minus ours, seconds; when it was seen)
+_SKEW_LOGGED: dict = {}
+_SLOCK = threading.Lock()
+
+
+def clock_message(name, skew) -> str:
+    s = abs(float(skew))
+    n = f"{round(s / 3600)} ч" if s >= 3600 else f"{max(1, round(s / 60))} мин"
+    who = f"компьютером «{name}»" if name else "другим компьютером клиники"
+    return f"Часы этого компьютера расходятся с {who} на {n} — проверьте дату и время"
+
+
+def _note_skew(key, skew, name=""):
+    if not key:
+        return
+    with _SLOCK:
+        _SKEWS[key] = (float(skew), time.time())
+        if abs(skew) <= CLOCK_WARN or time.time() - _SKEW_LOGGED.get(key, 0) < 3600:
+            return
+        _SKEW_LOGGED[key] = time.time()
+    log.warning("clock: %s", clock_message(name or key, skew))
+
+
+def skew_of(*keys):
+    """Their clock minus ours (seconds) as last seen within an hour, or None."""
+    with _SLOCK:
+        for k in keys:
+            v = _SKEWS.get(k)
+            if v and time.time() - v[1] < 3600:
+                return v[0]
+    return None
+
+
+def _date_skew(headers):
+    """The answer's Date header (every HTTP answer has one, 3.8.0 computers too) → their clock minus ours."""
+    try:
+        from email.utils import parsedate_to_datetime
+        d = headers.get("Date") if headers else None
+        return parsedate_to_datetime(d).timestamp() - time.time() if d else None
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
 
 
 def call(base_url, method, payload, timeout=10, sealed=True):
@@ -163,15 +214,26 @@ def call(base_url, method, payload, timeout=10, sealed=True):
     body = seal_request(k, method, payload) if sealed else payload
     req = urllib.request.Request(base_url.rstrip("/") + "/p2p/" + method, data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json"}, method="POST")
+    where = base_url.rstrip("/").split("//")[-1]
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 — the clinic network
+            skew = _date_skew(r.headers)  # before reading a long answer
             ans = json.loads(r.read())
+            if skew is not None and sealed:
+                _note_skew(where, skew)
     except urllib.error.HTTPError as e:
         try:
             msg = json.loads(e.read()).get("error")
         except Exception:  # noqa: BLE001
             msg = ""
-        raise P2PError(msg or f"Компьютер ответил ошибкой {e.code}", e.code) from None
+        skew = _date_skew(e.headers)
+        if skew is not None and sealed:
+            _note_skew(where, skew)
+        if msg == OLD_SKEW_TEXT and skew is not None:  # М14: a 3.8.0 computer refused our time
+            msg = clock_message("", skew)
+        err = P2PError(msg or f"Компьютер ответил ошибкой {e.code}", e.code)
+        err.skew = skew
+        raise err from None
     except (OSError, ValueError) as e:
         raise P2PError("Нет связи с компьютером", -1) from e
     if not sealed:
@@ -422,7 +484,8 @@ class Node(threading.Thread):
         if full:
             self._full = True
         if node:
-            self._wanted.add(node)
+            with self._lock:
+                self._wanted.add(node)
         self._wake.set()
 
     def seen(self, node, ip, port, name="", host="", epoch=None):
@@ -430,19 +493,22 @@ class Node(threading.Thread):
         if not ip:
             return
         if node:
-            self.live[node] = {"node": node, "ip": ip, "port": int(port or 8765), "name": name, "host": host, "seen": time.time()}
+            with self._lock:
+                self.live[node] = {"node": node, "ip": ip, "port": int(port or 8765), "name": name, "host": host, "seen": time.time()}
             with self.db.tx() as c:
                 c.execute("INSERT INTO p2p_peers(node, name, host, ip, port, last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(node) DO "
                           "UPDATE SET ip=excluded.ip, port=excluded.port, last_seen=excluded.last_seen, "
                           "name=COALESCE(NULLIF(excluded.name, ''), name), host=COALESCE(NULLIF(excluded.host, ''), host)",
                           (node, name, host, ip, int(port or 8765), _now()))
         else:  # only an address (from the pairing answer): ask it who it is
-            self.live.setdefault(f"addr:{ip}:{port}", {"node": "", "ip": ip, "port": int(port or 8765), "name": "", "host": "",
-                                                        "seen": time.time()})
+            with self._lock:
+                self.live.setdefault(f"addr:{ip}:{port}", {"node": "", "ip": ip, "port": int(port or 8765), "name": "", "host": "",
+                                                            "seen": time.time()})
 
     def live_list(self):
         now = time.time()
-        return [p for p in self.live.values() if now - p["seen"] < 3 * INTERVAL]
+        with self._lock:  # М16: HTTP threads add computers while the node thread walks the list
+            return [dict(p) for p in self.live.values() if now - p["seen"] < 3 * INTERVAL]
 
     def _info(self):
         return {"node": config.node_id(), "name": socket.gethostname(), "host": socket.gethostname(), "port": self.port,
@@ -518,11 +584,12 @@ class Node(threading.Thread):
         me = {"port": self.port, "name": socket.gethostname(), "host": socket.gethostname()}
         if not p.get("node"):  # known only by address: say hello to learn who it is
             info = call(url, "hello", me, timeout=5)
-            self.live.pop(f"addr:{p['ip']}:{p['port']}", None)
+            with self._lock:
+                self.live.pop(f"addr:{p['ip']}:{p['port']}", None)
             if not info.get("node"):
                 return 0
             self.seen(info["node"], p["ip"], p["port"], info.get("name", ""), info.get("host", ""))
-            p = self.live[info["node"]]
+            p = {**p, "node": info["node"]}
         row = self._peer_row(p["node"]) or {}
         mark, ep = int(row.get("mark") or 0), row.get("epoch") or ""
         got = 0
@@ -591,15 +658,18 @@ class Node(threading.Thread):
             except OSError as e:
                 log.info("discovery: %s", e)
             known = self.db.q("SELECT * FROM p2p_peers")  # broadcast may be blocked: try the last known addresses too
+            with self._lock:
+                have = set(self.live)
             for k in known:
-                if k["node"] not in self.live and k["ip"]:
+                if k["node"] not in have and k["ip"]:
                     try:
                         call(f"http://{k['ip']}:{k['port']}", "hello", {"port": self.port, "name": socket.gethostname(),
                                                                          "host": socket.gethostname()}, timeout=3)
                         self.seen(k["node"], k["ip"], k["port"], k["name"], k["host"])
                     except P2PError:
                         pass
-        wanted, self._wanted = self._wanted, set()
+        with self._lock:
+            wanted, self._wanted = self._wanted, set()
         targets = [p for p in self.live_list() if full or p.get("node") in wanted or not p.get("node")]
         err = ""
         for p in targets:
@@ -610,11 +680,14 @@ class Node(threading.Thread):
                 self.state["pulled"] += self.sync_peer(p)
             except P2PError as e:
                 err = str(e)
+                if getattr(e, "skew", None) is not None and err == clock_message("", e.skew):
+                    err = clock_message(p.get("host") or p.get("name") or p.get("ip"), e.skew)  # М14: name the computer
                 if p.get("node"):
                     with self.db.tx() as c:
                         c.execute("UPDATE p2p_peers SET error=? WHERE node=?", (err[:200], p["node"]))
                     if e.code == -1:
-                        self.live.pop(p["node"], None)
+                        with self._lock:
+                            self.live.pop(p["node"], None)
             except Exception as e:  # noqa: BLE001
                 log.exception("sync with %s", p.get("ip"))
                 err = str(e)
@@ -645,9 +718,17 @@ class Node(threading.Thread):
     def status(self):
         peers = self.db.q("SELECT node, name, host, ip, port, last_seen, last_sync, error FROM p2p_peers ORDER BY name")
         live = {p["node"] for p in self.live_list()}
+        clock = []
         for p in peers:
             p["online"] = p["node"] in live
-        return {**self.state, "configured": configured(), "clinic_name": clinic_name() if configured() else "",
+            # М14: their clock against ours (from their answers' Date or their own requests); a wrong one is said aloud
+            skew = skew_of(p["node"], f"{p['ip']}:{p['port']}")
+            if skew is not None and abs(skew) > CLOCK_WARN:
+                p["clock"] = clock_message(p.get("host") or p.get("name") or p["ip"], skew)
+                clock.append(p["clock"])
+            if p.get("error") == OLD_SKEW_TEXT and skew is not None:
+                p["error"] = clock_message(p.get("host") or p.get("name") or p["ip"], skew)
+        return {**self.state, "clock": clock, "configured": configured(), "clinic_name": clinic_name() if configured() else "",
                 "clinic_id": clinic_id(), "node": config.node_id(), "computer": socket.gethostname(), "peers": peers,
                 "paused": paused(), "pending": replica.pending(self.db), "member": is_member(),
                 "founder": bool(config.load_settings().get("clinic_founder")), "lone": identity()["lone"],
