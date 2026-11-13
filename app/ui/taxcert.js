@@ -32,6 +32,7 @@ async function openTaxCert(p) {
     $("#txS1", box).value = d.total ? String(d.total).replace(".", ",") : "";
     $("#txPays", box).innerHTML = (d.payments.length ? `Оплаты в программе за ${year} год: <b>${money(d.total)}</b> (${d.payments.length} ${plural(d.payments.length, "оплата", "оплаты", "оплат")})`
       : `<span class="muted">Оплат в программе за ${year} год нет — укажите сумму вручную.</span>`)
+      + (d.not_money > 0.009 ? `<div class="muted">Не учтено ${money(d.not_money)}: бонусы, сертификаты, страховая и оплата от организации — это не деньги налогоплательщика.</div>` : "")
       + (d.issued.length ? `<div class="warn-line">За этот год уже выдано: ${d.issued.map(x => `№ ${x.number} от ${fmtDate(x.issued_at)} на ${money((x.sum1 || 0) + (x.sum2 || 0))}`).join("; ")}</div>` : "");
   };
   $("#txY", box).onchange = load;

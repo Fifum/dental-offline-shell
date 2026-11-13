@@ -130,6 +130,8 @@ class Finance:
                            (pid,))["s"]
         if free > 0.009:
             out.append({"invoice_id": None, "amount": round(free, 2), "title": "Аванс"})
+        elif free < -0.009:  # М7: the advance spent twice (two computers without the network) — a debt, never hidden
+            out.append({"invoice_id": None, "amount": round(free, 2), "title": "Аванс потрачен больше, чем внесено"})
         for r in self.db.q(f"""SELECT i.id, i.total, i.created_at, (SELECT COALESCE(SUM(amount),0) FROM payments WHERE invoice_id=i.id) AS paid
                                FROM invoices i WHERE i.patient_id=? AND {INV} AND COALESCE(i.insurer_id,'')=''
                                ORDER BY i.created_at""", (pid,)):
@@ -214,10 +216,13 @@ class Finance:
         if not reason:
             raise ValueError("Укажите причину возврата")
         pockets = self.pockets(pid)
+        net = round(sum(p["amount"] for p in pockets), 2)
         if iid:
             pockets = [p for p in pockets if p["invoice_id"] == iid]
-        have = round(sum(p["amount"] for p in pockets), 2)
+        have = min(net, round(sum(p["amount"] for p in pockets), 2))  # М7: an overspent advance is covered first
         if have < 0.009:
+            if net < -0.009:
+                raise ValueError(f"Возвращать нечего: аванс пациента потрачен больше, чем внесено, — пациент должен {_rub(-net)}")
             raise ValueError("Возвращать нечего: у пациента нет аванса и переплаты" if not iid else "По этому счёту нет переплаты")
         if amount > have + 0.009:
             raise ValueError(f"Можно вернуть не больше {_rub(have)}")
@@ -257,6 +262,19 @@ class Finance:
                                (p["patient_id"],))["s"]
             if free - p["amount"] < -0.009:
                 raise ValueError("Часть этого аванса уже потрачена на счета или возвращена. Сначала удалите оплату из аванса или возврат.")
+
+    def payment_locked(self, rows) -> str:
+        """М8: a payment of a past day or of a closed cash shift is already in the reports — deleting it is a correction
+        for the accountant. Returns why it is locked, or ""."""
+        at = min((r["created_at"] or "" for r in rows), default="")
+        if not at:
+            return ""
+        if at[:10] < date.today().isoformat():
+            return "за прошлый день"
+        # strictly before the close: a payment taken in the very second the shift was closed stays an ordinary one
+        if self.db.one("SELECT 1 AS x FROM cash_shifts WHERE status='closed' AND opened_at<=? AND closed_at>?", (at, at)):
+            return "из закрытой кассовой смены"
+        return ""
 
     def delete_group(self, pay_id):
         rows = self.group_rows(pay_id)
@@ -615,23 +633,54 @@ class Finance:
         sh = self.db.one("SELECT * FROM cash_shifts WHERE id=?", (sid,))
         if not sh:
             return None
+        kept = {k: sh[k] for k in ("expected_cash", "card_expected", "sbp_expected")}
         sh.update(self._shift_numbers(sh))
         if sh["status"] == "closed":
+            self._late(sh, kept)
             sh["diff_cash"] = round((sh["counted_cash"] or 0) - (sh["expected_cash"] or 0), 2)
             sh["diff_card"] = None if sh["card_terminal"] is None else round(sh["card_terminal"] - (sh["card_expected"] or 0), 2)
             sh["diff_sbp"] = None if sh["sbp_bank"] is None else round(sh["sbp_bank"] - (sh["sbp_expected"] or 0), 2)
         return sh
 
+    def _late(self, sh, kept):
+        """М5: a closed shift keeps the figures it was closed with. Payments that came later (by the network from a
+        computer that worked offline, or deleted afterwards) are shown as a warning, never mixed into the closed count."""
+        late = {}
+        for key, now_key, title in (("expected_cash", "expected_cash", "наличные"), ("card_expected", "card", "карта"),
+                                    ("sbp_expected", "sbp", "СБП")):
+            if kept[key] is None:
+                continue
+            d = round(sh[now_key] - kept[key], 2)
+            if abs(d) >= 0.01:
+                late[title] = d
+        if kept["expected_cash"] is not None:
+            sh["expected_cash"] = kept["expected_cash"]
+        nxt = self.db.one("SELECT opened_at FROM cash_shifts WHERE id<>? AND (opened_at>? OR (opened_at=? AND id>?)) "
+                          "ORDER BY opened_at, id LIMIT 1", (sh["id"], sh["opened_at"], sh["opened_at"], sh["id"]))
+        outside = 0.0
+        if not (nxt and nxt["opened_at"] <= sh["closed_at"]):  # money taken while no shift was open
+            outside = round(self.db.one("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE method IN (?,?,?) AND created_at>? AND created_at<?",
+                                        (CASH, CARD, SBP, sh["closed_at"], nxt["opened_at"] if nxt else "9999"))["s"], 2)
+        sh["late"], sh["outside"] = late, outside
+        msg = []
+        if late:
+            msg.append("После закрытия смены изменились оплаты за её время: "
+                       + ", ".join(f"{k} {'+' if v > 0 else '−'}{_rub(abs(v))}" for k, v in late.items()) + " — в сверку смены они не вошли.")
+        if abs(outside) >= 0.01:
+            msg.append(f"После закрытия, когда смена не была открыта, приняты оплаты на {_rub(outside)} — они не вошли ни в одну смену.")
+        sh["late_warning"] = " ".join(msg)
+
     def shift_current(self) -> dict:
         opened = self.db.q("SELECT id FROM cash_shifts WHERE status='open' ORDER BY opened_at DESC, id DESC")
-        last = self.db.one("SELECT counted_cash, closed_at, closed_by FROM cash_shifts WHERE status='closed' ORDER BY closed_at DESC LIMIT 1")
+        last = self.db.one("SELECT id, counted_cash, closed_at, closed_by FROM cash_shifts WHERE status='closed' ORDER BY closed_at DESC LIMIT 1")
         # В10: shifts are replicated; two computers without the network may each open one — the older ones are shown to close
         extra = [self.shift(r["id"]) for r in opened[1:]]
         return {"shift": self.shift(opened[0]["id"]) if opened else None, "extra": extra,
                 "warning": (f"Открыто несколько кассовых смен ({len(opened)}) — так бывает после работы без сети. "
                             "Закройте лишние: пересчитайте наличные по каждой.") if extra else "",
                 "last_left": round(last["counted_cash"] or 0, 2) if last else 0.0,
-                "last_closed": last["closed_at"] if last else None, "in_reasons": MOVE_IN, "out_reasons": MOVE_OUT}
+                "last_closed": last["closed_at"] if last else None, "last_warning": self.shift(last["id"])["late_warning"] if last else "",
+                "in_reasons": MOVE_IN, "out_reasons": MOVE_OUT}
 
     def shift_open(self, f, who="") -> dict:
         f = f or {}

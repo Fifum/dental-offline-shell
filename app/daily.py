@@ -189,11 +189,36 @@ class Daily:
         f.update(method=method, comment=str(f.get("comment") or "").strip())
         if old:
             f.setdefault("date", old["date"])
+        if method == METHODS[0]:
+            self._check_drawer(f, old)
         eid = self.acc.save_expense(f, who)
         with self.db.tx() as c:
             c.execute("UPDATE expenses SET doc=?, login=COALESCE(login, ?) WHERE id=?", (1 if doc else 0, login or None, eid))
         self._cash_move(eid, method, who)
         return eid
+
+    def _check_drawer(self, f, old):
+        """М4: cash cannot leave the drawer if the program thinks it is not there — the shift would show a false shortage."""
+        try:
+            cur = self.fin.shift_current()["shift"]
+        except Exception:  # noqa: BLE001 — no money tables in a bare database
+            return
+        if not cur:
+            return  # no open shift: the expense is written down without the drawer
+        try:
+            amount = round(float(str(f.get("amount") or 0).replace(",", ".").replace(" ", "")), 2)
+        except ValueError:
+            return  # save_expense refuses it with its own message
+        before = 0.0
+        if old:
+            mv = self.db.one("SELECT m.amount, s.status FROM cash_moves m JOIN cash_shifts s ON s.id=m.shift_id WHERE m.expense_id=?",
+                             (old["id"],))
+            if mv and mv["status"] != "open":
+                return  # the closed shift keeps its count
+            before = (mv or {}).get("amount") or 0.0
+        if amount - before > cur["expected_cash"] + 0.009:
+            raise ValueError(f"В кассе по расчёту {_rub(cur['expected_cash'])} — расход наличными больше. Если деньги в кассе есть, "
+                             "сначала запишите их внесение («Касса» → «Внести»), или выберите другой способ оплаты расхода")
 
     def _cash_move(self, eid, method, who):
         """Keep the drawer right: one «Расход из кассы» per cash expense while the shift is open."""
@@ -210,11 +235,11 @@ class Daily:
             return
         if self.db.one("SELECT 1 AS x FROM cash_moves WHERE expense_id=?", (eid,)):
             return  # the shift is already closed: its count must not change
-        try:
-            self.fin.shift_move({"kind": "out", "amount": e["amount"], "reason": "Расход из кассы",
-                                 "comment": f"{e['category']}: {e['comment'] or ''}".strip(": ")}, who, eid)
-        except ValueError:
-            pass  # no open shift — the expense is still written down
+        if not self.fin.shift_current()["shift"]:
+            return  # no open shift — the expense is still written down
+        # М4: not swallowed — _check_drawer() refused a sum larger than the drawer before the expense was saved
+        self.fin.shift_move({"kind": "out", "amount": e["amount"], "reason": "Расход из кассы",
+                             "comment": f"{e['category']}: {e['comment'] or ''}".strip(": ")}, who, eid)
 
     def delete(self, eid, login="", see_all=False):
         self._check_own(eid, login, see_all)
@@ -282,6 +307,8 @@ class Daily:
                       + (f", закрыта {s['closed_at'][11:16]} ({s.get('closed_by') or '—'})" if s.get("closed_at") else ", не закрыта"),
                       f"  Наличных по расчёту: {_rub(s.get('expected_cash'))}"
                       + (f", пересчитано: {_rub(s['counted_cash'])}, разница: {_rub(s.get('diff_cash'))}" if s.get("counted_cash") is not None else "")]
+            if s.get("late_warning"):  # М5
+                lines.append(f"  ВНИМАНИЕ: {s['late_warning']}")
         st = rep.get("stock")
         if st and (st["rows"] or st["service"]):
             lines += ["", f"Склад: приход {_rub(st['receipt'])}" + (f" (без документов {_rub(st['receipt_nodoc'])})" if st["receipt_nodoc"] else "")

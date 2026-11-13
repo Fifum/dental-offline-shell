@@ -20,11 +20,11 @@ function finHeader(p) {
   const col = $("#patientCard .phead2 .ph-col:last-child"); if (!col || $(".ph-fin", col) || !canAny("payments", "billing")) return;
   const d = document.createElement("div"); d.className = "ph-fin";
   const ms = (p.memberships || []).filter(m => m.active);
-  d.innerHTML = `<dt>Аванс</dt><dd><button class="linkbtn ${p.deposit > 0 ? "ok-t" : ""}" id="fhDep">${p.deposit > 0 ? money(p.deposit) : can("payments") ? "внести" : "—"}</button></dd>`
+  d.innerHTML = `<dt>Аванс</dt><dd><button class="linkbtn ${p.deposit > 0 ? "ok-t" : p.deposit < 0 ? "bad-t" : ""}" id="fhDep">${p.deposit > 0 || p.deposit < 0 ? money(p.deposit) : can("payments") ? "внести" : "—"}</button></dd>`
     + (ms.length ? `<dt>Абонемент</dt><dd>${ms.map(m => `${esc(m.name)} <small class="muted">(${m.items.map(i => i.left).reduce((a, b) => a + b, 0)} усл.)</small>`).join("<br>")}</dd>` : "")
     + ((p.ins_docs || []).length ? `<dt>ДМС</dt><dd>${esc(p.ins_docs[0].insurer_name || "")}${p.ins_docs.length > 1 ? ` <small class="muted">+${p.ins_docs.length - 1}</small>` : ""}</dd>` : "");
   col.appendChild(d);
-  $("#fhDep", d).onclick = () => p.deposit > 0 ? openPatient(p.id, S.view, "payments") : can("payments") && openDeposit(p);
+  $("#fhDep", d).onclick = () => p.deposit > 0 || p.deposit < 0 ? openPatient(p.id, S.view, "payments") : can("payments") && openDeposit(p);
 }
 
 async function finPatientTab(p) {
@@ -33,7 +33,7 @@ async function finPatientTab(p) {
   const pay = can("payments"), bill = can("billing");
   const ms = m.memberships, sch = m.schedules.filter(s => s.left > 0.009), docs = m.ins_docs;
   box.innerHTML = `<div class="fin-bar">
-      <span class="fin-dep">Аванс: <b class="${m.deposit > 0 ? "ok-t" : ""}">${money(m.deposit)}</b>${m.pockets.length > 1 ? ` <small class="muted">(${m.pockets.map(x => esc(x.title.toLowerCase()) + " " + money(x.amount)).join(", ")})</small>` : ""}</span>
+      <span class="fin-dep">Аванс: <b class="${m.deposit > 0 ? "ok-t" : m.deposit < 0 ? "bad-t" : ""}">${money(m.deposit)}</b>${m.pockets.length > 1 ? ` <small class="muted">(${m.pockets.map(x => esc(x.title.toLowerCase()) + " " + money(x.amount)).join(", ")})</small>` : ""}${m.pockets.some(x => !x.invoice_id && x.amount < 0) ? ` <span class="bad-t">— аванс потратили дважды (на компьютерах без сети): пациент должен клинике</span>` : ""}</span>
       ${pay ? `<button class="btn ghost small" id="fpDep">Внести аванс</button>` : ""}
       ${pay && m.deposit > 0 ? `<button class="btn ghost small" id="fpRef">Вернуть деньги</button>` : ""}
       ${bill ? `<button class="btn ghost small" id="fpMs">Продать абонемент</button>` : ""}
@@ -62,7 +62,7 @@ async function finPatientTab(p) {
   $$("[data-insd]", box).forEach(b => b.onclick = () => openInsDoc(p, docs.find(x => x.id === b.dataset.insd), m.insurers));
   $$("#patientCard [data-delfree]").forEach(b => b.onclick = async e => { e.stopPropagation();
     if (!await ask("Удалить запись об авансе или возврате?", {danger: true, ok: "Удалить", text: "Удаляйте только ошибочные записи: деньги исчезнут из кассового отчёта."})) return;
-    try { await api.delete_payment(b.dataset.delfree); toast("Удалено"); finReloadPatient(p.id); } catch (er) { toast(errText(er), true); } });
+    try { if (!await deletePayment(b.dataset.delfree)) return; toast("Удалено"); finReloadPatient(p.id); } catch (er) { toast(errText(er), true); } });
 }
 
 /* ------------------------------------------------------------ advance and refunds */
@@ -294,6 +294,7 @@ async function finCashPanel(c) {
         ${sh.cert_cash ? `<span>Сертификаты <b>+${money(sh.cert_cash)}</b></span>` : ""}${sh.moves_in ? `<span>Внесено <b>+${money(sh.moves_in)}</b></span>` : ""}${sh.moves_out ? `<span>Изъято <b>−${money(sh.moves_out)}</b></span>` : ""}
         <span class="sep">Карта <b>${money(sh.card)}</b></span><span>СБП <b>${money(sh.sbp)}</b></span></div>`;
   }
+  if (r.last_warning) el.innerHTML += `<div class="warn-line">Прошлая смена (закрыта ${fmtDT(r.last_closed)}): ${esc(r.last_warning)}</div>`;  // М5
   // В10: more than one open shift (opened on two computers without the network): close the extra ones one by one
   if (r.extra && r.extra.length) el.innerHTML = `<div class="warn-line bad">${esc(r.warning)} ${r.extra.map(x => `Смена от ${fmtDT(x.opened_at)}${x.opened_by ? " · " + esc(x.opened_by) : ""}: по расчёту ${money(x.expected_cash)}${act ? ` <button class="linkbtn" data-shx="${esc(x.id)}">закрыть</button>` : ""}`).join("; ")}</div>` + el.innerHTML;
   $$("[data-shx]", el).forEach(b => b.onclick = () => closeShift(r.extra.find(x => x.id === b.dataset.shx)));
@@ -356,7 +357,7 @@ async function openShifts() {
     <div class="m-b">${rows.length ? `<div class="tbl-scroll"><table class="tbl compact"><thead><tr><th>Открыта</th><th>Закрыта</th><th class="num">Наличные по расчёту</th><th class="num">Пересчитано</th><th class="num">Разница</th><th class="num">Карта: разница</th><th></th></tr></thead><tbody>${
       rows.map(s => `<tr><td class="nowrap">${fmtDT(s.opened_at)}<small class="muted" style="display:block">${esc(s.opened_by || "")}</small></td><td class="nowrap">${s.closed_at ? fmtDT(s.closed_at) + `<small class="muted" style="display:block">${esc(s.closed_by || "")}</small>` : '<span class="pill st-come">открыта</span>'}</td>
         <td class="num">${money(s.expected_cash)}</td><td class="num">${s.counted_cash == null ? "—" : money(s.counted_cash)}</td><td class="num ${dcls(s.diff_cash)}">${s.diff_cash == null ? "—" : money(s.diff_cash)}</td>
-        <td class="num ${dcls(s.diff_card)}">${s.diff_card == null ? "—" : money(s.diff_card)}</td><td class="row-acts"><button class="linkbtn" data-shp="${esc(s.id)}">отчёт</button></td></tr>`).join("")}</tbody></table></div>`
+        <td class="num ${dcls(s.diff_card)}">${s.diff_card == null ? "—" : money(s.diff_card)}</td><td class="row-acts"><button class="linkbtn" data-shp="${esc(s.id)}">отчёт</button></td></tr>${s.late_warning ? `<tr><td colspan="7"><div class="warn-line">${esc(s.late_warning)}</div></td></tr>` : ""}`).join("")}</tbody></table></div>`
       : `<div class="empty"><b>Смен пока не было</b></div>`}</div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Закрыть</button></div>`, {wide: true});
   $$("[data-shp]", box).forEach(b => b.onclick = () => printShift(b.dataset.shp));
@@ -374,7 +375,7 @@ async function printShift(sid) {
       ${line("СБП по программе", money(s.sbp_expected ?? s.sbp))}${s.sbp_bank != null ? line("СБП по банку", money(s.sbp_bank)) : ""}</table>
     ${s.moves.length ? `<h3>Внесения и изъятия</h3><table style="border-collapse:collapse;width:100%" border="1" cellpadding="5"><tr><th>Время</th><th>Что</th><th>Сумма</th><th>Кто</th><th>Комментарий</th></tr>${s.moves.map(m => `<tr><td>${hm(m.at)}</td><td>${m.kind === "in" ? "Внесение" : "Изъятие"}: ${esc(m.reason)}</td><td>${money(m.amount)}</td><td>${esc(m.by || "")}</td><td>${esc(m.comment || "")}</td></tr>`).join("")}</table>` : ""}
     <h3>Оплаты за смену</h3><table style="border-collapse:collapse;width:100%" border="1" cellpadding="4"><tr><th>Время</th><th>Пациент</th><th>Способ</th><th>Сумма</th></tr>${s.payment_rows.map(p => `<tr><td>${hm(p.created_at)}</td><td>${esc(p.patient_name || "")}</td><td>${esc(payLabel(p))}</td><td>${money(p.amount)}</td></tr>`).join("")}</table>
-    ${s.note ? `<p>${esc(s.note)}</p>` : ""}<p style="margin-top:30px">Смену сдал: ____________&nbsp;&nbsp;&nbsp;&nbsp;Смену принял: ____________</p></div>`);
+    ${s.late_warning ? `<p><b>${esc(s.late_warning)}</b></p>` : ""}${s.note ? `<p>${esc(s.note)}</p>` : ""}<p style="margin-top:30px">Смену сдал: ____________&nbsp;&nbsp;&nbsp;&nbsp;Смену принял: ____________</p></div>`);
 }
 
 /* ============================================================== insurance (ДМС) */
