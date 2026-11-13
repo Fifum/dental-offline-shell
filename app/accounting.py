@@ -57,12 +57,13 @@ def _month_range(month):
 class Accounting:
     def __init__(self, db):
         self.db = db
-        db.conn.executescript(SCHEMA)
-        if "minus_lab" not in {r[1] for r in db.conn.execute("PRAGMA table_info(salary_schemes)")}:
-            db.conn.execute("ALTER TABLE salary_schemes ADD COLUMN minus_lab INTEGER DEFAULT 0")
-        if "source" not in {r[1] for r in db.conn.execute("PRAGMA table_info(expenses)")}:  # 2.11: which ad channel was paid for
-            db.conn.execute("ALTER TABLE expenses ADD COLUMN source TEXT")
-        db.conn.commit()
+        with db._lock:  # В1: raw schema statements never interleave with another thread's transaction
+            db.conn.executescript(SCHEMA)
+            if "minus_lab" not in {r[1] for r in db.conn.execute("PRAGMA table_info(salary_schemes)")}:
+                db.conn.execute("ALTER TABLE salary_schemes ADD COLUMN minus_lab INTEGER DEFAULT 0")
+            if "source" not in {r[1] for r in db.conn.execute("PRAGMA table_info(expenses)")}:  # 2.11: which ad channel was paid for
+                db.conn.execute("ALTER TABLE expenses ADD COLUMN source TEXT")
+            db.conn.commit()
 
     # ------------------------------------------------------------ expenses --
     def categories(self):

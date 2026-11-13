@@ -95,8 +95,9 @@ class Api:
         except Exception:  # noqa: BLE001 — never stops the start; the rows stay as they were and show as unknown
             import logging
             logging.getLogger("staffref").warning("staff references not converted", exc_info=True)
-        catalog.seed(db, demo=bool(config.load_settings().get("demo")))
-        if config.load_settings().get("demo"):
+        demo_on = bool(config.load_settings().get("demo")) and not db.has_real_data()  # К1: never demo over real data
+        catalog.seed(db, demo=demo_on)
+        if demo_on:
             import demo
             demo.ensure_stock(self._stock)
             demo.ensure_stock_lots(self._stock)
@@ -2076,12 +2077,24 @@ class Api:
         u = getattr(_current, "user", None)
         if u is not None and u.get("role") != "director":
             raise ValueError("Восстанавливать базу из копии может только директор")
-        r = backup.restore(where, name, self._db.conn, self._db._lock, db_path=self._db.path)
-        try:  # 3.0: the other computers take everything from this one again (its change numbers went back)
-            import replica
-            replica.new_epoch(self._db)
-        except Exception:  # noqa: BLE001
-            log.exception("new epoch after restore")
+        import replica
+        hold = replica.HOLD
+        # В2: no exchange with the other computers and the cloud until the restart; the restored rows become new
+        # versions of this computer (under one lock: nothing from a peer lands between the restore and the stamps)
+        replica.HOLD = "База восстановлена из копии: обмен с другими компьютерами и облаком — после перезапуска программы"
+        try:
+            with self._db._lock:
+                nodes = replica.known_nodes(self._db)  # the copy may not know computers that joined later
+                r = backup.restore(where, name, self._db.conn, self._db._lock, db_path=self._db.path)
+                try:  # 3.0: the other computers take everything from this one again (its change numbers went back)
+                    replica.install(self._db)
+                    replica.new_epoch(self._db)
+                    replica.restamp_all(self._db, config.node_id(), nodes)
+                except Exception:  # noqa: BLE001
+                    log.exception("new versions after restore")
+        except Exception:
+            replica.HOLD = hold
+            raise
         return r
 
     def network_info(self):
@@ -2553,13 +2566,15 @@ class Host:
         from sync import SyncWorker
         db = DB()
         self.worker = SyncWorker(db)
-        self.worker.start()
         api = Api(db, self.worker)
         self.db, self.api = db, api
-        self.server = ClinicServer(api, db, port=self.port()).start()
-        start_platform(api, db, self)
+        server = ClinicServer(api, db, port=self.port())
         import p2p  # 3.0: the clinic's computers find each other and sync directly
         self.node = p2p.Node(db, self.port())
+        # В1: every table exists before the first background thread writes (schema scripts commit open transactions)
+        self.worker.start()
+        self.server = server.start()
+        start_platform(api, db, self)
         self.node.start()
         from backup import BackupWorker
         self.backups = BackupWorker(db.path)

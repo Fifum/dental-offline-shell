@@ -129,14 +129,55 @@ def unprotect(value: str) -> str:
 
 
 # ------------------------------------------------------------- settings ----
+def _bak() -> Path:
+    return SETTINGS_PATH.with_name(SETTINGS_PATH.name + ".bak")
+
+
+def _read_json(p: Path):
+    try:
+        v = json.loads(p.read_text(encoding="utf-8"))
+        return v if isinstance(v, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _stored() -> dict:
+    """Saved settings. A file damaged by a power cut → the copy of the previous save; both damaged → never the demo
+    defaults (the demo wipes the database): demo off and `settings_damaged`, the director enters the settings again."""
+    bak = _bak()
+    if not SETTINGS_PATH.exists() and not bak.exists():
+        return {}
+    for p in (SETTINGS_PATH, bak):
+        v = _read_json(p)
+        if v is not None:
+            if p is bak:
+                _warn_once("settings.json is damaged: the previous copy (settings.json.bak) is used")
+            return v
+    _warn_once("settings.json and its copy are damaged: demo mode stays off")
+    return {"demo": False, "settings_damaged": True}
+
+
+_warned: set = set()
+
+
+def _warn_once(text):
+    if text not in _warned:
+        _warned.add(text)
+        import logging
+        logging.getLogger("config").error(text)
+
+
+def _write_durable(p: Path, data: bytes):
+    with open(p, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+
+
 def load_settings() -> dict:
     with _lock:
         s = dict(DEFAULT_SETTINGS)
-        if SETTINGS_PATH.exists():
-            try:
-                s.update(json.loads(SETTINGS_PATH.read_text(encoding="utf-8")))
-            except Exception:
-                pass
+        s.update(_stored())
         return _migrate(s)
 
 
@@ -165,13 +206,14 @@ def node_id() -> str:
 def save_settings(new: dict) -> dict:
     with _lock:
         cur = dict(DEFAULT_SETTINGS)
-        if SETTINGS_PATH.exists():
-            try:
-                cur.update(json.loads(SETTINGS_PATH.read_text(encoding="utf-8")))
-            except Exception:
-                pass
+        cur.update(_stored())
         cur.update(new)
+        if "settings_damaged" not in new:
+            cur.pop("settings_damaged", None)
+        # К1: the new file is on the disk before it replaces the old one; the last good file stays as .bak
+        if _read_json(SETTINGS_PATH) is not None:
+            _write_durable(_bak(), SETTINGS_PATH.read_bytes())
         tmp = SETTINGS_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_durable(tmp, json.dumps(cur, ensure_ascii=False, indent=2).encode("utf-8"))
         os.replace(tmp, SETTINGS_PATH)
         return _migrate(cur)

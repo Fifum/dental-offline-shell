@@ -118,9 +118,13 @@ def build(seed=7):
 
 def ensure_demo(db, force=False):
     if not force and db.meta_get("demo_built") == date.today().isoformat():
-        return
+        return False
+    if db.has_real_data():  # К1: «demo» from damaged settings must never wipe the clinic's data
+        import logging
+        logging.getLogger("demo").error("demo mode on a database with real data: demo data not built")
+        return False
     branches, doctors, patients, visits, diags = build()
-    db.wipe(with_local=False)  # keep what was entered in the app (demo records, invoices)
+    db.wipe(with_local=False, quiet=True)  # keep what was entered in the app (demo records, invoices)
     import catalog
     catalog.seed(db, demo=True)
     db.upsert_branches(branches)
@@ -138,6 +142,7 @@ def ensure_demo(db, force=False):
     db.meta_set("demo_built", today.isoformat())
     db.meta_set("last_ok", utcnow())
     db.log_sync(utcnow(), True, "Демо-данные сгенерированы", {"visits": len(rows), "patients": len(patients)})
+    return True
 
 
 # ------------------------------------------------------------------ demo stock --

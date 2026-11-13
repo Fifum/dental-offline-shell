@@ -231,7 +231,7 @@ def make_print(wav) -> dict:
 
 
 def ensure_schema(db):
-    db.conn.executescript(SCHEMA)
+    db.script(SCHEMA)  # В1: under the lock — a bare executescript commits another thread's open transaction
 
 
 def save_print(db, user_id: int, p: dict):

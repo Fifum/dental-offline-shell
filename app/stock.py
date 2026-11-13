@@ -164,16 +164,17 @@ def parse_scan(code):
 class Stock:
     def __init__(self, db):
         self.db = db
-        db.conn.executescript(SCHEMA)
-        if "nodoc" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_docs)")}:  # 2.14.1: without a document
-            db.conn.execute("ALTER TABLE stock_docs ADD COLUMN nodoc INTEGER DEFAULT 0")
-        dcols = {r[1] for r in db.conn.execute("PRAGMA table_info(stock_docs)")}
-        for col in ("location_id TEXT", "to_location_id TEXT"):  # 3.5: where a document took or put the materials
-            if col.split()[0] not in dcols:
-                db.conn.execute(f"ALTER TABLE stock_docs ADD COLUMN {col}")
-        if "location_id" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_moves)")}:  # 3.5: the place of a move
-            db.conn.execute("ALTER TABLE stock_moves ADD COLUMN location_id TEXT")
-        db.conn.commit()
+        with db._lock:  # В1: raw schema statements never interleave with another thread's transaction
+            db.conn.executescript(SCHEMA)
+            if "nodoc" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_docs)")}:  # 2.14.1: without a document
+                db.conn.execute("ALTER TABLE stock_docs ADD COLUMN nodoc INTEGER DEFAULT 0")
+            dcols = {r[1] for r in db.conn.execute("PRAGMA table_info(stock_docs)")}
+            for col in ("location_id TEXT", "to_location_id TEXT"):  # 3.5: where a document took or put the materials
+                if col.split()[0] not in dcols:
+                    db.conn.execute(f"ALTER TABLE stock_docs ADD COLUMN {col}")
+            if "location_id" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_moves)")}:  # 3.5: the place of a move
+                db.conn.execute("ALTER TABLE stock_moves ADD COLUMN location_id TEXT")
+            db.conn.commit()
 
     service_location = None  # 3.5: callable(invoice row) -> place of the automatic write-off by an invoice (set by Api)
 

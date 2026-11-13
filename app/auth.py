@@ -438,7 +438,7 @@ class Auth:
     def __init__(self, db):
         self.db = db
         _DB["db"] = db
-        db.conn.executescript(SCHEMA)
+        db.script(SCHEMA)
         have = {r[1] for r in db.conn.execute("PRAGMA table_info(users)")}
         for col in ("pin_hash TEXT", "pin_fails INTEGER DEFAULT 0"):  # quick sign-in on a shared computer
             if col.split()[0] not in have:

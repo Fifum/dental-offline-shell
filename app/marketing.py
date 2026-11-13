@@ -33,8 +33,7 @@ def _now():
 class Marketing:
     def __init__(self, db):
         self.db = db
-        db.conn.executescript(SCHEMA)
-        db.conn.commit()
+        db.script(SCHEMA)
 
     # ------------------------------------------------------------- sources --
     def sources(self):

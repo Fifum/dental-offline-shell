@@ -90,17 +90,28 @@ class SyncWorker(threading.Thread):
         if self.wake.wait(delay):  # «Обновить» pressed meanwhile: go now
             self.wake.clear()
         while not self.stop_flag:
-            s = config.load_settings()
-            ok = self.sync_once(s)
-            # while offline: re-check every 30 s, sync immediately when the link is back
-            wait = max(1, int(s.get("interval_min", 5))) * 60 if ok else 30
-            if self.follower:  # the copy from the main computer is cheap (the clinic network): every minute
+            try:
+                s = config.load_settings()
+                ok = self.sync_once(s)
+                # while offline: re-check every 30 s, sync immediately when the link is back
+                wait = max(1, int(s.get("interval_min", 5))) * 60 if ok else 30
+                if self.follower:  # the copy from the main computer is cheap (the clinic network): every minute
+                    wait = 60
+            except Exception as e:  # noqa: BLE001 — В21: one error must not stop the sync for good
+                log.exception("sync loop")
+                self._set(running=False, phase="", last_error=f"Ошибка синхронизации: {e}")
                 wait = 60
             self.wake.wait(wait)
             self.wake.clear()
 
     def sync_once(self, s=None) -> bool:
         s = s or config.load_settings()
+        if s.get("demo") and self.db.has_real_data():  # К1: never demo data over the clinic's own
+            self._set(online=None, running=False,
+                      phase="Демо-режим недоступен: в базе данные клиники. Выключите демо-режим в настройках")
+            return True
+        if not s.get("demo") and self.db.data_kind() != "real":
+            self.db.data_kind("real")
         if s.get("demo"):
             from demo import ensure_demo
             ensure_demo(self.db)
