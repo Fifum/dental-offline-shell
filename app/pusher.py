@@ -67,6 +67,7 @@ _PATIENT_KEEP = ("fname", "mname", "lname", "phone", "gender", "date_of_birth", 
 GENDER = {"м": "male", "муж": "male", "мужской": "male", "male": "male", "m": "male",
           "ж": "female", "жен": "female", "женский": "female", "female": "female", "f": "female"}
 AUTO_WHO = "Автоперенос"
+SENDING_LOST = "Отправка прервалась — пациент мог уже появиться в Dentist Plus"
 
 
 def _now():
@@ -231,13 +232,22 @@ class Pusher:
                 body["branch_id"] = b
         return body
 
-    def _mark(self, table, rid, status, error="", remote_id=None, done=False):
+    def _mark(self, table, rid, status, error="", remote_id=None, done=False, sig=None):
+        """`sig` — for a visit sent: db.visit_sig of the row as it was sent (the row may have changed meanwhile)."""
         extra = ", transferred_by=COALESCE(transferred_by, ?)" if done and table == "records" else ""
+        if done and table == "local_visits" and sig is not None:
+            extra, extra_args = ", pushed_sig=?", (sig,)
+        else:
+            extra_args = (AUTO_WHO,) if extra else ()
         with self.db.tx() as cx:
             cx.execute(f"""UPDATE {table} SET push_status=?, push_error=?, push_at=?,
                            remote_id=COALESCE(?, remote_id)
                            {', transferred=1, transferred_at=?' if done else ''}{extra} WHERE id=?""",
-                       (status, error, _now(), remote_id, *((_now(),) if done else ()), *((AUTO_WHO,) if extra else ()), rid))
+                       (status, error, _now(), remote_id, *((_now(),) if done else ()), *extra_args, rid))
+            if done and table == "local_visits" and remote_id and str(remote_id) != str(rid):
+                # review 2026-11 (В4): records, invoices… of the visit made here now point to its Dentist Plus id
+                import db as dbm
+                dbm.repoint(cx, "visit_id", rid, str(remote_id), dbm.VISIT_REF_SKIP)
         if done:
             self.counts["sent"] += 1
             if status == "warn":
@@ -279,7 +289,7 @@ class Pusher:
             out["status_id"] = _int(st)
         return out
 
-    def _put_visit(self, target, changes: dict, table, rid, warn_text=""):
+    def _put_visit(self, target, changes: dict, table, rid, warn_text="", sig=None):
         """Read the visit, put our changes over its writable fields, PUT it, check the services did not go away.
         Returns the HTTP code (or None when nothing was sent)."""
         try:
@@ -304,9 +314,9 @@ class Pusher:
             after = _services_count(_unwrap(data)) if isinstance(_unwrap(data), dict) and "teeth" in _unwrap(data) else before
             if after < before:
                 self._mark(table, rid, "warn", f"Отправлено, но у визита в Dentist Plus стало меньше услуг ({before} → {after}) — "
-                                               "проверьте визит", target, done=True)
+                                               "проверьте визит", target, done=True, sig=sig)
             else:
-                self._mark(table, rid, "warn" if warn_text else "sent", warn_text, target, done=True)
+                self._mark(table, rid, "warn" if warn_text else "sent", warn_text, target, done=True, sig=sig)
         else:
             self._mark(table, rid, "error", _err(code, data))
         return code
@@ -334,6 +344,12 @@ class Pusher:
     # ----------------------------------------------------------- patients
     def push_patients(self):
         spec = self.wm["patient_create"]
+        # review 2026-11 (К5): a POST that was on the way when the link (or the program) went down may have created the
+        # patient — never sent blindly again, staff check Dentist Plus (the API has no search to look it up)
+        with self.db.tx() as cx:
+            n = cx.execute("""UPDATE patients SET push_status='unknown', push_error=?, push_at=? WHERE local=1
+                              AND COALESCE(transferred,0)=0 AND push_status='sending'""", (SENDING_LOST, _now())).rowcount
+        self.counts["unknown"] += n
         rows = self.db.q("""SELECT * FROM patients WHERE local=1 AND COALESCE(transferred,0)=0
                             AND remote_id IS NULL AND COALESCE(push_status,'') != 'unknown'""")
         rows = self._own(rows, "patients")
@@ -350,13 +366,21 @@ class Pusher:
                     self._mark("patients", p["id"], "error", "Не известен филиал Dentist Plus — дождитесь синхронизации филиалов")
                     continue
                 body["branch_id"] = br
+            with self.db.tx() as cx:  # committed before the POST: see SENDING_LOST
+                cx.execute("UPDATE patients SET push_status='sending', push_error='', push_at=? WHERE id=?", (_now(), p["id"]))
             try:
                 code, data = self.c.write(spec["method"], spec["path"], body)
-            except OfflineError:
+            except OfflineError:  # no connection at all: nothing reached Dentist Plus
+                with self.db.tx() as cx:
+                    cx.execute("UPDATE patients SET push_status=?, push_error=? WHERE id=? AND push_status='sending'",
+                               (p["push_status"], p["push_error"], p["id"]))
                 raise
             except ApiError as e:
                 self._mark("patients", p["id"], "unknown", str(e))
                 continue
+            except Exception:  # noqa: BLE001 — anything else on the way: the result is unknown
+                self._mark("patients", p["id"], "unknown", SENDING_LOST)
+                raise
             rid = _remote_id(data)
             if 200 <= code < 300 and rid:
                 self._mark("patients", p["id"], "sent", "", rid, done=True)
@@ -419,16 +443,18 @@ class Pusher:
 
     # ------------------------------------------------------------- visits
     def push_visits(self):
+        self.db.reopen_changed_visits()  # review 2026-11 (К3): sent rows changed since are sent again
         rows = self.db.q("""SELECT lv.*, p.remote_id AS patient_remote, p.local AS patient_local
                             FROM local_visits lv LEFT JOIN patients p ON p.id = lv.patient_id
                             WHERE lv.transferred=0 AND COALESCE(lv.push_status,'') != 'unknown'  -- conflicts are re-checked every time
                             ORDER BY lv.created_at""")
         rows = self._own(rows, "local_visits")
         for v in rows:
+            sig = self.db.visit_sig(v)  # what this send carries (the row may change while it is on the way)
             pid = v["patient_remote"] if v["patient_local"] else v["patient_id"]
             target = v["remote_id"] or v["origin_id"]
             if not target and (v["action"] == "cancel" or conflicts.is_cancelled(v)):
-                self._mark("local_visits", v["id"], "sent", "Отменена до отправки — в Dentist Plus не создавалась", done=True)
+                self._mark("local_visits", v["id"], "sent", "Отменена до отправки — в Dentist Plus не создавалась", done=True, sig=sig)
                 continue
             if not pid:
                 self._mark("local_visits", v["id"], "error", "Сначала должен уйти новый пациент")
@@ -442,13 +468,13 @@ class Pusher:
                         reason = str(v["comment"] or "").strip() or "Отмена записи"
                         code, data = self.c.write(spec["method"], spec["path"].replace("{id}", str(target)), {"reason": reason})
                         if 200 <= code < 300:
-                            self._mark("local_visits", v["id"], "sent", "", target, done=True)
+                            self._mark("local_visits", v["id"], "sent", "", target, done=True, sig=sig)
                         else:
                             self._mark("local_visits", v["id"], "error", _err(code, data))
                             if code in (401, 403):
                                 return False
                         continue
-                    if v["action"] in ("move", "edit"):
+                    if v["action"] in ("move", "edit", "create"):  # create: a visit made here and changed after the send
                         why = self._clash(v, src, self._day_visits(v["start"][:10]), ignore=(target,))
                         if why:
                             self._mark("local_visits", v["id"], "conflict", why)
@@ -461,7 +487,7 @@ class Pusher:
                             self._mark("local_visits", v["id"], "error",
                                        f"Статуса «{v['status']}» нет в Dentist Plus — поменяйте статус там вручную")
                             continue
-                    code = self._put_visit(target, changes, "local_visits", v["id"])
+                    code = self._put_visit(target, changes, "local_visits", v["id"], sig=sig)
                     if code in (401, 403):
                         return False
                     continue
@@ -474,7 +500,7 @@ class Pusher:
                 same = [x for x in day_visits
                         if x["patient_id"] == str(pid) and (x["start"] or "")[:16] == v["start"][:16] and not conflicts.is_cancelled(x)]
                 if same:
-                    self._mark("local_visits", v["id"], "sent", "Уже была в Dentist Plus — дубль не создан", same[0]["id"], done=True)
+                    self._mark("local_visits", v["id"], "sent", "Уже была в Dentist Plus — дубль не создан", same[0]["id"], done=True, sig=sig)
                     continue
                 why = self._clash(v, src, day_visits)
                 if why:
@@ -496,12 +522,12 @@ class Pusher:
                 check = [x for x in self._day_visits(day) if (rid and x["id"] == rid) or
                          (x["patient_id"] == str(pid) and (x["start"] or "")[:16] == v["start"][:16])]
                 if check and (check[0]["start"] or "")[:16] == v["start"][:16] and (not v["doctor_id"] or check[0]["doctor_id"] in (None, str(v["doctor_id"]))):
-                    self._mark("local_visits", v["id"], "sent", "", check[0]["id"], done=True)
+                    self._mark("local_visits", v["id"], "sent", "", check[0]["id"], done=True, sig=sig)
                 elif check:
                     self._mark("local_visits", v["id"], "warn",
-                               f"Создана, но в Dentist Plus время {check[0]['start']} — проверьте запись", check[0]["id"], done=True)
+                               f"Создана, но в Dentist Plus время {check[0]['start']} — проверьте запись", check[0]["id"], done=True, sig=sig)
                 elif rid:
-                    self._mark("local_visits", v["id"], "warn", "Создана, но не найдена при проверке — проверьте в Dentist Plus", rid, done=True)
+                    self._mark("local_visits", v["id"], "warn", "Создана, но не найдена при проверке — проверьте в Dentist Plus", rid, done=True, sig=sig)
                 else:
                     self._mark("local_visits", v["id"], "unknown", "Сервер ответил успехом, но запись не найдена — проверьте в Dentist Plus")
             except OfflineError:
@@ -615,12 +641,33 @@ def merge_pushed_patients(db):
                    JOIN patients r ON r.id = l.remote_id WHERE l.local=1 AND l.remote_id IS NOT NULL""")
     if not rows:
         return 0
+    import db as dbm
     with db.tx() as cx:
         for r in rows:
-            for t in ("local_visits", "records", "documents", "invoices", "payments", "notes", "patient_extras", "patient_edits"):
-                cx.execute(f"UPDATE {t} SET patient_id=? WHERE patient_id=?", (r["rid"], r["lid"]))
+            # review 2026-11 (К4): every table with patient_id (consents, files, questionnaires, memberships…), not a list
+            dbm.repoint(cx, "patient_id", r["lid"], r["rid"], skip=("visits", "visits_archive", "dp_payments"))
             cx.execute("DELETE FROM patients WHERE id=?", (r["lid"],))
+    for r in rows:
+        _move_patient_files(r["lid"], r["rid"])
     return len(rows)
+
+
+def _move_patient_files(old, new):
+    """Files of a patient lie in a folder named by the patient id (files._pdir): it follows the card."""
+    try:
+        import shutil
+        import files
+        src = files.root() / re.sub(r"[^A-Za-z0-9_-]", "_", str(old))[:80]
+        if not src.is_dir():
+            return
+        dst = files._pdir(new)
+        for f in src.iterdir():
+            if not (dst / f.name).exists():
+                shutil.move(str(f), str(dst / f.name))
+        if not any(src.iterdir()):
+            src.rmdir()
+    except Exception:  # noqa: BLE001 — the rows are moved; a locked file is found again by its checksum from a peer
+        log.warning("files of patient %s not moved", old, exc_info=True)
 
 
 def apply_patient_edits(db):

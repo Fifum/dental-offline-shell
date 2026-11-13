@@ -10,6 +10,7 @@ Errors come as {"error": "..."} (401 bad login, 404 «Запись не найд
 from __future__ import annotations
 
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -32,6 +33,31 @@ class OfflineError(ApiError):
     pass
 
 
+def connect_failed(e) -> bool:
+    """True when the request never reached the server (no connection, DNS, refused, connect timeout, TLS handshake):
+    then nothing was written. Any other connection error (dropped while sending or reading the answer) may come
+    after the server did the write."""
+    if isinstance(e, (requests.ConnectTimeout, requests.exceptions.ProxyError, requests.exceptions.SSLError)):
+        return True
+    try:
+        from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
+        early = (NewConnectionError, ConnectTimeoutError)
+    except ImportError:  # pragma: no cover
+        early = ()
+    seen, todo = set(), [e]
+    while todo:
+        x = todo.pop()
+        if x is None or id(x) in seen:
+            continue
+        seen.add(id(x))
+        if early and isinstance(x, early):
+            return True
+        todo += [getattr(x, "reason", None), x.__cause__, x.__context__]
+        todo += [a for a in getattr(x, "args", ()) if isinstance(a, BaseException)]
+    text = str(e)
+    return any(m in text for m in ("Failed to establish a new connection", "NameResolutionError", "getaddrinfo failed"))
+
+
 class DentistPlusClient:
     def __init__(self, base_url: str, login: str, password: str, timeout=25):
         self.base = base_url.rstrip("/")
@@ -39,6 +65,10 @@ class DentistPlusClient:
         self.timeout = timeout
         self.token: str | None = None
         self.token_exp: datetime | None = None   # expires_at of the token (UTC), None when the server gave none
+        # the card threads share the client: one re-login at a time, and none when another thread already renewed
+        # the token (Dentist Plus keeps only the newest token, so parallel logins log each other out)
+        self._auth_lock = threading.Lock()
+        self.token_gen = 0
         self.s = requests.Session()
         self.s.headers.update({"Accept": "application/json", "User-Agent": "DentistPlus-offline-shell/1.3"})
 
@@ -65,6 +95,7 @@ class DentistPlusClient:
         self.token = token
         self.token_exp = self._exp(data.get("expires_at") if isinstance(data, dict) else None)
         self.s.headers["Authorization"] = f"Bearer {token}"
+        self.token_gen += 1
         return data
 
     @staticmethod
@@ -78,11 +109,23 @@ class DentistPlusClient:
             return None
         return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
+    def _stale(self) -> bool:
+        return not self.token or (self.token_exp is not None and
+                                  (self.token_exp - datetime.now(timezone.utc)).total_seconds() < TOKEN_MARGIN)
+
     def _ensure_token(self):
-        if not self.token or (self.token_exp is not None and
-                              (self.token_exp - datetime.now(timezone.utc)).total_seconds() < TOKEN_MARGIN):
-            self.token = None
-            self.auth()
+        if self._stale():
+            with self._auth_lock:
+                if self._stale():  # another thread may have renewed it while this one waited
+                    self.token = None
+                    self.auth()
+
+    def _reauth(self, gen):
+        """401 for a request sent with token generation `gen`: log in again, unless another thread already did."""
+        with self._auth_lock:
+            if self.token_gen == gen:
+                self.token = None
+                self.auth()
 
     def request(self, path: str, params=None, _retry=2):
         self._ensure_token()
@@ -90,6 +133,7 @@ class DentistPlusClient:
             params = {**params, "per_page": min(MAX_PER_PAGE, max(1, int(params["per_page"])))}
         url = f"{self.base}/{path.lstrip('/')}"
         for attempt in range(4):
+            gen = self.token_gen
             try:
                 r = self.s.get(url, params=params, timeout=self.timeout)
             except requests.RequestException as e:
@@ -102,8 +146,7 @@ class DentistPlusClient:
                 # a fresh token, twice at most, the second time after a pause
                 if _retry < 2:
                     time.sleep(3)
-                self.token = None
-                self.auth()
+                self._reauth(gen)
                 return self.request(path, params, _retry=_retry - 1)
             if r.status_code == 429 and attempt < 3:   # rate limit: honour Retry-After, else 3/8/15 s
                 ra = r.headers.get("Retry-After", "")
@@ -120,22 +163,25 @@ class DentistPlusClient:
 
     def write(self, method: str, path: str, body: dict):
         """POST/PUT/PATCH. Returns (status_code, json). Never retries a write after it reached the
-        server (avoids duplicates); only connection errors before sending are reported as offline.
+        server (avoids duplicates); only a failure to connect (nothing was sent) is reported as offline. A connection
+        dropped later may come after the server did the write: the result is unknown (ApiError, status None).
         401 (token expired) and 429 (too many requests) mean the server did not do the write, so those are repeated."""
         self._ensure_token()
         url = f"{self.base}/{path.lstrip('/')}"
         reauth = True
         for attempt in range(4):
+            gen = self.token_gen
             try:
                 r = self.s.request(method.upper(), url, json=body, timeout=self.timeout)
-            except requests.ConnectionError as e:
-                raise OfflineError(f"Нет связи с сервером: {e.__class__.__name__}")
-            except requests.Timeout:
-                raise ApiError("Сервер не ответил вовремя — результат неизвестен, проверьте в Dentist Plus", None)
+            except requests.RequestException as e:
+                if connect_failed(e):
+                    raise OfflineError(f"Нет связи с сервером: {e.__class__.__name__}")
+                if isinstance(e, requests.Timeout):
+                    raise ApiError("Сервер не ответил вовремя — результат неизвестен, проверьте в Dentist Plus", None)
+                raise ApiError("Связь прервалась во время отправки — результат неизвестен, проверьте в Dentist Plus", None)
             if r.status_code == 401 and reauth:
                 reauth = False
-                self.token = None
-                self.auth()
+                self._reauth(gen)
                 continue
             if r.status_code == 429 and attempt < 3:
                 ra = r.headers.get("Retry-After", "")

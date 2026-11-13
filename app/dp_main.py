@@ -54,15 +54,58 @@ def _in_network() -> bool:
         return False
 
 
+def _in_cloud() -> bool:
+    try:
+        import cloud
+        return cloud.configured()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def role(db) -> str:
     """"main" — this computer talks to Dentist Plus for the clinic; "follower" — another one does;
-    "solo" — not in a clinic network or nobody took the role yet: talks to Dentist Plus itself."""
-    if not _in_network():
+    "solo" — not in a clinic network or nobody took the role yet: talks to Dentist Plus itself.
+    Review 2026-11 (В3): a computer joined to the clinic only through the cloud also gets the clinic's choice
+    (dp_settings travels with the cloud too) — it never logs in while another computer of the clinic is the main one."""
+    if not _in_network() and not _in_cloud():
         return "solo"
     node = info(db).get("node")
     if not node:
         return "solo"
-    return "main" if node == config.node_id() else "follower"
+    if node == config.node_id():
+        return "main" if _in_network() else "solo"
+    return "follower"
+
+
+# Review 2026-11 (В17): the main computer sends to Dentist Plus only after it took the clinic's latest rows from a
+# computer of the clinic network since its start and within FRESH_S — a role moved while it was off, or rows another
+# main computer already sent, reach it first. A computer that never had peers is not held back.
+FRESH_S = 15 * 60
+_STARTED = time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def push_wait(db) -> str:
+    """"" when this computer may send to Dentist Plus now, else why it waits."""
+    if role(db) != "main":
+        return ""
+    try:
+        r = db.one("SELECT COUNT(*) AS n, MAX(last_sync) AS last FROM p2p_peers WHERE last_sync IS NOT NULL AND node<>?",
+                   (config.node_id(),))
+    except Exception:  # noqa: BLE001 — no clinic network table: nothing to wait for
+        return ""
+    if not r or not r["n"]:
+        return ""
+    border = max(_STARTED, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - FRESH_S)))
+    if (r["last"] or "") >= border:
+        return ""
+    try:
+        import p2p
+        if p2p.NODE:
+            p2p.NODE.wake(full=True)
+    except Exception:  # noqa: BLE001
+        pass
+    return ("Отправка в Dentist Plus ждёт обмена с другими компьютерами клиники: нужно сначала получить их последние "
+            "изменения, чтобы ничего не отправить дважды")
 
 
 def claim(db) -> dict:
@@ -90,8 +133,21 @@ def blocked_reason(db) -> str:
         name = info(db).get("name") or "другой компьютер"
         return (f"С Dentist Plus обменивается компьютер «{name}». С этого компьютера запросы к API не отправляются: "
                 f"новый вход с тем же логином отключил бы тот компьютер. Проверьте подключение там или перенесите обмен "
-                f"на этот компьютер в Настройках.")
+                f"на этот компьютер в Настройках." if _in_network() else
+                f"С Dentist Plus обменивается компьютер клиники «{name}». Этот компьютер связан с клиникой только через "
+                f"облако и в Dentist Plus не входит: новый вход с тем же логином отключил бы тот компьютер.")
     return ""
+
+
+def unavailable_text(name: str) -> str:
+    """Review 2026-11 (В17): what a follower says while the main computer cannot be reached."""
+    if not _in_network():
+        return (f"Данные Dentist Plus не обновляются: их получает компьютер клиники «{name}», а этот компьютер связан "
+                f"с клиникой только через облако. Записи и карты, сделанные здесь, уйдут через «{name}».")
+    return (f"Основной компьютер «{name}», который обменивается с Dentist Plus, недоступен (выключен или не в сети "
+            f"клиники). Данные Dentist Plus на этом компьютере не обновляются, отправка в Dentist Plus ждёт его. "
+            f"Если он выключен надолго, директор может передать обмен этому компьютеру: Настройки → "
+            f"«Обмен с Dentist Plus ведёт этот компьютер».")
 
 
 # ------------------------------------------------------------------ main side --
@@ -193,12 +249,14 @@ def pull(db) -> dict:
     name = m.get("name") or "другой компьютер"
     p = _peer(m.get("node"))
     if not p:
-        raise DpMainError(f"Компьютер «{name}», который обменивается с Dentist Plus, сейчас не в сети клиники")
+        raise DpMainError(unavailable_text(name))
     full = not db.meta_get("dp_mirror_archive")
     try:
         r = p2p.call(f"http://{p['ip']}:{p['port']}", "dp_mirror",
                      {"since": db.meta_get("dp_mirror_stamp") or "", "full": full}, timeout=90)
     except p2p.P2PError as e:
+        if e.code == -1:  # no connection: the computer is off or out of the network
+            raise DpMainError(unavailable_text(name)) from None
         raise DpMainError(f"Компьютер «{name}» не передал данные Dentist Plus: {e}") from None
     out = {"changed": False, "stamp": r.get("stamp") or "", "error": r.get("error") or "", "name": name, "counts": {}}
     if not r.get("same") and r.get("z"):
