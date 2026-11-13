@@ -259,7 +259,8 @@ async function openRecord(o) {
     return api.save_record(f);
   };
   $("#rDpCopy", box).onclick = e => { e.stopPropagation(); if (typeof dpEditorCopy === "function") dpEditorCopy(e.currentTarget, formNow); };  // 3.3
-  $("#rSave", box).onclick = async () => { try { await save(); closeModal(); toast("Запись в медкарту сохранена"); afterChange(); } catch (e) { toast(errText(e), true); } };
+  const rSave = $("#rSave", box);
+  rSave.onclick = () => busy(rSave, async () => { try { await save(); closeModal(); toast("Запись в медкарту сохранена"); afterChange(); } catch (e) { toast(errText(e), true); } });
   $("#rSavePrint", box).onclick = e => {
     e.stopPropagation();
     recDocMenu(e.currentTarget, [["doc_extract", "Выписка из медкарты"], ["doc_recipe", "Рецепт"], ["doc_referral", "Направление"], ["doc_memo", "Памятка пациенту"]], async tid => {

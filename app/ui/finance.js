@@ -74,13 +74,14 @@ function openDeposit(p) {
       <label class="fl">Комментарий<input class="input" id="fxC" placeholder="например, предоплата за брекеты"></label>${finFiscalBox()}
       <div class="auth-err" id="fxErr"></div></div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="fxOk">Принять аванс</button></div>`);
-  $("#fxOk", box).onclick = async () => {
+  const rid = reqId(), ok = $("#fxOk", box);
+  ok.onclick = () => busy(ok, async () => {
     const rc = $("#fxRcpt", box);
     const r = await api.add_payment({patient_id: p.id, amount: +$("#fxA", box).value, method: $("#fxM", box).value,
-      comment: ("аванс " + $("#fxC", box).value.trim()).trim(), receipt: rc ? rc.checked : false});
+      comment: ("аванс " + $("#fxC", box).value.trim()).trim(), receipt: rc ? rc.checked : false, request_id: rid});
     if (!r.ok) { $("#fxErr", box).textContent = r.message; return; }
     closeModal(); receiptToast(r.receipt, "Аванс принят"); finReloadPatient(p.id);
-  };
+  });
 }
 function openRefund(p, {invoice_id = null, max = 0, after} = {}) {
   const box = modal(`<div class="m-h"><h3>Вернуть деньги · ${esc(p.name)}</h3><button class="x" data-close>×</button></div>
@@ -90,14 +91,16 @@ function openRefund(p, {invoice_id = null, max = 0, after} = {}) {
       <label class="fl">Причина<input class="input" id="fxR" placeholder="например, отказ от лечения"></label>${finFiscalBox()}
       <div class="auth-err" id="fxErr"></div></div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn danger" id="fxOk">Вернуть</button></div>`);
-  $("#fxOk", box).onclick = async () => {
+  const rid = reqId(), ok = $("#fxOk", box);
+  ok.onclick = () => busy(ok, async () => {
     const rc = $("#fxRcpt", box);
     try {
-      const r = await api.refund({patient_id: p.id, invoice_id, amount: $("#fxA", box).value, method: $("#fxM", box).value, reason: $("#fxR", box).value, receipt: rc ? rc.checked : false});
+      const r = await api.refund({patient_id: p.id, invoice_id, amount: $("#fxA", box).value, method: $("#fxM", box).value, reason: $("#fxR", box).value,
+        receipt: rc ? rc.checked : false, request_id: rid});
       closeModal(); receiptToast(r.receipt, `Возврат ${money(r.amount)} записан`);
       if (after) after(); else finReloadPatient(p.id);
     } catch (e) { $("#fxErr", box).textContent = errText(e); }
-  };
+  });
 }
 
 /* ============================================================== invoice editor */
@@ -291,6 +294,9 @@ async function finCashPanel(c) {
         ${sh.cert_cash ? `<span>Сертификаты <b>+${money(sh.cert_cash)}</b></span>` : ""}${sh.moves_in ? `<span>Внесено <b>+${money(sh.moves_in)}</b></span>` : ""}${sh.moves_out ? `<span>Изъято <b>−${money(sh.moves_out)}</b></span>` : ""}
         <span class="sep">Карта <b>${money(sh.card)}</b></span><span>СБП <b>${money(sh.sbp)}</b></span></div>`;
   }
+  // В10: more than one open shift (opened on two computers without the network): close the extra ones one by one
+  if (r.extra && r.extra.length) el.innerHTML = `<div class="warn-line bad">${esc(r.warning)} ${r.extra.map(x => `Смена от ${fmtDT(x.opened_at)}${x.opened_by ? " · " + esc(x.opened_by) : ""}: по расчёту ${money(x.expected_cash)}${act ? ` <button class="linkbtn" data-shx="${esc(x.id)}">закрыть</button>` : ""}`).join("; ")}</div>` + el.innerHTML;
+  $$("[data-shx]", el).forEach(b => b.onclick = () => closeShift(r.extra.find(x => x.id === b.dataset.shx)));
   const on = (id, fn) => { const b = $(id, el); if (b) b.onclick = fn; };
   on("#shOpen", async () => { const v = await askInput("Открыть смену", [{label: "Наличных в кассе сейчас, ₽", type: "number", value: String(r.last_left || 0)}], {ok: "Открыть"});
     if (!v) return; try { await api.cash_shift_open({open_cash: v[0]}); toast("Смена открыта"); loadCash(); } catch (e) { toast(errText(e), true); } });
@@ -312,12 +318,14 @@ function cashMove(kind, r, sh) {
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="cmOk">${kind === "in" ? "Внести" : "Изъять"}</button></div>`);
   const ex = $("#cmExp", box);
   if (ex) { const t = () => ex.hidden = $("#cmR", box).value !== "Расход из кассы"; $("#cmR", box).onchange = t; t(); }
-  $("#cmOk", box).onclick = async () => {
+  const rid = reqId(), ok = $("#cmOk", box);
+  ok.onclick = () => busy(ok, async () => {
     const isExp = ex && !ex.hidden && $("#cmE", box).checked;
-    try { await api.cash_move({kind, amount: $("#cmA", box).value, reason: $("#cmR", box).value, comment: $("#cmC", box).value, expense: isExp, category: isExp ? $("#cmCat", box).value : ""});
+    try { await api.cash_move({kind, amount: $("#cmA", box).value, reason: $("#cmR", box).value, comment: $("#cmC", box).value, expense: isExp,
+        category: isExp ? $("#cmCat", box).value : "", request_id: rid});
       closeModal(); toast(kind === "in" ? "Деньги внесены" : "Деньги изъяты"); loadCash(); }
     catch (e) { $("#cmErr", box).textContent = errText(e); }
-  };
+  });
 }
 function closeShift(sh) {
   const box = modal(`<div class="m-h"><h3>Закрыть смену</h3><button class="x" data-close>×</button></div>
@@ -333,12 +341,13 @@ function closeShift(sh) {
   $("#scC", box).oninput = () => diff("#scC", sh.expected_cash, "#sdC");
   $("#scK", box).oninput = () => diff("#scK", sh.card, "#sdK");
   $("#scS", box).oninput = () => diff("#scS", sh.sbp, "#sdS");
-  $("#scOk", box).onclick = async () => {
-    try { const r = await api.cash_shift_close({counted_cash: $("#scC", box).value, card_terminal: $("#scK", box).value, sbp_bank: $("#scS", box).value, note: $("#scN", box).value});
+  const ok = $("#scOk", box);
+  ok.onclick = () => busy(ok, async () => {
+    try { const r = await api.cash_shift_close({id: sh.id, counted_cash: $("#scC", box).value, card_terminal: $("#scK", box).value, sbp_bank: $("#scS", box).value, note: $("#scN", box).value});
       closeModal(); toast(Math.abs(r.diff_cash) < 0.009 ? "Смена закрыта, наличные сходятся" : `Смена закрыта: ${r.diff_cash > 0 ? "излишек" : "недостача"} ${money(Math.abs(r.diff_cash))}`, Math.abs(r.diff_cash) >= 0.009);
       loadCash(); if (await ask("Распечатать отчёт смены?", {icon: "edit", ok: "Печать", cancel: "Не нужно"})) printShift(r.id); }
     catch (e) { $("#scErr", box).textContent = errText(e); }
-  };
+  });
 }
 async function openShifts() {
   const rows = await api.cash_shifts();

@@ -87,7 +87,8 @@ async function openBooking(v = {}) {
   };
   if (rep) { rep.onchange = repHint; $("#bkRepN", box).oninput = repHint; $("#bkDate", box).addEventListener("change", repHint); }
 
-  $("#bkSave", box).onclick = async () => {
+  const bkSave = $("#bkSave", box);
+  bkSave.onclick = () => busy(bkSave, async () => {
     try {
       if (!patientId) {
         const nf = $("#bkNewForm", box);
@@ -123,5 +124,5 @@ async function openBooking(v = {}) {
       if (d !== S.day && S.view === "schedule") S.day = d;
       afterChange();
     } catch (e) { toast(errText(e), true); }
-  };
+  });
 }

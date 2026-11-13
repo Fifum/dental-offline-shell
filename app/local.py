@@ -413,13 +413,29 @@ class Local:
     def save_invoice(self, inv: dict):
         iid = inv.get("id") or new_id()
         items = inv.get("items") or []
+
+        def num(v, what, default=0.0):
+            try:
+                return float(default if v in (None, "") else v)
+            except (TypeError, ValueError):
+                raise ValueError(f"{what} указана неверно") from None
         total = 0.0
-        for it in items:
-            line = float(it.get("price") or 0) * float(it.get("qty") or 1)
-            line -= line * float(it.get("discount") or 0) / 100
+        for it in items:  # К7: no negative prices, quantities or discounts over 100 % — they make «overpayments»
+            name = f"«{str(it.get('title') or 'услуга')[:60]}»"
+            price, qty, ld = num(it.get("price"), f"Цена {name}"), num(it.get("qty"), f"Количество {name}", 1), num(it.get("discount"), f"Скидка {name}")
+            if price < 0:
+                raise ValueError(f"Цена {name} не может быть меньше нуля")
+            if qty <= 0:
+                raise ValueError(f"Количество {name} должно быть больше нуля")
+            if not 0 <= ld <= 100:
+                raise ValueError(f"Скидка {name} — от 0 до 100 %")
+            line = price * qty
+            line -= line * ld / 100
             it["sum"] = round(line, 2)
             total += line
-        disc = float(inv.get("discount") or 0)
+        disc = num(inv.get("discount"), "Скидка на счёт")
+        if not 0 <= disc <= 100:
+            raise ValueError("Скидка на счёт — от 0 до 100 %")
         total = round(total - total * disc / 100, 2)
         kind = inv.get("kind") or "invoice"
         variants, chosen = [], None
@@ -468,6 +484,7 @@ class Local:
             raise ValueError("Отметьте выполненные услуги")
         iid = self.save_invoice({"patient_id": plan["patient_id"], "visit_id": visit_id, "doctor_id": plan["doctor_id"],
                                  "items": [{k: v for k, v in it.items() if k not in ("sum", "opt")} for it in items],
+                                 "discount": plan.get("discount") or 0,  # В12: the plan's discount goes to the invoice
                                  "comment": f"По плану лечения от {plan['created_at'][:10]}", "plan_id": plan_id})
         with self.db.tx() as c:
             c.execute("UPDATE invoices SET plan_status='Активен', transferred=0 WHERE id=? AND plan_status!='Лечение завершено'", (plan_id,))
@@ -518,6 +535,8 @@ class Local:
             raise ValueError("Сумма должна быть больше нуля")
         pid = new_id()
         inv = self.db.one("SELECT patient_id FROM invoices WHERE id=?", (p.get("invoice_id"),)) if p.get("invoice_id") else None
+        if p.get("invoice_id") and not inv:  # В13: never a payment that points to nothing
+            raise ValueError("Счёт удалён на другом компьютере — откройте карточку заново")
         with self.db.tx() as c:
             c.execute("""INSERT INTO payments(id, invoice_id, patient_id, amount, method, comment, created_at)
                          VALUES(?,?,?,?,?,?,?)""",

@@ -155,9 +155,10 @@ async function openInvoice(o) {
       kind: isPlan ? "plan" : "invoice", title: isPlan ? $("#ivTitle", box).value.trim() : "", plan_status: isPlan ? $("#ivPSt", box).value : null,
       ...(isPlan ? {variants: st.variants, variant: st.variant} : (typeof finPayerValues === "function" ? finPayerValues(box) : {}))});
   };
-  $("#ivSave", box).onclick = async () => { const id = await save(); if (!id) return; toast(isPlan ? "План сохранён" : "Счёт сохранён");
+  const ivSave = $("#ivSave", box);
+  ivSave.onclick = () => busy(ivSave, async () => { const id = await save(); if (!id) return; toast(isPlan ? "План сохранён" : "Счёт сохранён");
     if (o.after) { closeModal(); o.after(id); return; }
-    afterChange(); openInvoice({...o, id}); };
+    afterChange(); openInvoice({...o, id}); });
   const pb = $("#planBill", box); if (pb) pb.onclick = async () => {
     const idx = $$(".pl-ch", box).filter(c => c.checked).map(c => +c.dataset.i);
     if (!idx.length) return toast("Отметьте выполненные услуги", true);
@@ -176,19 +177,20 @@ async function openInvoice(o) {
     openDocFill({patient_id: o.patient_id, template_id: "doc_act", invoice_id: id, doctor_id: doc, visit_id: o.visit_id}); };
   if ($("#payM", box) && typeof payExtraInit === "function") payExtraInit(box, inv, pat);
   if (inv && !isPlan && typeof finInvoicePays === "function") finInvoicePays(box, inv, pat, () => openInvoice({...o, id: inv.id}));
-  const pg = $("#payGo", box); if (pg) pg.onclick = async () => {
+  const payRid = reqId();  // one payment per opened invoice window, however many times the button is pressed
+  const pg = $("#payGo", box); if (pg) pg.onclick = () => busy(pg, async () => {
     const id = await save(); if (!id) return;
     const rc = $("#payRcpt", box), ct = $("#payContact", box);
     const ex = typeof payExtraValues === "function" ? payExtraValues(box) : {};
     const r = await api.add_payment({invoice_id: id, amount: +$("#payAmt", box).value, method: $("#payM", box).value,
-      receipt: rc ? rc.checked : false, contact: ct ? ct.value.trim() : "", ...ex});
+      receipt: rc ? rc.checked : false, contact: ct ? ct.value.trim() : "", request_id: payRid, ...ex});
     if (!r.ok) return toast(r.message, true);
     receiptToast(r.receipt, "Оплата принята"); afterChange(); openInvoice({...o, id});
-  };
+  });
   $$("[data-delpay]", box).forEach(b => b.onclick = async () => { if (await ask("Удалить оплату?", {danger: true, ok: "Удалить", text: "Оплата исчезнет из счёта и кассового отчёта."})) { try { await api.delete_payment(b.dataset.delpay); afterChange(); openInvoice({...o, id: inv.id}); } catch (e) { toast(errText(e), true); } } });
   $$("[data-rcpt]", box).forEach(b => b.onclick = () => openReceipt(b.dataset.rcpt, () => openInvoice({...o, id: inv.id})));
   $$("[data-print-pay]", box).forEach(b => b.onclick = async () => { try { const r = await api.fiscal_for_payment(b.dataset.printPay, ""); receiptToast(r, "Готово"); openInvoice({...o, id: inv.id}); } catch (e) { toast(errText(e), true); } });
-  const dl = $("#ivDel", box); if (dl) dl.onclick = async () => { if (await ask(isPlan ? "Удалить план лечения?" : "Удалить счёт вместе с оплатами?", {danger: true, ok: "Удалить", text: isPlan ? "План пропадёт из карточки пациента." : "Вместе со счётом удалятся его оплаты, а списанные по услугам материалы вернутся на склад."})) { try { await api.delete_invoice(inv.id); closeModal(); afterChange(); } catch (e) { toast(errText(e), true); } } };
+  const dl = $("#ivDel", box); if (dl) dl.onclick = async () => { if (await ask(isPlan ? "Удалить план лечения?" : "Удалить счёт?", {danger: true, ok: "Удалить", text: isPlan ? "План пропадёт из карточки пациента." : "Списанные по услугам материалы вернутся на склад. Счёт с оплатами удалить нельзя — сначала удалите оплаты."})) { try { await api.delete_invoice(inv.id); closeModal(); afterChange(); } catch (e) { toast(errText(e), true); } } };
 }
 
 /* -------------------------------------------------------------- cash */
