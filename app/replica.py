@@ -145,7 +145,7 @@ def install(db):
     with db._lock:
         conn.executescript(SCHEMA)
         rcols = set(_cols(conn, "sync_rows"))
-        for col in ("vv TEXT", "pbase TEXT", "seq INTEGER", "cver TEXT"):  # 3.0: versions for peer-to-peer sync
+        for col in ("vv TEXT", "pbase TEXT", "seq INTEGER", "cver TEXT", "pvv TEXT"):  # 3.0: versions for peer-to-peer sync
             if col.split()[0] not in rcols:
                 conn.execute(f"ALTER TABLE sync_rows ADD COLUMN {col}")
         if "cver" not in rcols:  # before 3.0 every known version came from (or went to) the cloud
@@ -348,7 +348,9 @@ def set_applying(conn, on: bool):
 # Every computer is a peer: it takes rows from any other computer of the clinic (LAN) and from the cloud.
 # A local change becomes a version when it is «stamped»: `ver` = «<time ms>.<node>.<random>», `vv` = version
 # vector {node: counter} (the counter is a time in ms, so it keeps growing after a restore from a backup),
-# `base` = the row as of this version, `pbase` = the row it was made from (the ancestor for a three-way merge),
+# `base` = the row as of this version, `pbase` = the last version of the row this computer took from another one
+# (or merged) before its own changes, with its vector `pvv` — the ancestor for a three-way merge; consecutive local
+# changes keep it, so two edits here against one edit there still merge against what both sides had.
 # `seq` = local change number. A computer gives its peers «rows with seq > what you already have from me»;
 # what came from a third computer goes on with a new local seq, so every change reaches everyone.
 # Two versions: one vector covers the other → the newer one is kept, the older one is ignored; neither covers
@@ -427,12 +429,16 @@ def new_epoch(db) -> str:
     return e
 
 
-def _save_meta(conn, tbl, k, ver, vv, base, pbase, origin):
-    conn.execute("INSERT INTO sync_rows(tbl, k, ver, base, pbase, vv, seq, origin) VALUES(?,?,?,?,?,?,?,?) "
+def _js(v):
+    return None if v is None else (v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, separators=(",", ":")))
+
+
+def _save_meta(conn, tbl, k, ver, vv, base, pbase, origin, pvv=None):
+    conn.execute("INSERT INTO sync_rows(tbl, k, ver, base, pbase, pvv, vv, seq, origin) VALUES(?,?,?,?,?,?,?,?,?) "
                  "ON CONFLICT(tbl, k) DO UPDATE SET ver=excluded.ver, base=excluded.base, vv=excluded.vv, "
-                 "pbase=excluded.pbase, seq=excluded.seq, origin=COALESCE(NULLIF(sync_rows.origin, ''), excluded.origin)",
-                 (tbl, k, ver, None if base is None else json.dumps(base, ensure_ascii=False),
-                  None if pbase is None else (pbase if isinstance(pbase, str) else json.dumps(pbase, ensure_ascii=False)),
+                 "pbase=excluded.pbase, pvv=excluded.pvv, seq=excluded.seq, "
+                 "origin=COALESCE(NULLIF(sync_rows.origin, ''), excluded.origin)",
+                 (tbl, k, ver, None if base is None else json.dumps(base, ensure_ascii=False), _js(pbase), _js(pvv),
                   json.dumps(vv, separators=(",", ":")), _next_seq(conn), origin or ""))
 
 
@@ -458,7 +464,11 @@ def stamp_conn(conn, node, only=None) -> int:
             continue
         vv = _vv(meta)
         vv[node] = max(vv.get(node, 0) + 1, int(d["at"]))
-        _save_meta(conn, t.name, d["k"], make_ver(node, d["at"]), vv, row, meta["base"] if meta else None, node)
+        if meta and meta["ver"] and ver_device(meta["ver"]) == node:  # an earlier change made here: keep its ancestor
+            pbase, pvv = meta["pbase"], meta["pvv"]
+        else:  # the version taken from another computer (or merged) is what both sides have
+            pbase, pvv = (meta["base"], meta["vv"] or _js(_vv(meta))) if meta else (None, None)
+        _save_meta(conn, t.name, d["k"], make_ver(node, d["at"]), vv, row, pbase, node, pvv)
         conn.execute(*conn_del)
         n += 1
     return n
@@ -469,12 +479,65 @@ def stamp(db, node) -> int:
         return stamp_conn(conn, node)
 
 
+# В2: set after a restore from a backup — no exchange with the other computers and the cloud until the restart
+HOLD = ""
+
+
+def known_nodes(db) -> set:
+    """Computers whose versions this database has seen or that are known in the clinic network."""
+    out = set()
+    with db._lock:
+        try:
+            for (v,) in db.conn.execute("SELECT vv FROM sync_rows WHERE vv IS NOT NULL").fetchall():
+                out |= set(_pvv(v) or {})
+        except Exception:  # noqa: BLE001 — not installed yet
+            pass
+        try:
+            out |= {r[0] for r in db.conn.execute("SELECT node FROM p2p_peers WHERE COALESCE(node, '')<>''")}
+        except Exception:  # noqa: BLE001 — never joined a clinic network
+            pass
+    return out
+
+
+def restamp_all(db, node, nodes=()) -> int:
+    """В2: after a restore from a backup every row of the restored database becomes a new version of this computer
+    that covers everything the other computers had made by now, so they take the restored rows instead of bringing
+    their newer ones back. Their changes made after this moment still merge as usual; rows that are not in the copy
+    at all (made later elsewhere) come back from them. `nodes`: computers known before the restore (the copy may
+    not know the ones that joined later)."""
+    now = int(time.time() * 1000)
+    n = 0
+    with db.tx() as conn:
+        stamp_conn(conn, node)  # changes not stamped when the copy was made (deletions among them) go first
+        nodes = {node} | set(nodes) | known_nodes(db)
+        have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for t in TABLES:
+            if t.name not in have:
+                continue
+            where = f" WHERE {t.where}" if t.where else ""
+            for r in conn.execute(f"SELECT {', '.join(t.key)} FROM {t.name}{where}").fetchall():
+                key = list(r)
+                if any(x is None for x in key):
+                    continue
+                k = ks(key)
+                row = read_row(conn, t, key)
+                meta = conn.execute("SELECT * FROM sync_rows WHERE tbl=? AND k=?", (t.name, k)).fetchone()
+                vv = _vv(meta)
+                for x in nodes:
+                    vv[x] = max(vv.get(x, 0), now)
+                vv[node] = max(vv[node], now) + 1
+                _save_meta(conn, t.name, k, make_ver(node, now), vv, row, meta["base"] if meta else None,
+                           (meta["origin"] if meta else "") or node, (meta["vv"] if meta else None))
+                n += 1
+    return n
+
+
 def changes_since(db, since=0, limit=500):
     """Versions this computer has with seq > since, oldest first: what a peer is missing."""
     rows = db.q("SELECT * FROM sync_rows WHERE seq>? AND ver IS NOT NULL ORDER BY seq LIMIT ?", (int(since or 0), int(limit)))
     return [{"t": r["tbl"], "k": json.loads(r["k"]), "row": json.loads(r["base"]) if r["base"] else None, "ver": r["ver"],
              "vv": json.loads(r["vv"]) if r["vv"] else vv_of_ver(r["ver"]), "pbase": json.loads(r["pbase"]) if r["pbase"] else None,
-             "origin": r["origin"] or "", "seq": r["seq"]} for r in rows]
+             "pvv": json.loads(r["pvv"]) if r["pvv"] else None, "origin": r["origin"] or "", "seq": r["seq"]} for r in rows]
 
 
 def _merged_ver(vv, row) -> str:
@@ -514,6 +577,31 @@ def apply_versions(db, items, node, cloud=False):
     return stats
 
 
+def _pvv(v):
+    if not v:
+        return None
+    try:
+        return {kk: int(x) for kk, x in (json.loads(v) if isinstance(v, str) else v).items()}
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _ancestor(it, meta, tv):
+    """The ancestor for merging two concurrent versions: of the two candidates (the one the incoming version was made
+    from, the one ours was made from) one that both versions cover, the later one. Unknown → the incoming one (old peers)."""
+    mv = _vv(meta)
+    cands = [(it.get("pbase"), _pvv(it.get("pvv"))),
+             (json.loads(meta["pbase"]) if meta["pbase"] else None, _pvv(meta["pvv"]))]
+    ok = [(row, vv) for row, vv in cands if vv is not None and vv_cmp(vv, tv) in ("lt", "eq") and vv_cmp(vv, mv) in ("lt", "eq")]
+    if not ok:
+        return it.get("pbase"), None
+    best = ok[0]
+    for row, vv in ok[1:]:
+        if vv_cmp(vv, best[1]) == "gt" or (vv_cmp(vv, best[1]) == "cc" and sum(vv.values()) > sum(best[1].values())):
+            best = (row, vv)
+    return best
+
+
 def _apply_one(conn, t, key, k, it, meta, stats, logging):
     tv = {kk: int(v) for kk, v in (it.get("vv") or vv_of_ver(it["ver"])).items()}
     theirs = it["row"]
@@ -531,18 +619,18 @@ def _apply_one(conn, t, key, k, it, meta, stats, logging):
     try:
         if c == "lt":
             write_row(conn, t, key, theirs)
-            _save_meta(conn, t.name, k, it["ver"], tv, theirs, it.get("pbase"), it.get("origin") or dev)
+            _save_meta(conn, t.name, k, it["ver"], tv, theirs, it.get("pbase"), it.get("origin") or dev, it.get("pvv"))
             stats["applied"] += 1
         else:  # changed here and there
             mine = json.loads(meta["base"]) if meta["base"] else None
-            anc = it.get("pbase")
+            anc, avv = _ancestor(it, meta, tv)
             mine_newer = (ver_time(meta["ver"]), meta["ver"]) > (ver_time(it["ver"]), it["ver"])
             merged, lost = merge(anc, mine, theirs, mine_newer)
             vv = _vv(meta)
             for kk, v in tv.items():
                 vv[kk] = max(vv.get(kk, 0), v)
             write_row(conn, t, key, merged)
-            _save_meta(conn, t.name, k, _merged_ver(vv, merged), vv, merged, anc, it.get("origin") or dev)
+            _save_meta(conn, t.name, k, _merged_ver(vv, merged), vv, merged, anc, it.get("origin") or dev, avv)
             if lost:
                 log_conflict(conn, t, k, merged or theirs or mine, lost, dev)
                 stats["conflicts"] += len(lost)
@@ -563,7 +651,8 @@ def cloud_outgoing(db, limit=400):
     rows = db.q("SELECT * FROM sync_rows WHERE ver IS NOT NULL AND (cver IS NULL OR cver<>ver) ORDER BY seq LIMIT ?", (int(limit),))
     out = [{"t": r["tbl"], "k": json.loads(r["k"]), "ks": r["k"], "row": json.loads(r["base"]) if r["base"] else None,
             "ver": r["ver"], "vv": json.loads(r["vv"]) if r["vv"] else vv_of_ver(r["ver"]),
-            "pbase": json.loads(r["pbase"]) if r["pbase"] else None, "origin": r["origin"] or "", "base": r["cver"]}
+            "pbase": json.loads(r["pbase"]) if r["pbase"] else None, "pvv": json.loads(r["pvv"]) if r["pvv"] else None,
+            "origin": r["origin"] or "", "base": r["cver"]}
            for r in rows]
     out.sort(key=lambda x: ORDER.get(x["t"], 999))
     return out

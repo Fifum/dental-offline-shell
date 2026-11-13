@@ -279,30 +279,60 @@ class Cloud:
             top = int((c.execute("SELECT v FROM meta WHERE k='seq'").fetchone() or [0])[0])
         return {"rows": rows, "more": bool(rows) and rows[-1]["seq"] < top, "seq": top, "subscription": sub}
 
-    def blob_put(self, dev, bid, data: bytes):
+    @staticmethod
+    def _sha_path(path) -> str:
+        """The blob's checksum lives beside the blob folder (<tenant>.blobs.sha), the folder keeps only blobs."""
+        d = os.path.dirname(path) + ".sha"
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, os.path.basename(path))
+
+    @classmethod
+    def _blob_whole(cls, path) -> bool:
+        """The stored blob is whole: its checksum (kept next to it since the upload) matches. Older blobs: by existence."""
+        if not os.path.exists(path):
+            return False
+        try:
+            with open(cls._sha_path(path), encoding="ascii") as f:
+                want = f.read().strip()
+        except OSError:
+            return True
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest() == want
+
+    def blob_put(self, dev, bid, data: bytes, sha=""):
         if not HEX.match(bid):
             raise CloudError("Неверный файл")
         self._writable(dev["tenant_id"])
+        got = hashlib.sha256(data).hexdigest()
+        if sha and sha.lower() != got:  # cut on the way
+            raise CloudError("Файл передан не полностью")
         path = os.path.join(self._blob_dir(dev["tenant_id"]), bid)
-        if not os.path.exists(path):
-            tmp = path + ".tmp"
-            with open(tmp, "wb") as f:
-                f.write(data)
-            os.replace(tmp, path)
+        if not self._blob_whole(path):  # a damaged copy is replaced by a whole one
+            sp = self._sha_path(path)
+            for p, b in ((path + ".tmp", data), (sp + ".tmp", got.encode("ascii"))):
+                with open(p, "wb") as f:
+                    f.write(b)
+                    f.flush()
+                    os.fsync(f.fileno())
+            os.replace(path + ".tmp", path)
+            os.replace(sp + ".tmp", sp)
         return {"ok": True}
 
     def blob_get(self, dev, bid):
         if not HEX.match(bid):
             raise CloudError("Неверный файл")
         path = os.path.join(self._blob_dir(dev["tenant_id"]), bid)
-        if not os.path.exists(path):
+        if not self._blob_whole(path):
             raise CloudError("Файл не найден", 404)
         with open(path, "rb") as f:
             return f.read()
 
     def blob_has(self, dev, ids):
         d = self._blob_dir(dev["tenant_id"])
-        return [b for b in ids if HEX.match(str(b)) and os.path.exists(os.path.join(d, b))]
+        return [b for b in ids if HEX.match(str(b)) and self._blob_whole(os.path.join(d, b))]
 
 
 class _Conn:
@@ -353,7 +383,7 @@ def make_handler(cloud: Cloud):
             if path.startswith("/v1/blob/"):
                 dev, bid = self._dev(), path.rsplit("/", 1)[-1]
                 if method == "PUT":
-                    return self._json(200, cloud.blob_put(dev, bid, self._body()))
+                    return self._json(200, cloud.blob_put(dev, bid, self._body(), self.headers.get("X-Blob-Sha256") or ""))
                 return self._send(200, cloud.blob_get(dev, bid), "application/octet-stream")
             if method != "POST":
                 raise CloudError("Не найдено", 404)

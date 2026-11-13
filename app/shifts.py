@@ -75,8 +75,7 @@ def _hours(start, end):
 class Shifts:
     def __init__(self, db):
         self.db = db
-        db.conn.executescript(SCHEMA)
-        db.conn.commit()
+        db.script(SCHEMA)
 
     def month(self, month=None):
         y, m, n = _month(month)

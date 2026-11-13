@@ -14,6 +14,7 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=FULL;
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS db_flags(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS branches(id TEXT PRIMARY KEY, name TEXT, data TEXT, synced_at TEXT);
 CREATE TABLE IF NOT EXISTS doctors(id TEXT PRIMARY KEY, name TEXT, branch_id TEXT, data TEXT, synced_at TEXT);
 CREATE TABLE IF NOT EXISTS patients(
@@ -173,6 +174,13 @@ class DB:
                 self.conn.execute("ROLLBACK")
                 raise
 
+    def script(self, sql):
+        """Run a raw script (schema) under the lock: executescript commits first, so without the lock it would commit
+        another thread's open transaction half-done."""
+        with self._lock:
+            self.conn.executescript(sql)
+            self.conn.commit()
+
     def q(self, sql, args=()):
         with self._lock:
             return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
@@ -290,8 +298,38 @@ class DB:
 
     LOCAL_TABLES = ("local_visits", "records", "documents", "invoices", "payments", "patient_edits")
 
-    def wipe(self, with_local=True):
+    # К1: a database with the clinic's real data is never replaced by demo data (damaged settings say «demo»)
+    def data_kind(self, kind=None):
+        """'real' / 'none' (just wiped, demo allowed) / '' unknown (older database). `kind` sets it."""
+        with self._lock:
+            if kind is not None:
+                self.conn.execute("INSERT OR REPLACE INTO db_flags(k, v) VALUES('data', ?)", (kind,))
+                self.conn.commit()
+                return kind
+            r = self.conn.execute("SELECT v FROM db_flags WHERE k='data'").fetchone()
+            return r[0] if r else ""
+
+    def has_real_data(self) -> bool:
+        kind = self.data_kind()
+        if kind:
+            return kind == "real"
+        with self._lock:  # a database of an older version: synced from Dentist Plus, or rows from other computers
+            meta = {r[0] for r in self.conn.execute("SELECT key FROM meta WHERE key IN ('last_ok', 'demo_built')")}
+            if "last_ok" in meta and "demo_built" not in meta:
+                return True
+            try:
+                return self.conn.execute("SELECT 1 FROM sync_rows WHERE ver IS NOT NULL LIMIT 1").fetchone() is not None
+            except sqlite3.OperationalError:
+                return False
+
+    def wipe(self, with_local=True, quiet=False):
+        """`quiet`: the deletions are not replicated (demo data never left this computer)."""
         with self.tx() as c:
+            if quiet:
+                try:
+                    c.execute("UPDATE sync_state SET v='1' WHERE k='applying'")
+                except sqlite3.OperationalError:
+                    pass
             for t in ("branches", "doctors", "patients", "visits", "visits_archive", "patient_extras", "sync_log", "meta",
                       "dp_payments", "dp_schedule"):
                 c.execute(f"DELETE FROM {t}")
@@ -320,6 +358,13 @@ class DB:
                         c.execute(sql)
                     except sqlite3.OperationalError:
                         pass
+            if quiet:
+                try:
+                    c.execute("UPDATE sync_state SET v='0' WHERE k='applying'")
+                except sqlite3.OperationalError:
+                    pass
+        if with_local:
+            self.data_kind("none")
 
     def pending_count(self):
         n = sum(self.one(f"SELECT COUNT(*) n FROM {t} WHERE transferred=0")["n"] for t in self.LOCAL_TABLES)

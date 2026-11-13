@@ -141,6 +141,47 @@ def configured() -> bool:
     return bool(s["url"] and s["token"] and s["key"])
 
 
+# ------------------------------------- В15: patient files (here and in p2p.py) --
+_whole: dict = {}  # path → (size, mtime) of a file whose checksum matched (each file is read once per run)
+
+
+def file_whole(p, row) -> bool:
+    """The file of a patient_files row is here and whole: its size and checksum match the row. A file cut by a power
+    cut counts as missing (it is taken again) and is never sent to another computer or the cloud."""
+    try:
+        st = p.stat()
+    except OSError:
+        return False
+    if row.get("size") is not None and st.st_size != int(row["size"]):
+        return False
+    if not row.get("sha256"):
+        return True
+    sig = (st.st_size, st.st_mtime_ns)
+    if _whole.get(str(p)) == sig:
+        return True
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if h.hexdigest() != row["sha256"]:
+        log.warning("file %s: damaged (checksum mismatch)", p.name)
+        return False
+    _whole[str(p)] = sig
+    return True
+
+
+def save_file(p, data: bytes):
+    """Write a received file: a .part on the disk first, then it takes the place of the file."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    part = p.with_name(p.name + ".part")
+    with open(part, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(part, p)
+    _whole.pop(str(p), None)
+
+
 class Http:
     def __init__(self, url, token=""):
         import requests
@@ -169,7 +210,8 @@ class Http:
     def put_blob(self, bid, data):
         import requests
         try:
-            return self._check(self.s.put(f"{self.url}/v1/blob/{bid}", data=data, headers=self._h(), timeout=120))
+            return self._check(self.s.put(f"{self.url}/v1/blob/{bid}", data=data, timeout=120,
+                                          headers={**self._h(), "X-Blob-Sha256": hashlib.sha256(data).hexdigest()}))
         except requests.RequestException as e:
             raise CloudError("Нет связи с облачным сервером", -1) from e
 
@@ -301,6 +343,8 @@ class Cloud:
     def sync(self):
         if not configured():
             return {"ok": False, "message": "Облако не подключено"}
+        if replica.HOLD:  # В2: restored from a backup, until the restart
+            return {"ok": False, "message": replica.HOLD}
         if not self._lock.acquire(blocking=False):
             return {"ok": True, "message": "Синхронизация уже идёт"}
         self.state.update(running=True, last_try=time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -357,7 +401,7 @@ class Cloud:
                 # 3.0: the same versions as between computers in the clinic network (vv, ancestor, who made the row)
                 items.append({"t": obj["t"], "k": obj["k"], "row": obj["row"], "ver": row["ver"], "seq": row["seq"],
                               "vv": obj.get("vv") or replica.vv_of_ver(row["ver"]), "pbase": obj.get("pbase"),
-                              "origin": obj.get("origin") or ""})
+                              "pvv": obj.get("pvv"), "origin": obj.get("origin") or ""})
             if items:
                 replica.apply_versions(self.db, items, config.node_id(), cloud=True)
                 total += len(items)
@@ -378,7 +422,7 @@ class Cloud:
             byk[rk] = it
             changes.append({"key": rk, "ver": it["ver"], "base": it["base"],
                             "data": keys.seal_row({"t": it["t"], "k": it["k"], "row": it["row"], "vv": it["vv"],
-                                                   "pbase": it["pbase"], "origin": it["origin"]}, rk)})
+                                                   "pbase": it["pbase"], "pvv": it.get("pvv"), "origin": it["origin"]}, rk)})
         r = h.post("/v1/push", {"changes": changes})
         for rk in r["accepted"]:
             replica.cloud_pushed(self.db, byk[rk])
@@ -394,7 +438,7 @@ class Cloud:
         want = {}
         for it in items:
             p = self._file_path(it["row"])
-            if it["row"].get("sha256") and p.exists():
+            if it["row"].get("sha256") and file_whole(p, it["row"]):  # В15: a damaged file never becomes the shared copy
                 want[keys.blob_id(it["row"]["sha256"])] = p
         if not want:
             return
@@ -412,7 +456,7 @@ class Cloud:
         import files
         for r in rows:
             p = self._file_path(r)
-            if p.exists():
+            if file_whole(p, r):  # В15: a file cut by a power cut is taken again
                 continue
             bid = keys.blob_id(r["sha256"])
             try:
@@ -424,7 +468,7 @@ class Cloud:
             if hashlib.sha256(data).hexdigest() != r["sha256"]:
                 log.warning("file %s: checksum mismatch", r["id"])
                 continue
-            p.write_bytes(data)
+            save_file(p, data)
             try:
                 files.make_previews(p, r.get("ext") or "")
             except Exception as e:  # noqa: BLE001

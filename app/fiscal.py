@@ -298,8 +298,7 @@ class ShtrihDriver:
 class Fiscal:
     def __init__(self, db, driver_override=None):
         self.db = db
-        db.conn.executescript(SCHEMA)
-        db.conn.commit()
+        db.script(SCHEMA)
         self._lock = threading.Lock()  # one register, one operation at a time
         self._override = driver_override
 

@@ -32,7 +32,7 @@ import urllib.request
 
 import config
 import replica
-from cloud import CloudError, Keys, clinic_key, set_clinic_key
+from cloud import CloudError, Keys, clinic_key, file_whole, save_file, set_clinic_key
 
 log = logging.getLogger("p2p")
 
@@ -88,6 +88,8 @@ def is_member() -> bool:
 
 
 def paused() -> str:
+    if replica.HOLD:  # В2: restored from a backup, until the restart
+        return replica.HOLD
     if config.load_settings().get("demo"):
         return "Демо-режим: тестовые данные не уходят на другие компьютеры клиники"
     return ""
@@ -110,7 +112,8 @@ def create_clinic(name="", db=None, fresh=False):
 def _leave_demo(db):
     if config.load_settings().get("demo"):
         config.save_settings({"demo": False})
-        db.wipe()  # never mix demo and real data
+        db.wipe(quiet=True)  # never mix demo and real data; К1: the deletions never go to the clinic's computers
+        db.data_kind("real")
         import catalog
         catalog.seed(db, demo=False)
 
@@ -382,8 +385,7 @@ class Node(threading.Thread):
         global NODE
         self.db, self.port = db, int(port)
         replica.install(db)
-        db.conn.executescript(SCHEMA)
-        db.conn.commit()
+        db.script(SCHEMA)
         self.live: dict = {}       # node → {ip, port, name, host, seen}
         self.others: dict = {}     # computers of other clinics (or not joined yet) seen in the network
         self._wake = threading.Event()
@@ -458,7 +460,7 @@ class Node(threading.Thread):
         if not r:
             raise P2PError("Файл не найден", 404)
         p = _file_path(r)
-        if not p.exists():
+        if not file_whole(p, r):  # В15: a damaged file is never given to another computer
             raise P2PError("Файл не найден", 404)
         return {"data": _b64(p.read_bytes())}
 
@@ -531,7 +533,7 @@ class Node(threading.Thread):
         import files
         for r in rows:
             p = _file_path(r)
-            if p.exists():
+            if file_whole(p, r):  # В15: a file cut by a power cut is taken again
                 continue
             try:
                 data = base64.b64decode(call(url, "blob", {"sha": r["sha256"]}, timeout=120)["data"])
@@ -542,8 +544,7 @@ class Node(threading.Thread):
             if hashlib.sha256(data).hexdigest() != r["sha256"]:
                 log.warning("file %s: checksum mismatch", r["id"])
                 continue
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(data)
+            save_file(p, data)
             try:
                 files.make_previews(p, r.get("ext") or "")
             except Exception as e:  # noqa: BLE001
