@@ -3,6 +3,16 @@
 const PAY_METHODS = ["Наличные", "Карта", "СБП", "Перевод", "Безнал (организация)", "Сертификат", "Бонусы"];
 const PAY_CORE = ["Наличные", "Карта", "СБП", "Перевод", "Безнал (организация)"];
 
+/** М8: delete a payment; one of a past day or a closed shift needs a reason (the accountant only). → true when deleted */
+async function deletePayment(id) {
+  const r = await api.delete_payment(id);
+  if (!r || !r.need_reason) return true;
+  const v = await askInput("Причина удаления", [{label: r.message}], {ok: "Удалить", danger: true});
+  if (!v) return false;
+  await api.delete_payment(id, v[0]);
+  return true;
+}
+
 async function openInvoice(o) {
   const R = await ref();
   const inv = o.id ? await api.invoice(o.id) : null;
@@ -187,7 +197,7 @@ async function openInvoice(o) {
     if (!r.ok) return toast(r.message, true);
     receiptToast(r.receipt, "Оплата принята"); afterChange(); openInvoice({...o, id});
   });
-  $$("[data-delpay]", box).forEach(b => b.onclick = async () => { if (await ask("Удалить оплату?", {danger: true, ok: "Удалить", text: "Оплата исчезнет из счёта и кассового отчёта."})) { try { await api.delete_payment(b.dataset.delpay); afterChange(); openInvoice({...o, id: inv.id}); } catch (e) { toast(errText(e), true); } } });
+  $$("[data-delpay]", box).forEach(b => b.onclick = async () => { if (await ask("Удалить оплату?", {danger: true, ok: "Удалить", text: "Оплата исчезнет из счёта и кассового отчёта."})) { try { if (!await deletePayment(b.dataset.delpay)) return; afterChange(); openInvoice({...o, id: inv.id}); } catch (e) { toast(errText(e), true); } } });
   $$("[data-rcpt]", box).forEach(b => b.onclick = () => openReceipt(b.dataset.rcpt, () => openInvoice({...o, id: inv.id})));
   $$("[data-print-pay]", box).forEach(b => b.onclick = async () => { try { const r = await api.fiscal_for_payment(b.dataset.printPay, ""); receiptToast(r, "Готово"); openInvoice({...o, id: inv.id}); } catch (e) { toast(errText(e), true); } });
   const dl = $("#ivDel", box); if (dl) dl.onclick = async () => { if (await ask(isPlan ? "Удалить план лечения?" : "Удалить счёт?", {danger: true, ok: "Удалить", text: isPlan ? "План пропадёт из карточки пациента." : "Списанные по услугам материалы вернутся на склад. Счёт с оплатами удалить нельзя — сначала удалите оплаты."})) { try { await api.delete_invoice(inv.id); closeModal(); afterChange(); } catch (e) { toast(errText(e), true); } } };

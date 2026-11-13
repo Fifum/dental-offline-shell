@@ -21,6 +21,11 @@ CREATE INDEX IF NOT EXISTS ix_taxcert_year ON tax_certs(year);
 """
 
 
+# not money the taxpayer paid for the treatment: a move of the advance (the advance itself is counted), the insurer,
+# bonuses, a gift certificate (anyone may have bought it) and a payment from an organization
+NOT_DEDUCTIBLE = ("Из аванса", "Страховая", "Бонусы", "Сертификат", "Безнал (организация)")
+
+
 def _now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -70,13 +75,14 @@ class TaxCerts:
         p = self.db.patient(pid)
         if not p:
             raise ValueError("Пациент не найден")
-        pays = self.db.q("""SELECT substr(created_at,1,10) AS day, amount, method FROM payments
-                            WHERE patient_id=? AND substr(created_at,1,4)=? AND COALESCE(method,'') NOT IN ('Из аванса', 'Страховая')
-                            ORDER BY created_at""", (pid, str(year)))
+        rows = self.db.q("""SELECT substr(created_at,1,10) AS day, amount, method FROM payments
+                            WHERE patient_id=? AND substr(created_at,1,4)=? ORDER BY created_at""", (pid, str(year)))
+        pays = [r for r in rows if (r["method"] or "") not in NOT_DEDUCTIBLE]
+        other = round(sum(r["amount"] or 0 for r in rows if (r["method"] or "") in NOT_DEDUCTIBLE[1:]), 2)  # shown as a hint
         issued = self.db.q("SELECT number, issued_at, sum1, sum2, payer_fio FROM tax_certs WHERE patient_id=? AND year=? ORDER BY issued_at",
                            (pid, year))
         return {"year": year, "patient": {"id": pid, "name": p.get("name") or "", "birth": p.get("birth") or ""},
-                "payments": pays, "total": round(sum(x["amount"] or 0 for x in pays), 2), "issued": issued}
+                "payments": pays, "total": round(sum(x["amount"] or 0 for x in pays), 2), "not_money": other, "issued": issued}
 
     def issue(self, f: dict, clinic: dict, local, who="") -> dict:
         year = int(f.get("year") or date.today().year)

@@ -1164,7 +1164,7 @@ class Api:
                 out["receipt"] = {"status": "error", "error": str(e)}
         return out
 
-    def delete_payment(self, pay_id):
+    def delete_payment(self, pay_id, reason=None):
         rows = self._fin.group_rows(pay_id)  # a move of the advance or a refund goes as a whole
         for r in rows:
             if self._fiscal.payment_has_receipt(r["id"]):
@@ -1173,12 +1173,23 @@ class Api:
             if self._fiscal.refund_printed(r["id"]):
                 raise ValueError("По этому возврату пробит чек возврата — удалить возврат нельзя.")
         self._fin.can_delete(pay_id)
+        locked = self._fin.payment_locked(rows)  # М8: a past day or a closed shift — the accountant, with a reason
+        if locked:
+            if "accounting" not in self._my_perms()[0]:
+                raise ValueError(f"Оплату {locked} может удалить только сотрудник с правом «Бухгалтерия»")
+            reason = " ".join(str(reason or "").split())[:200]
+            if not reason:
+                return {"need_reason": True, "message": f"Оплата {locked}: укажите причину удаления — она будет записана в журнал действий"}
         for r in rows:
             self._loyal.on_payment_deleted(r["id"])
         if len(rows) > 1 or (rows and rows[0].get("kind") in ("deposit_use", "refund")):
             self._fin.delete_group(pay_id)
         else:
             self._local.delete_payment(pay_id)
+        if locked:
+            p = rows[0]
+            self._journal(f"Удалена оплата {locked}", f"Оплата {p['id']} от {p['created_at']}, пациент {p.get('patient_id') or ''}: "
+                                                      f"{p['amount']:g} ₽, {p.get('method') or ''}. Причина: {reason}")
         return True
 
     # ------------------------------------------------------- money 2.12 --

@@ -497,7 +497,11 @@ class Local:
         if not inv:
             return
         paid = self.db.one("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE invoice_id=?", (iid,))["s"]
-        st = "Оплачен" if paid >= inv["total"] - 0.009 and inv["total"] > 0 else ("Частично оплачен" if paid > 0 else "Не оплачен")
+        total = inv["total"] or 0
+        if total < 0.009:  # nothing to pay (e.g. every line «по абонементу» or a 100 % discount)
+            st = "Оплачен"
+        else:
+            st = "Оплачен" if paid >= total - 0.009 else ("Частично оплачен" if paid > 0 else "Не оплачен")
         with self.db.tx() as c:
             c.execute("UPDATE invoices SET status=? WHERE id=?", (st, iid))
 
