@@ -1,0 +1,257 @@
+/* ===== 3.9 «Лаунж»: the clinic's identity (white, graphite, beige, burgundy, serif small caps) on a calmer layout =====
+   Loaded after every other sheet except styles-responsive.css. Only tokens and look: no ids or behaviour change here.
+   - graphite menu on the left with labels and groups, burgundy chosen item (both themes)
+   - one colour per visit status, the same in the grid, lists, the card and the legend
+   - «Следующий пациент» above the schedule, the visit panel docked on the right (lounge.js)
+   - burgundy primary buttons, beige segmented controls, hairline cards */
+
+:root{
+  --bg:#F6F5F4; --panel:#FFFFFF; --panel2:#FAF9F8; --hover:#FAF8F6; --line:#E6E2DE; --line2:#EFECE9; --faint:#CFC9C4;
+  --ink:#1E1E1E; --ink2:#4A4744; --muted:#77716C;
+  --accent:#6D0100; --accent-ink:#6D0100; --accent-soft:#F5ECEA; --accent-line:#E7CFCB; --on-accent:#FFFFFF;
+  --primary:#6D0100; --primary-hover:#520100; --on-primary:#FFFFFF;
+  --side:#222120; --side-ink:#CBC4BE; --side-mut:#857D77; --side-hover:rgba(255,255,255,.06); --side-on:#6D0100; --side-line:#C2554A;
+  /* visit statuses */
+  --st-new:#2F6FDB; --st-new-bg:#E9F0FC; --st-ok:#23895A; --st-ok-bg:#E3F3EA; --st-come:#B86E0C; --st-come-bg:#FCF0DC;
+  --st-done:#737D88; --st-done-bg:#EEF0F2; --st-cancel:#C8382E; --st-cancel-bg:#FBE9E6;
+  --r:8px; --radius-sm:6px;
+  --shadow-card:0 1px 2px rgba(40,30,25,.04);
+}
+@media screen{
+  :root[data-theme="dark"]{
+    --bg:#141312; --panel:#1C1B19; --panel2:#211F1D; --hover:#252320; --line:#35322E; --line2:#2A2825; --faint:#4A4540;
+    --ink:#EDE9E5; --ink2:#C6BFB8; --muted:#A39C95;
+    --accent:#DB8479; --accent-ink:#E39A90; --accent-soft:#3A2422; --accent-line:#5E3632; --on-accent:#1E0F0D;
+    --primary:#C9665B; --primary-hover:#D97A6F; --on-primary:#1A0A08;
+    --side:#0E0D0C; --side-ink:#C9C2BC; --side-mut:#7F7771; --side-hover:rgba(255,255,255,.05); --side-on:#6D0100; --side-line:#C2554A;
+    --st-new:#86ACF0; --st-new-bg:#1C2639; --st-ok:#71C99B; --st-ok-bg:#172C21; --st-come:#E9AE5B; --st-come-bg:#33271A;
+    --st-done:#9AA4AE; --st-done-bg:#25282C; --st-cancel:#EF8A80; --st-cancel-bg:#3A1E1B;
+    --shadow-card:none;
+  }
+}
+
+/* ---------- primary buttons: burgundy; secondary stay quiet ---------- */
+.btn{background:var(--primary);border-color:var(--primary);color:var(--on-primary);border-radius:var(--radius-sm)}
+.btn:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+.btn.ghost{background:var(--panel);color:var(--ink);border-color:var(--line)}
+.btn.ghost:hover{background:var(--panel2);border-color:var(--faint)}
+.btn.danger,.btn.ghost.danger{color:var(--st-cancel)}
+.btn:focus-visible,.pill-btn:focus-visible,.icon-btn:focus-visible,.nav:focus-visible,.tab:focus-visible,.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pill-btn,.icon-btn,.input,.datenav,.input.sm-sel,.seg{border-radius:var(--radius-sm)}
+.seg button.on{background:var(--beige2);color:var(--ink);font-weight:600}
+.seg.has-ind button.on{color:var(--ink)}
+.seg-ind{background:var(--beige)}
+:root[data-theme="dark"] .seg-ind{background:#3B3631}
+kbd.kb{display:inline-block;margin-left:7px;font:600 10.5px/1.5 var(--font);padding:0 5px;border-radius:4px;border:1px solid currentColor;opacity:.6;letter-spacing:0}
+
+/* ---------- the menu: graphite, labels, groups ---------- */
+.app{grid-template-columns:216px 1fr}
+.rail{background:var(--side);color:var(--side-ink);border-right:0;align-items:stretch;padding:16px 10px 12px;gap:8px}
+:root[data-theme="dark"] .rail{border-right:1px solid var(--line)}
+.rail .logo{align-self:center;margin:2px 0 12px}
+.rail .brandmark b{color:#F2EEEA}
+.rail .brandmark i{background:var(--side-line)}
+.rail .brandmark small{color:var(--side-mut)}
+.rail nav{gap:1px}
+.rail .nav{flex-direction:row;justify-content:flex-start;gap:11px;padding:0 12px;height:36px;font-size:13.5px;font-weight:500;text-align:left;
+  color:var(--side-ink);border-radius:6px;width:100%}
+.rail .nav svg{width:18px;height:18px;flex:none;opacity:.85}
+.rail .nav span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+.rail .nav:hover{background:var(--side-hover);color:#fff}
+.rail .nav.active,.rail .nav.active:hover{background:var(--side-on);color:#fff;box-shadow:none}
+.rail .nav.active svg{color:#fff;opacity:1}
+.rail-ind{display:none}
+.rail .badge{position:static;margin:0 0 0 auto;background:rgba(255,255,255,.14);color:#fff;font-size:11px;min-width:20px;text-align:center}
+.rail .nav.active .badge{background:rgba(255,255,255,.22)}
+.rail .nav-g{margin:12px 12px 4px;font:600 10.5px/1.2 var(--font);letter-spacing:.12em;text-transform:uppercase;color:var(--side-mut)}
+.rail>.nav{margin-top:auto;border-top:1px solid rgba(255,255,255,.07);border-radius:0 0 6px 6px;padding-top:2px}
+
+/* ---------- top bar ---------- */
+.topbar{background:var(--panel);border-bottom:1px solid var(--line)}
+.gsearch{border-radius:18px;background:var(--panel2);position:relative}
+.gsearch .gs-kb{position:absolute;right:10px;top:50%;transform:translateY(-50%);margin:0;color:var(--muted);pointer-events:none}
+.gsearch:focus-within .gs-kb{display:none}
+.gs-drop .gs-g{padding:8px 12px 3px;font:600 10.5px var(--font);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.gs-drop .pp-row.cmd svg{width:18px;height:18px;color:var(--accent);flex:none}
+.gs-drop .pp-row.sel{background:var(--accent-soft)}
+.gs-drop .pp-row .kb{margin-left:auto;color:var(--muted)}
+
+/* ---------- headings: serif small caps only for page titles and names ---------- */
+.top h1,.cal-sub h1{font-size:23px}
+.title-block .muted{font-size:13px}
+
+/* ---------- schedule: two calm rows, legend, next patient ---------- */
+.cal-bar{padding:14px 20px 6px;gap:8px;flex-wrap:wrap}
+.cal-bar .cal-sub{padding:0;margin-right:10px;align-items:baseline;gap:10px;min-width:0}
+.cal-bar .cal-sub h1{white-space:nowrap}
+.cal-bar .cal-sub #daySub{white-space:nowrap}
+.cal-tools{display:flex;align-items:center;gap:6px;padding:0 20px 10px;flex-wrap:wrap}
+.cal-tools .cb-gap{flex:1}
+#newVisitBtn{height:34px}
+.st-legend{display:flex;gap:5px;flex-wrap:wrap}
+.st-legend span{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:12px;font-size:12px;font-weight:600;background:var(--st-new-bg);color:var(--st-new)}
+.st-legend span::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.st-legend .lg-ok{background:var(--st-ok-bg);color:var(--st-ok)}
+.st-legend .lg-come{background:var(--st-come-bg);color:var(--st-come)}
+.st-legend .lg-done{background:var(--st-done-bg);color:var(--st-done)}
+.st-legend .lg-cancel{background:var(--st-cancel-bg);color:var(--st-cancel)}
+.sched-wrap{margin:0 20px 16px;border-color:var(--line);box-shadow:var(--shadow-card)}
+
+/* next patient */
+.next-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:22px;align-items:center;margin:0 20px 12px;padding:12px 18px 12px 22px;
+  border-radius:10px;background:var(--panel);border:1px solid var(--line);position:relative;overflow:hidden;box-shadow:var(--shadow-card)}
+.next-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent)}
+.next-card .nc-tm{font:500 32px/1 var(--font-d);font-variant:small-caps;color:var(--ink);white-space:nowrap}
+.next-card .nc-tm small{display:block;font:600 11.5px var(--font);color:var(--accent-ink);margin-top:6px;letter-spacing:.02em}
+.next-card .nc-who{min-width:0}
+.next-card .nc-who b{display:block;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.next-card .nc-who b:hover{text-decoration:underline}
+.next-card .nc-who>span{color:var(--ink2);font-size:12.5px}
+.next-card .nc-flags{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.nc-flag{font-size:12px;font-weight:600;border-radius:4px;padding:1px 8px;background:var(--st-cancel-bg);color:var(--st-cancel)}
+.nc-flag.w{background:var(--st-come-bg);color:var(--st-come)}
+.next-card .nc-acts{display:flex;gap:6px}
+.next-card .nc-acts .btn{height:38px;padding:0 16px}
+.next-card .nc-stats{display:flex;gap:16px;padding-left:20px;border-left:1px solid var(--line)}
+.next-card .nc-stats button{border:0;background:none;text-align:center;font-size:11.5px;color:var(--muted);cursor:default;padding:0}
+.next-card .nc-stats b{display:block;font:500 22px/1.15 var(--font-d);color:var(--ink)}
+.next-card .nc-x{position:absolute;top:6px;right:8px;border:0;background:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px}
+.next-card.done{grid-template-columns:minmax(0,1fr) auto}
+.next-card.done .nc-who b{cursor:default}
+.next-card.done .nc-who b:hover{text-decoration:none}
+
+/* grid: doctors as monograms, a status colour for every visit */
+.grid .g-head{background:var(--panel)}
+.gh-band{background:var(--panel);color:var(--ink);box-shadow:inset 0 3px 0 var(--dc,#7A8794);padding:9px 8px 6px;filter:none!important}
+.gh-av{background:var(--beige2);color:var(--accent-ink);border:1px solid var(--line);font:500 13px var(--font-d);font-variant:small-caps;width:30px;height:30px}
+.gh-n{color:var(--ink)}
+.gh-n small{color:var(--muted)}
+.g-day{background:var(--panel2)}
+.ev{background:var(--st-new-bg);border:0;border-left:4px solid var(--st-new);box-shadow:none;border-radius:5px}
+.ev .st-dot{display:none}
+.ev.st-ok{background:var(--st-ok-bg);border-left-color:var(--st-ok)}
+.ev.st-come{background:var(--st-come-bg);border-left-color:var(--st-come)}
+.ev.st-done{background:var(--st-done-bg);border-left-color:var(--st-done)}
+.ev.st-done b{color:var(--ink2)}
+.ev.st-cancel{background:var(--st-cancel-bg);border-left-color:var(--st-cancel);opacity:.85}
+.ev.st-cancel b{text-decoration:line-through}
+.ev:hover{box-shadow:0 4px 14px -6px rgba(40,30,25,.35)}
+.ev.sel{outline:2px solid var(--accent);outline-offset:1px;z-index:4}
+.ev .ev-t{color:var(--ink2)}
+:root[data-theme="dark"] .ev:hover{box-shadow:0 6px 16px -6px rgba(0,0,0,.7)}
+.now-line{border-color:var(--accent)}
+.now-line::before{background:var(--accent)}
+/* the same colours wherever a status is shown as a pill */
+.pill{background:var(--st-new-bg);color:var(--st-new);border-radius:10px}
+.pill.st-ok{background:var(--st-ok-bg);color:var(--st-ok)}
+.pill.st-come{background:var(--st-come-bg);color:var(--st-come)}
+.pill.st-done{background:var(--st-done-bg);color:var(--st-done)}
+.pill.st-cancel{background:var(--st-cancel-bg);color:var(--st-cancel)}
+
+/* ---------- the visit panel: docked next to the schedule, actions by importance ---------- */
+.drawer{width:360px;border-left:1px solid var(--line)}
+.app.insp-docked main{margin-right:360px;transition:margin-right 280ms var(--ease-drawer,ease)}
+.app.insp-docked .drawer{box-shadow:none;width:360px}
+.app.insp-docked .scrim{display:none}
+.dw-h{padding:18px 20px 12px}
+.dw-h h3{font:500 21px/1.2 var(--font-d);font-variant:small-caps;letter-spacing:.02em;margin:8px 0 3px}
+.dw-f{display:flex;flex-direction:column;gap:8px;padding:14px 20px 16px}
+.dw-main .btn{width:100%;justify-content:center;height:42px;font-size:14.5px}
+.dw-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.dw-grid .btn{justify-content:center;height:36px}
+.dw-grid .btn.on{border-color:var(--st-ok);color:var(--st-ok)}
+.dw-danger{display:flex;gap:6px;padding-top:8px;border-top:1px dashed var(--line)}
+.dw-danger .btn{flex:1;justify-content:center;background:transparent;border-color:transparent;color:var(--st-cancel)}
+.dw-danger .btn:hover{background:var(--st-cancel-bg);border-color:var(--st-cancel-bg)}
+
+/* ---------- patient card ---------- */
+.phead2,.panel,.stat,.table-wrap,.search-row{box-shadow:var(--shadow-card)}
+.crumb-acts #aPay{height:34px}
+.alert{border-radius:5px}
+.tab.on{border-color:var(--accent);color:var(--ink)}
+
+/* ---------- first-start hints ---------- */
+.hint-bar{display:flex;gap:12px;align-items:flex-start;margin:0 20px 12px;padding:10px 14px;border-radius:8px;background:var(--accent-soft);border:1px solid var(--accent-line);font-size:13px;color:var(--ink)}
+.hint-bar svg{width:18px;height:18px;color:var(--accent-ink);flex:none;margin-top:1px}
+.hint-bar b{color:var(--accent-ink)}
+.hint-bar .hb-x{margin-left:auto;border:0;background:none;color:var(--accent-ink);cursor:pointer;font-weight:600;white-space:nowrap;padding:0 2px}
+.card-scroll>.hint-bar{margin:0 0 12px}
+.keys-tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.keys-tbl td{padding:7px 4px;border-bottom:1px solid var(--line2)}
+.keys-tbl td:first-child{white-space:nowrap;width:150px}
+.keys-tbl kbd{display:inline-block;font:600 12px var(--font);padding:1px 7px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--panel2);margin-right:3px}
+
+/* ---------- the menu folded to icons: narrow windows, and while the visit panel is open on a laptop ---------- */
+.app.rail-mini{grid-template-columns:64px 1fr}
+.app.rail-mini .rail{padding:12px 6px}
+.app.rail-mini .rail .nav{justify-content:center;padding:0;position:relative}
+.app.rail-mini .rail .nav span{display:none}
+.app.rail-mini .rail .nav-g{height:1px;margin:8px 10px;background:rgba(255,255,255,.1);font-size:0;overflow:hidden}
+.app.rail-mini .rail .badge{position:absolute;top:1px;right:4px;font-size:9.5px;min-width:16px;padding:0 4px}
+.app.rail-mini .rail .brandmark b{font-size:16px}
+.app.rail-mini .rail .brandmark small{display:none}
+@media (max-width:1560px){
+  .app.insp-docked{grid-template-columns:64px 1fr}
+  .app.insp-docked .rail{padding:12px 6px}
+  .app.insp-docked .rail .nav{justify-content:center;padding:0;position:relative}
+  .app.insp-docked .rail .nav span{display:none}
+  .app.insp-docked .rail .nav-g{height:1px;margin:8px 10px;background:rgba(255,255,255,.1);font-size:0;overflow:hidden}
+  .app.insp-docked .rail .badge{position:absolute;top:1px;right:4px;font-size:9.5px;min-width:16px;padding:0 4px}
+  .app.insp-docked .rail .brandmark b{font-size:16px}
+  .app.insp-docked .rail .brandmark small{display:none}
+}
+.app.insp-docked .next-card{grid-template-columns:auto minmax(0,1fr) auto;gap:14px}
+.app.insp-docked .next-card .nc-stats,.app.insp-docked .next-card .nc-flags{display:none}
+.app.insp-docked .next-card .nc-who b{font-size:15px}
+.app.insp-docked .cal-tools .st-legend{display:none}
+
+/* ---------- narrow windows: the menu folds to icons, the panel floats again ---------- */
+@media (max-width:1280px){
+  .app.insp-docked main{margin-right:0}
+  .app.insp-docked .drawer{box-shadow:-10px 0 40px rgba(16,32,42,.15)}
+  .app.insp-docked .scrim{display:block}
+}
+@media (max-width:1180px){
+  .app{grid-template-columns:64px 1fr}
+  .rail{padding:12px 6px}
+  .rail .nav{justify-content:center;padding:0;position:relative}
+  .rail .nav span{display:none}
+  .rail .nav-g{height:1px;margin:8px 10px;background:rgba(255,255,255,.1);font-size:0;overflow:hidden}
+  .rail .badge{position:absolute;top:1px;right:4px;font-size:9.5px;min-width:16px;padding:0 4px}
+  .rail .brandmark b{font-size:16px}
+  .rail .brandmark small{display:none}
+  .next-card{grid-template-columns:auto minmax(0,1fr) auto;gap:14px}
+  .next-card .nc-stats{display:none}
+}
+@media (max-height:760px){
+  .rail .nav{height:32px}
+  .rail .nav-g{margin-top:8px}
+}
+@media print{.next-card,.hint-bar,.cal-tools .st-legend{display:none!important}}
+.dw-main:empty,.dw-grid:empty,.dw-danger:empty{display:none}
+/* the visit panel is open: the top bar and the schedule header keep to one line */
+.app.insp-docked .tb-btn .tb-l,.app.insp-docked .sync-pill .sp-text,.app.insp-docked .user-chip .uc-t,.app.insp-docked .wait-btn .wb-l,.app.insp-docked .cal-sub .dp-src{display:none}
+.app.insp-docked .tb-btn{padding:8px;position:relative}
+.app.insp-docked .tb-btn .badge.sm{position:absolute;top:2px;right:0}
+.app.insp-docked .sync-pill{padding:4px 4px 4px 10px;gap:6px}
+.gsearch input{padding-right:62px}
+/* one main button in the card header: «Добавить» is a quiet menu next to «Принять оплату» */
+.crumb-acts .dd-btn.btn,#ddAdd .dd-btn.btn{background:var(--panel);color:var(--ink);border-color:var(--line)}
+.crumb-acts .dd-btn.btn:hover,#ddAdd .dd-btn.btn:hover{background:var(--panel2)}
+/* payment: the way of paying as buttons, the change for cash */
+.pay-sel-hidden{display:none!important}
+.pay-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.pay-chips button{height:32px;padding:0 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel);color:var(--ink2);font-weight:500;cursor:pointer}
+.pay-chips button:hover{border-color:var(--faint);color:var(--ink)}
+.pay-chips button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--accent)}
+.pay-cash{display:flex;align-items:flex-end;gap:12px;margin-top:8px}
+.pay-cash label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.pay-cash .input{width:170px}
+.pay-cash .pc-out{font-size:15px;font-weight:600;color:var(--st-ok);padding-bottom:8px}
+.pay-cash .pc-out.bad{color:var(--st-cancel)}
+#payGo{min-width:150px;justify-content:center}
+.gs-drop{min-width:440px}
+.rail .nav{transition:background-color 120ms ease,color 120ms ease}
+/* buttons repeated in every row of a list are graphite: burgundy stays for the one main action of a screen */
+.tbl .btn:not(.ghost),.btn.small:not(.ghost){background:var(--graphite);border-color:var(--graphite);color:var(--on-graphite)}
+.tbl .btn:not(.ghost):hover,.btn.small:not(.ghost):hover{background:var(--graphite-hover);border-color:var(--graphite-hover)}

@@ -2973,7 +2973,7 @@ THEMES = ("light", "dark", "system")
 
 def _theme_pref():
     p = config.load_settings().get("ui_theme")
-    return p if p in THEMES else "system"
+    return p if p in THEMES else "light"  # 3.9: light until someone picks another (the app follows the same rule)
 
 
 def _theme_is_dark():

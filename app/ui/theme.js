@@ -11,7 +11,7 @@
   function write(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage off: still applies */ } }
   var q = /[?&]theme=(light|dark|system)\b/.exec(location.search);
   if (q) write(KEY, q[1]);
-  function pref() { var v = read(KEY); return ok(v) ? v : "system"; }
+  function pref() { var v = read(KEY); return ok(v) ? v : "light"; }  // 3.9: light until someone picks another
   function apply(p) {
     p = ok(p) ? p : pref();
     var dark = p === "dark" || (p === "system" && !!(mq && mq.matches));

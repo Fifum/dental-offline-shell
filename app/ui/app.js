@@ -52,6 +52,12 @@ function closeModal() {
 const markModalDirty = e => { if (e.target.type !== "search") document.getElementById("modalBox")._dirty = true; };
 document.getElementById("modalBox").addEventListener("input", markModalDirty);
 document.getElementById("modalBox").addEventListener("change", markModalDirty);
+/* 3.9: Esc asks the same way as a click beside the dialog */
+async function requestCloseModal() {
+  const box = document.getElementById("modalBox"), gen = box._gen;
+  if (box._dirty && !(await ask("Закрыть без сохранения?", {icon: "warn", ok: "Закрыть", cancel: "Вернуться", text: "Введённые данные не сохранятся."}))) return;
+  if (box._gen === gen) closeModal();  // not if another dialog opened meanwhile
+}
 document.getElementById("modal").addEventListener("mousedown", async e => {
   if (e.target.id !== "modal") return;
   const box = document.getElementById("modalBox"), gen = box._gen;
@@ -533,20 +539,7 @@ async function openVisit(id) {
     ${v.series_id ? `<div class="series-note" id="dwSeries">Повторяющийся визит…</div>` : ""}
     ${v.local ? `<div class="local-note">Изменено в этой программе: <b>${esc({create: "новая запись", edit: "изменение", move: "перенос", cancel: "отмена", status: "смена статуса"}[v.action] || "изменение")}</b>. Нужно перенести в Dentist Plus.
        ${v.origin_id ? `<button class="linkbtn" id="dwRevert">Вернуть как в Dentist Plus</button>` : ""}</div>` : ""}
-    <div class="dw-f">
-      <div class="dw-actions">
-        <button class="btn ghost small" data-st="Пришёл">Пришёл</button>
-        <button class="btn ghost small" data-st="Завершён">Завершён</button>
-        <button class="btn ghost small" data-st="Не пришёл">Не пришёл</button>
-        <button class="btn ghost small danger" data-st="Отменён">Отменить</button>
-        <button class="btn ghost small" id="dwEdit">Перенести / изменить</button>
-      </div>
-      ${v.patient_id ? `<div class="dw-actions">
-        <button class="btn small" id="dwRec">Медкарта: заполнить приём${v.records && v.records.length ? " ✓" : ""}</button>
-        <button class="btn ghost small" id="dwInv">Счёт${v.invoices && v.invoices.length ? " ✓" : ""}</button>
-        <button class="btn ghost small" id="dwDoc">Документ</button>
-        <button class="btn ghost small" id="dwCard">Карта пациента</button></div>` : ""}
-    </div>`;
+    ${visitActions(v)}`;
   const dw = $("#drawer");
   const drop = (sel, cond) => { if (cond) $$(sel, dw).forEach(el => el.remove()); };
   drop("[data-st='Не пришёл'], [data-st='Отменён'], #dwEdit, #dwRevert", !can("schedule_edit"));
@@ -582,6 +575,25 @@ async function openVisit(id) {
   }
   $("#scrim").hidden = false;
   setTimeout(() => $("#drawer").classList.add("open"), 10);
+}
+/* 3.9: the panel's buttons by importance. The big one is the next step for this visit: «Пришёл» before the patient
+   comes, «Счёт и оплата» once they are here or done, «Перенести» for a cancelled visit. «Не пришёл» and «Отменить»
+   sit apart at the bottom, so they are not pressed by mistake. Ids and data-st stay: openVisit wires them. */
+function visitActions(v) {
+  const stc = stClass(v.status), rec = v.records && v.records.length, inv = v.invoices && v.invoices.length, pid = !!v.patient_id;
+  const acts = {
+    arrived: stc === "st-come" || stc === "st-done" ? "" : `<button class="btn ghost" data-st="Пришёл">Пришёл</button>`,
+    done: stc === "st-done" ? "" : `<button class="btn ghost" data-st="Завершён">Завершён</button>`,
+    inv: pid ? `<button class="btn ghost ${inv ? "on" : ""}" id="dwInv">${inv ? "Счёт ✓" : "Счёт и оплата"}</button>` : "",
+    rec: pid ? `<button class="btn ghost ${rec ? "on" : ""}" id="dwRec">${rec ? "Медкарта ✓" : "Медкарта: приём"}</button>` : "",
+    edit: `<button class="btn ghost" id="dwEdit">Перенести</button>`,
+    doc: pid ? `<button class="btn ghost" id="dwDoc">Документ</button>` : "",
+    card: pid ? `<button class="btn ghost" id="dwCard">Карта пациента</button>` : "",
+  };
+  const main = stc === "st-cancel" ? "edit" : stc === "st-come" || stc === "st-done" ? (acts.inv ? "inv" : "done") : "arrived";
+  return `<div class="dw-f"><div class="dw-main">${acts[main].replace('class="btn ghost', 'class="btn')}</div>`
+    + `<div class="dw-grid">${Object.keys(acts).filter(k => k !== main).map(k => acts[k]).join("")}</div>`
+    + `<div class="dw-danger"><button class="btn ghost small" data-st="Не пришёл">Не пришёл</button><button class="btn ghost small danger" data-st="Отменён">Отменить запись</button></div></div>`;
 }
 /** Allergy banner in the record / invoice editors: the allergy itself, and red lines for clashes with what is prescribed. */
 function allergyBar(el, r) {
@@ -835,6 +847,7 @@ function planTeeth(plans) {
 }
 
 const ICON = {
+  cal: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   rec: '<svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M9 12h7M9 15.5h5"/></svg>',
   inv: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18"/></svg>',
   doc: '<svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5V8H19"/></svg>',
@@ -981,7 +994,8 @@ function renderPatient(tab) {
         ${can("patients_edit") ? `<button class="pill-btn" id="aEditP" title="Изменить ФИО, телефон, дату рождения">Изменить</button>` : ""}
         <button class="pill-btn" id="aAnketa">${ICON.doc}Анкета</button>
         <button class="pill-btn" id="aContract" data-official-doc title="${typeof addonDocKind === "function" && addonDocKind("doc_contract") === "official" ? esc(addonNote("official")) : "Договор"}">${ICON.doc}Договор</button>
-        <button class="pill-btn" id="aPay">${ICON.inv}Оплата</button>
+        <button class="pill-btn" id="aBook" title="Записать на приём">${ICON.cal}Записать</button>
+        <button class="btn" id="aPay" title="Счёт и оплата: неоплаченный счёт или новый">${ICON.inv}Принять оплату</button>
         <div class="dd right" id="ddPrint"><button class="dd-btn pill-btn">Печать<svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
           <div class="dd-menu"><button data-tpl="doc_card043" data-official-doc>Медкарта 043/у<i class="dp-doc-tag">из DP</i></button><button data-tpl="doc_extract" data-official-doc>Выписка из медкарты<i class="dp-doc-tag">из DP</i></button><button data-tpl="doc_consent_treatment" data-official-doc>Согласие на лечение<i class="dp-doc-tag">из DP</i></button><button data-tpl="doc_consent_pd" data-official-doc>Согласие на обработку ПД<i class="dp-doc-tag">из DP</i></button><button data-tpl="">Другой документ…</button><button id="aTax" data-official-doc>Справка для налогового вычета<i class="dp-doc-tag">из DP</i></button></div></div>
         <div class="dd right" id="ddAdd"><button class="dd-btn btn">Добавить<svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
@@ -1015,7 +1029,7 @@ function renderPatient(tab) {
   hideIf("[data-add=inv], [data-add=plan], #tAddInv, #tAddPlan", !can("billing"));
   hideIf("[data-add=rec], #tAddRec", !can("medcard_edit"));
   hideIf(".ia[data-act=rec]", !can("medcard_view"));
-  hideIf("[data-add=visit], #tAddVisit", !can("schedule_edit"));
+  hideIf("[data-add=visit], #tAddVisit, #aBook", !can("schedule_edit"));
   hideIf("[data-add=note], #noteText, #noteAdd, .note button", !can("patients_edit"));
   if (!$$("#ddAdd [data-add]").length) hideIf("#ddAdd", true);
   const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
@@ -1032,6 +1046,7 @@ function renderPatient(tab) {
   on("#aContract", () => openDocFill({...ctx, template_id: "doc_contract"}));
   on("#aSource", () => editPatientSource(p, () => openPatient(p.id, S.prevView)));
   on("#aEditP", () => openEditPatient(p, d));
+  on("#aBook", () => actions.visit());
   on("#aPay", () => { const unpaid = invs.find(i => i.status !== "Оплачен"); openInvoice(unpaid ? {patient_id: p.id, id: unpaid.id} : ctx); });
   on("#tAddVisit", book); on("#tAddRec", actions.rec); on("#tAddInv", actions.inv); on("#tAddPlan", actions.plan); on("#tAddDoc", actions.doc);
   $$("#patientCard tr[data-v]").forEach(el => el.onclick = e => { if (!e.target.closest(".ia")) openVisit(el.dataset.v); });
@@ -1258,7 +1273,10 @@ $("#netFw").onclick = async () => {
 /* ------------------------------------------------------------ keyboard */
 document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "k" || e.code === "KeyK")) { e.preventDefault(); $("#gSearch").focus(); $("#gSearch").select(); return; }
-  if (e.key === "Escape") { if ($("#drawer").classList.contains("open")) closeDrawer(); else if (S.view === "patient") $("#backBtn").click(); }
+  if (e.key === "Escape") {  // 3.9: Esc closes the dialog first (asks when something was typed), then the visit panel, then the card
+    if (!$("#modal").hidden) { if (!document.querySelector(".ask-wrap")) requestCloseModal(); return; }
+    if ($("#drawer").classList.contains("open")) closeDrawer(); else if (S.view === "patient") $("#backBtn").click();
+  }
   if (S.view === "schedule" && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) {
     if (e.key === "ArrowLeft") $("#prevDay").click();
     if (e.key === "ArrowRight") $("#nextDay").click();
