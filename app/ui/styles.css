@@ -166,6 +166,10 @@ h1::first-letter{text-transform:uppercase}
 .raw .r{display:grid;grid-template-columns:minmax(150px,240px) 1fr;gap:12px;padding:5px 0;border-bottom:1px dashed var(--line2)}
 .raw .r span:first-child{color:var(--muted)}
 .raw .r span:last-child{white-space:pre-wrap;word-break:break-word}
+.dw-b .raw{padding:8px 0}
+.dw-b .raw .r{grid-template-columns:max-content minmax(0,1fr);gap:16px}
+.dw-b .raw .r span:first-child{white-space:nowrap}
+.dw-b .raw .r span:last-child{word-break:normal;overflow-wrap:anywhere;text-align:right}
 .teeth{padding:18px 20px;display:flex;flex-direction:column;gap:6px;align-items:center}
 .jaw{display:flex;gap:4px}
 .jaw .gap{width:14px}

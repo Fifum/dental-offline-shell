@@ -639,7 +639,7 @@ const LABELS = {
   allergies: "Аллергии", allergy: "Аллергии", chronic_diseases: "Хронические заболевания", diseases: "Заболевания", blood_type: "Группа крови",
   balance: "Баланс", debt: "Долг", discount: "Скидка", source: "Источник", created_at: "Создан", updated_at: "Обновлён",
   status: "Статус", title: "Название", code: "Код", tooth: "Зуб", teeth: "Зубы", date: "Дата", start: "Начало", end: "Окончание",
-  doctor: "Врач", doctor_id: "ID врача", patient_id: "ID пациента", branch_id: "ID филиала", branch: "Филиал", chair: "Кресло",
+  doctor: "Врач", patient: "Пациент", doctor_id: "ID врача", patient_id: "ID пациента", branch_id: "ID филиала", branch: "Филиал", chair: "Кресло",
   description: "Описание", diagnosis: "Диагноз", diagnoses: "Диагнозы", complaints: "Жалобы", anamnesis: "Анамнез",
   treatment: "Лечение", recommendations: "Рекомендации", price: "Цена", sum: "Сумма", total: "Итого", passport: "Паспорт", snils: "СНИЛС",
   inn: "ИНН", polis: "Полис", oms: "Полис ОМС", dms: "ДМС", workplace: "Место работы", parent: "Представитель", dental_formula: "Зубная формула",
