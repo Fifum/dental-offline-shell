@@ -416,8 +416,8 @@ class StockFlow:
             c.execute("UPDATE stock_approvals SET status='cancelled', updated_at=? WHERE id=?", (_now(), r["id"]))
         return self.approval(r["id"])
 
-    def counts(self, login=None, approver=False):
-        """Numbers for the badges: what waits for this person."""
+    def counts(self, login=None, approver=False, issuer=False):
+        """Numbers for the badges: what waits for this person — approvals for a manager, requests for whoever issues."""
         one = lambda sql, *a: self.db.one(sql, a)["n"]  # noqa: E731
         out = {"my_requests": one("SELECT COUNT(*) AS n FROM stock_requests WHERE created_by=? AND status IN ('new','partial')", login or ""),
                "my_pending": one("SELECT COUNT(*) AS n FROM stock_approvals WHERE created_by=? AND status='pending'", login or ""),
@@ -427,6 +427,7 @@ class StockFlow:
                                      AND decided_at >= ?""", login or "", (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"))}
         if approver:
             out["to_approve"] = one("SELECT COUNT(*) AS n FROM stock_approvals WHERE status='pending'")
+        if approver or issuer:
             out["to_issue"] = one("SELECT COUNT(*) AS n FROM stock_requests WHERE status IN ('new','partial')")
         return out
 
@@ -449,7 +450,7 @@ class StockFlow:
         mats = self.stock.materials()
         approver = bool(perms & {"stock_approve"})
         ops = bool(perms & {"stock_edit", "stock_ops"})
-        cnt = self.counts(login, approver or "stock_edit" in perms)
+        cnt = self.counts(login, approver, "stock_edit" in perms)
         critical = sorted((m for m in mats if m["low"] or m["balance"] < 0),
                           key=lambda m: (m["balance"] / m["min_qty"]) if m["min_qty"] else -1)
         lots = []

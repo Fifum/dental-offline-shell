@@ -379,8 +379,9 @@ class Api:
         return self._sflow.decide(aid, action, answer, login, name)
 
     def stock_approval_cancel(self, aid):
-        _, login, _, _, all_ = self._stock_rights()
-        return self._sflow.cancel_approval(aid, login, all_)
+        """Only its author or someone who approves (3.10.1: not the storekeeper — cancelling is a refusal without a reason)."""
+        perms, login, _, _, _ = self._stock_rights()
+        return self._sflow.cancel_approval(aid, login, "stock_approve" in perms)
 
     def stock_photos(self, ids):
         return self._files.stock_thumbs(ids)
@@ -1877,8 +1878,9 @@ class Api:
                 st["stock_low"] = sum(1 for m in mats if m["low"] or m["balance"] < 0)
                 st["stock_exp"] = sum(1 for m in mats if m["exp_state"])
                 st["stock_alerts"] = sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"])
-            if u is None or {"stock_approve", "stock_ops"} & set(Auth.effective_perms(u)):  # 3.10
-                c = self._sflow.counts((u or {}).get("login") or "", u is None or "stock_approve" in set(Auth.effective_perms(u)))
+            sp = set(Auth.effective_perms(u)) if u else {"stock_approve", "stock_edit"}
+            if {"stock_approve", "stock_ops", "stock_edit"} & sp:  # 3.10: what waits for the manager, the storekeeper, the nurse
+                c = self._sflow.counts((u or {}).get("login") or "", "stock_approve" in sp, "stock_edit" in sp)
                 st["stock_wait"] = c.get("to_approve", 0) + c.get("to_issue", 0) + c.get("my_rejected", 0)
         except Exception:  # noqa: BLE001
             pass

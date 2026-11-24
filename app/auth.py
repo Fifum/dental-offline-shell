@@ -84,7 +84,8 @@ ROLES = {
         "schedule_view", "patients_view", "patients_edit", "medcard_view", "medcard_edit", "docs", "billing", "stock_view",
         "sterilization", "lab", "export"]},
     "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view", "sterilization", "export"]},
-    "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment", "export", "stock_approve"]},
+    # 3.10.1: the nurse's write-offs are approved by the administrator (and the director), not by the storekeeper
+    "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment", "export"]},
     # 3.10: the nurse takes deliveries, issues to the cabinets and records what was used; a write-off waits for approval
     "nurse": {"title": "Медсестра", "perms": ["schedule_view", "patients_view", "stock_view", "stock_ops", "sterilization", "export"]},
 }

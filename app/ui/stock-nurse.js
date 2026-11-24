@@ -276,7 +276,7 @@ async function openApproval(id) {
         <td><div class="sn-mat">${phHtml(l.photo_id)}<span><b>${esc(l.name)}</b><small>${l.code ? "Арт. " + esc(l.code) : ""}</small></span></div></td>
         ${x.status === "pending" ? `<td class="num ${l.balance < l.qty ? "bad-t" : ""}">${qtyFmt(l.balance, l.unit)}</td>` : ""}<td class="num"><b>${qtyFmt(l.qty, l.unit)}</b></td><td class="num">${money(l.qty * (l.price || 0))}</td></tr>`).join("")}</tbody></table>
       ${x.doc_id ? `<div class="muted">Акт списания: ${esc(x.doc_id)}</div>` : ""}</div>
-    <div class="m-f">${x.status === "pending" && !c.approve ? `<button class="btn ghost small danger" id="apCancel">Отменить</button>` : ""}<span class="muted">Итого ${money(x.total)}</span>
+    <div class="m-f">${x.status === "pending" && !c.approve && x.created_by === (ME && ME.login) ? `<button class="btn ghost small danger" id="apCancel">Отменить</button>` : ""}<span class="muted">Итого ${money(x.total)}</span>
       <button class="btn ghost" data-close>Закрыть</button>${x.status === "pending" && c.approve ? `<button class="btn ghost" id="apNo">Отклонить</button><button class="btn" id="apOk">Согласовать и списать</button>` : ""}
       ${x.doc_id ? `<button class="btn ghost" id="apPrint">Печать акта</button>` : ""}</div>`, {wide: true});
   loadThumbs(box);
