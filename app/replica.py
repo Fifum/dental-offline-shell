@@ -196,7 +196,58 @@ def install(db):
                 conn.execute(f"INSERT OR IGNORE INTO sync_dirty(tbl, k, at) SELECT '{t.name}', {_key_expr(t, t.name)}, {NOW_MS} "
                              f"FROM {t.name}{where}")
                 conn.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES(?, '1')", ("installed:" + t.name,))
+        _catch_up(conn)
         conn.commit()
+
+
+# 3.10.2: a computer that still ran an older version while others were already newer skipped the rows of tables it did not
+# have and dropped the columns it did not have — and moved its sync marks past them, so after updating it would never get
+# them. Once per release that adds replicated tables or columns (bump CATCHUP and list the new columns):
+#  * the new columns are filled from the last synced copy of the row (sync_rows.base keeps the whole row as it came);
+#  * every peer and the cloud are asked for everything again: versions already here are skipped at once, the rows of the
+#    new tables arrive.
+CATCHUP = "3.10"
+CATCHUP_COLS = {"materials": ["photo_id"], "equipment": ["photo_id", "in_service", "useful_months", "salvage", "amort_method"]}
+
+
+def _catch_up(conn):
+    done = conn.execute("SELECT v FROM sync_state WHERE k='catchup'").fetchone()
+    if done and done[0] == CATCHUP:
+        return
+    set_applying(conn, True)  # filling columns from the synced copy is not a change of this computer
+    try:
+        for tbl, cols in CATCHUP_COLS.items():
+            t = BY_NAME.get(tbl)
+            if not t:
+                continue
+            have = set(_cols(conn, tbl))
+            cols = [c for c in cols if c in have]
+            if not cols:
+                continue
+            dirty = {r[0] for r in conn.execute("SELECT k FROM sync_dirty WHERE tbl=?", (tbl,))}
+            for k, base in conn.execute("SELECT k, base FROM sync_rows WHERE tbl=? AND base IS NOT NULL", (tbl,)).fetchall():
+                if k in dirty:  # changed here and not sent yet: this computer's value wins
+                    continue
+                try:
+                    row, key = json.loads(base), json.loads(k)
+                except ValueError:
+                    continue
+                vals = {c: _dec(row[c]) for c in cols if row.get(c) not in (None, "")}
+                if not vals:
+                    continue
+                cur = conn.execute(f"SELECT {', '.join(vals)} FROM {tbl} WHERE {_where(t)}", key).fetchone()
+                if cur is None:
+                    continue
+                sets = [c for i, c in enumerate(vals) if cur[i] in (None, "")]
+                if sets:
+                    conn.execute(f"UPDATE {tbl} SET {', '.join(c + '=?' for c in sets)} WHERE {_where(t)}",
+                                 [vals[c] for c in sets] + list(key))
+    finally:
+        set_applying(conn, False)
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='p2p_peers'").fetchone():
+        conn.execute("UPDATE p2p_peers SET mark=0")
+    conn.execute("DELETE FROM sync_state WHERE k='cloud_seq'")
+    conn.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES('catchup', ?)", (CATCHUP,))
 
 
 def pending(db) -> int:

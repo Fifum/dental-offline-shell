@@ -326,6 +326,36 @@ check("written off: stops", a.equipment(eid)["amort"]["months_left"] == 0 and st
 summ = a.stock_summary()
 check("summary: book value", "eq_residual" in summ and summ["eq_residual"] <= summ["eq_cost"], summ)
 
+# ------------------------------------------- a laptop that updated late --
+# it ran the old version while others were newer: the new columns were dropped, the new tables skipped, the marks moved on
+check("catch-up done on install", d.one("SELECT v FROM sync_state WHERE k='catchup'")["v"] == replica.CATCHUP)
+replica.stamp(d, "node-test")
+with d.tx() as c:
+    c.execute("DELETE FROM sync_dirty")
+    for mid, ph in (("demo_m3", "F-from-peer"), ("demo_m4", "F-old")):
+        base = json.loads(c.execute("SELECT base FROM sync_rows WHERE tbl='materials' AND k=?", (json.dumps([mid]),)).fetchone()[0])
+        base["photo_id"] = ph
+        c.execute("UPDATE sync_rows SET base=? WHERE tbl='materials' AND k=?", (json.dumps(base, ensure_ascii=False), json.dumps([mid])))
+    replica.set_applying(c, True)
+    c.execute("UPDATE materials SET photo_id=NULL WHERE id IN ('demo_m3','demo_m4')")
+    replica.set_applying(c, False)
+    c.execute("INSERT INTO sync_dirty(tbl, k, at) VALUES('materials', ?, 1)", (json.dumps(["demo_m4"]),))  # changed here, not sent
+    c.executescript("CREATE TABLE IF NOT EXISTS p2p_peers(node TEXT PRIMARY KEY, mark INTEGER DEFAULT 0, epoch TEXT);")
+    c.execute("INSERT OR REPLACE INTO p2p_peers(node, mark) VALUES('peer-a', 4242)")
+    c.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES('cloud_seq', '777')")
+    c.execute("UPDATE sync_state SET v='3.9' WHERE k='catchup'")
+replica.install(d)
+mat = {m["id"]: m for m in a.materials()}
+check("catch-up: the dropped column comes from the synced copy", mat["demo_m3"]["photo_id"] == "F-from-peer", mat["demo_m3"]["photo_id"])
+check("catch-up: a change made here wins", not mat["demo_m4"]["photo_id"])
+check("catch-up: not a new change of this computer", not d.one("SELECT 1 AS x FROM sync_dirty WHERE tbl='materials' AND k=?", (json.dumps(["demo_m3"]),)))
+check("catch-up: peers are asked for everything again", d.one("SELECT mark FROM p2p_peers WHERE node='peer-a'")["mark"] == 0)
+check("catch-up: the cloud too", not d.one("SELECT 1 AS x FROM sync_state WHERE k='cloud_seq'"))
+with d.tx() as c:
+    c.execute("UPDATE p2p_peers SET mark=10")
+replica.install(d)
+check("catch-up: only once", d.one("SELECT mark FROM p2p_peers WHERE node='peer-a'")["mark"] == 10)
+
 # ------------------------------------------------------------ the screens --
 html = (ROOT / "app" / "ui" / "index.html").read_text(encoding="utf-8")
 js = (ROOT / "app" / "ui" / "stock-nurse.js").read_text(encoding="utf-8")
