@@ -117,16 +117,36 @@ def roles(db=None) -> dict:
             rows = db.q("SELECT * FROM staff_roles ORDER BY sort, title")
         except Exception:  # noqa: BLE001 — a database without the table (old tests)
             rows = []
+    nurse_title = ROLES["nurse"]["title"].casefold()
+    own_nurse = False
     for r in rows:
         key = r["key"]
         if key == "director":
             continue
         base = key if key in ROLES else (r["base"] if r["base"] in BASE_ROLES else "assistant")
         default = ROLES[base]["perms"]
+        title = (r["title"] or "").strip() or ROLES.get(key, {}).get("title", key)
+        if key not in ROLES and title.casefold() == nurse_title:
+            # 3.10: the clinic made its own «Медсестра» before the built-in one came: it is that position — it gets the
+            # nurse's stock right once (as a right added later), and the built-in one is not shown twice
+            default = list(dict.fromkeys(default + NURSE_STOCK))
+            own_nurse = True
         perms = _merge(_loads(r["perms"], []), _loads(r["known"], PERM_KEYS_2_13), default)
-        out[key] = {"title": (r["title"] or "").strip() or ROLES.get(key, {}).get("title", key), "base": base, "perms": perms,
+        out[key] = {"title": title, "base": base, "perms": perms,
                     "builtin": key in ROLES, "edited": True, "sort": (r["sort"] or 0) + (0 if key in ROLES else 100)}
+    if own_nurse and "nurse" in out and not out["nurse"]["edited"] and not _anyone_is(db, "nurse"):
+        out.pop("nurse")
     return dict(sorted(out.items(), key=lambda kv: (kv[1]["sort"], kv[1]["title"])))
+
+
+NURSE_STOCK = ["stock_view", "stock_ops"]
+
+
+def _anyone_is(db, role) -> bool:
+    try:
+        return bool(db.one("SELECT 1 AS x FROM users WHERE role=? LIMIT 1", (role,)))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def role_base(key) -> str:

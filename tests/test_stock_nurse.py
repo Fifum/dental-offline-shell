@@ -66,6 +66,29 @@ for m in ("stock_home", "stock_use", "stock_approval_decide", "stock_request_sav
 check("write-off itself still needs «приход, списание»", auth.METHOD_PERMS["stock_write_off"] == "stock_edit")
 check("approval needs «согласование»", auth.METHOD_PERMS["stock_approval_decide"] == "stock_approve")
 
+# a clinic that made its own «Медсестра» before 3.10: that position gets the nurse's stock right, no second «Медсестра»
+d2 = dbm.DB(Path(tempfile.mkdtemp()) / "old.db")
+A2 = auth.Auth(d2)
+old_known = json.dumps(auth.PERM_KEYS[:auth.PERM_KEYS.index("stock_ops")])
+with d2.tx() as c:
+    c.execute("INSERT INTO staff_roles(key, title, base, perms, known, sort, updated_at) VALUES('p_old', 'Медсестра', 'assistant', ?, ?, 0, '')",
+              (json.dumps(["schedule_view", "stock_view", "sterilization"]), old_known))
+R2 = auth.roles(d2)
+check("own «Медсестра» gets the stock right", "stock_ops" in R2["p_old"]["perms"] and "stock_edit" not in R2["p_old"]["perms"], R2["p_old"]["perms"])
+check("no second «Медсестра»", "nurse" not in R2 and sum(v["title"] == "Медсестра" for v in R2.values()) == 1)
+r = A2.role_save(None, {"key": "p_old", "title": "Медсестра", "perms": R2["p_old"]["perms"]})
+check("own «Медсестра» can still be saved", r["key"] == "p_old")
+check("director's later choice stands", "stock_ops" in auth.roles(d2)["p_old"]["perms"])
+A2.role_save(None, {"key": "p_old", "title": "Медсестра", "perms": ["schedule_view"]})
+check("director may take the right away", "stock_ops" not in auth.roles(d2)["p_old"]["perms"])
+auth._DB["db"] = d  # the rest of the test is about the main database
+check("a new position cannot be called «Медсестра» twice", "nurse" in auth.roles(d))
+try:
+    auth.Auth(d).role_save(None, {"title": "медсестра", "base": "assistant", "perms": []})
+    FAIL.append("duplicate «Медсестра» accepted")
+except auth.AuthError:
+    OK[0] += 1
+
 # -------------------------------------------------------------- places --
 cab = a.stock_location_save({"name": "Кабинет №3", "kind": "cabinet"})
 cab2 = a.stock_location_save({"name": "Кабинет №1", "kind": "cabinet"})

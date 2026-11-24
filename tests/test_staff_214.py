@@ -82,7 +82,7 @@ check("a person's old list of rights gets new ones from the position",
 check("a person's list saved in 2.14 keeps a removed right removed",
       "expenses_day" not in auth.Auth.effective_perms({"role": "admin", "perms": json.dumps({"perms": ["schedule_view"], "known": auth.PERM_KEYS})}))
 check("unknown position has no rights", auth.Auth.effective_perms({"role": "nobody"}) == [])
-nurse = A.role_save(None, {"title": "Медсестра", "base": "assistant", "perms": ["schedule_view"]})
+nurse = A.role_save(None, {"title": "Процедурная медсестра", "base": "assistant", "perms": ["schedule_view"]})
 check("voice label by the base role", voices.role_label({"role": nurse["key"]}) == "Ассистент" and voices.role_label({"role": sa["key"]}) == "Врач")
 check("role_base", auth.role_base(nurse["key"]) == "assistant" and auth.role_base("doctor") == "doctor")
 check("synced between laptops", {"staff_roles", "day_reports"} <= {t.name for t in replica.TABLES})
