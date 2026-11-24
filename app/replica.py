@@ -80,6 +80,9 @@ TABLES = [
     T("service_costs", key=("service_id",), title="Себестоимость услуги"),
     T("equipment", title="Оборудование"),
     T("equipment_events", intpk=True, title="Обслуживание оборудования"),
+    # 3.10: the nurse's requests for materials and the write-offs waiting for a manager's approval
+    T("stock_requests", title="Заявка на материалы"),
+    T("stock_approvals", title="Списание на согласовании"),
     T("work_shifts", intpk=True, title="Смена"),
     T("kpi_targets", title="План клиники"),
     T("crm_leads", title="Заявка"),

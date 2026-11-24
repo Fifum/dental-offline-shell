@@ -3,6 +3,10 @@
 Storage: %LOCALAPPDATA%/<app>/files/<patient>/<id><ext> — the original is never changed. Next to it:
 <id>.view.jpg|png (what the viewer shows: TIFF, BMP and DICOM converted) and <id>.thumb.jpg (list preview).
 
+3.10: photos of materials and equipment are rows of the same table owned by «_stock» (STOCK_OWNER) instead of a
+patient: they travel to the other computers and the cloud exactly like X-rays. A photo is made smaller (at most
+PHOTO_SIDE px, JPEG) before it is stored, so a phone picture of 8 MB becomes 150-300 KB.
+
 Visiograph / sensor software saves images into its own folder. The program watches that folder
 («Папка снимков визиографа» in the settings) and offers new images to put into the open patient's card.
 """
@@ -40,6 +44,9 @@ MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif"
         ".pdf": "application/pdf", ".stl": "model/stl"}
 MAX_BYTES = 15 * 1024 * 1024
 THUMB = 320
+STOCK_OWNER = "_stock"      # 3.10: the «patient» of the stock photos
+PHOTO_SIDE = 1200           # the longer side of a stored stock photo, px
+PHOTO_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 INBOX_DAYS = 3
 
 
@@ -207,6 +214,64 @@ class Files:
             c.execute("""INSERT INTO patient_files(id, patient_id, kind, title, tooth, taken_at, note, orig_name, ext, mime, size,
                          sha256, width, height, meta, created_at, created_by, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", row)
         return self.get_row(fid)
+
+    # ------------------------------------------- 3.10: photos of the stock --
+    def add_stock_photo(self, name, data: bytes, who="") -> dict:
+        """A photo of a material or of equipment: checked, turned upright, made smaller and stored as a JPEG."""
+        if not data:
+            raise ValueError("Пустой файл")
+        if len(data) > MAX_BYTES:
+            raise ValueError(f"Фото больше {MAX_BYTES // 1024 // 1024} МБ — выберите снимок поменьше")
+        ext = _ext(name, data)
+        if ext not in PHOTO_EXT:
+            raise ValueError("Можно добавить фото в формате JPEG, PNG, WEBP, GIF, BMP или TIFF")
+        from PIL import Image, ImageOps  # noqa: PLC0415
+        try:
+            img = Image.open(io.BytesIO(data))
+            img.load()
+            img = ImageOps.exif_transpose(img)
+        except Exception:  # noqa: BLE001
+            raise ValueError("Файл не похож на фото — откройте его и сохраните заново в JPEG или PNG") from None
+        if img.mode in ("RGBA", "LA", "P"):  # transparent pictures on white, not on black
+            img = img.convert("RGBA")
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail((PHOTO_SIDE, PHOTO_SIDE))
+        out = io.BytesIO()
+        img.save(out, "JPEG", quality=85, optimize=True)
+        jpg = out.getvalue()
+        sha = hashlib.sha256(jpg).hexdigest()
+        dup = self.db.one("SELECT id FROM patient_files WHERE patient_id=? AND sha256=? AND deleted=0", (STOCK_OWNER, sha))
+        if dup:
+            return self.get_row(dup["id"])
+        fid = "F-" + uuid.uuid4().hex[:12]
+        path = _pdir(STOCK_OWNER) / (fid + ".jpg")
+        path.write_bytes(jpg)
+        info = make_previews(path, ".jpg")
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO patient_files(id, patient_id, kind, title, tooth, taken_at, note, orig_name, ext, mime, size,
+                         sha256, width, height, meta, created_at, created_by, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (fid, STOCK_OWNER, "photo", Path(str(name or "фото")).stem[:200], "", None, "", str(name or "")[:200], ".jpg",
+                       "image/jpeg", len(jpg), sha, info["width"], info["height"], "{}", _now(), who or "", _now()))
+        return self.get_row(fid)
+
+    def stock_thumbs(self, ids) -> dict:
+        """Small previews of stock photos only (never a patient's file, whatever id is asked for)."""
+        ids = [str(x) for x in list(ids or [])[:300] if x]
+        if not ids:
+            return {}
+        own = {r["id"] for r in self.db.q(f"SELECT id FROM patient_files WHERE patient_id=? AND deleted=0 AND id IN ({','.join('?' * len(ids))})",
+                                          (STOCK_OWNER, *ids))}
+        return self.thumbs([i for i in ids if i in own])
+
+    def stock_photo(self, fid) -> dict:
+        r = self.db.one("SELECT patient_id FROM patient_files WHERE id=? AND deleted=0", (str(fid or ""),))
+        if not r or r["patient_id"] != STOCK_OWNER:
+            raise ValueError("Фото не найдено")
+        return self.content(fid, "view")
 
     def get_row(self, fid) -> dict:
         r = self.db.one("SELECT * FROM patient_files WHERE id=?", (fid,))

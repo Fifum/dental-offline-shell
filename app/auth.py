@@ -58,6 +58,9 @@ PERMS = [
     # 2.14
     ("expenses_day", "Расходы за день: вносить и видеть только сегодняшние"),
     ("export", "Выгрузка таблиц в Excel"),
+    # 3.10: the nurse's stock — whatever she writes off waits for a manager or the director
+    ("stock_ops", "Склад: заявки, приём поставки, выдача в кабинет, расход (списание — после согласования)"),
+    ("stock_approve", "Склад: согласование списаний и заявок, списание без согласования"),
 ]
 PERM_KEYS = [k for k, _ in PERMS]
 PERM_KEYS_2_13 = PERM_KEYS[:PERM_KEYS.index("expenses_day")]   # what a permission list saved before 2.14 knew about
@@ -67,7 +70,7 @@ PERM_GROUPS = [
     ("Медкарта и документы", ["medcard_view", "medcard_edit", "docs", "lab", "sterilization"]),
     ("Деньги", ["billing", "payments", "cash_report", "fiscal", "expenses_day"]),
     ("Управление", ["reports", "accounting", "marketing", "shifts_edit", "export"]),
-    ("Склад", ["stock_view", "stock_edit", "equipment"]),
+    ("Склад", ["stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment"]),
     ("Настройки", ["refs", "settings", "staff"]),
 ]
 
@@ -76,12 +79,14 @@ ROLES = {
     "admin": {"title": "Администратор", "perms": [
         "schedule_view", "schedule_edit", "patients_view", "patients_edit", "medcard_view", "docs",
         "billing", "payments", "cash_report", "fiscal", "transfer", "refs", "stock_view", "stock_edit",
-        "marketing", "shifts_edit", "sterilization", "lab", "expenses_day", "export"]},
+        "marketing", "shifts_edit", "sterilization", "lab", "expenses_day", "export", "stock_approve"]},
     "doctor": {"title": "Врач", "perms": [
         "schedule_view", "patients_view", "patients_edit", "medcard_view", "medcard_edit", "docs", "billing", "stock_view",
         "sterilization", "lab", "export"]},
     "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view", "sterilization", "export"]},
-    "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment", "export"]},
+    "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment", "export", "stock_approve"]},
+    # 3.10: the nurse takes deliveries, issues to the cabinets and records what was used; a write-off waits for approval
+    "nurse": {"title": "Медсестра", "perms": ["schedule_view", "patients_view", "stock_view", "stock_ops", "sterilization", "export"]},
 }
 BASE_ROLES = [k for k in ROLES if k != "director"]   # a position the director makes is built on one of these
 _DB = {"db": None}   # the clinic database, for positions the director changed (set by Auth)
@@ -262,24 +267,37 @@ METHOD_PERMS = {
     "day_report_settings_save": "settings",
     "day_report_tg_check": "settings", "day_report_tg_chats": "settings",  # 2.14.1: the report in Telegram
     # stock and equipment
-    "stock_summary": ("stock_view", "equipment"), "materials": ("stock_view", "stock_edit"),
-    "material": ("stock_view", "stock_edit"), "stock_moves": ("stock_view", "stock_edit"),
-    "stock_docs": ("stock_view", "stock_edit"), "stock_doc": ("stock_view", "stock_edit"),
-    "suppliers": ("stock_view", "stock_edit"), "norms": ("stock_view", "stock_edit", "refs"),
+    "stock_summary": ("stock_view", "equipment", "stock_ops"), "materials": ("stock_view", "stock_edit", "stock_ops"),
+    "material": ("stock_view", "stock_edit", "stock_ops"), "stock_moves": ("stock_view", "stock_edit"),
+    "stock_docs": ("stock_view", "stock_edit"), "stock_doc": ("stock_view", "stock_edit", "stock_ops"),
+    "suppliers": ("stock_view", "stock_edit", "stock_ops"), "norms": ("stock_view", "stock_edit", "refs"),
     "save_material": "stock_edit", "delete_material": "stock_edit", "save_supplier": "stock_edit",
-    "delete_supplier": "stock_edit", "stock_receive": "stock_edit", "stock_write_off": "stock_edit",
+    "delete_supplier": "stock_edit", "stock_receive": ("stock_edit", "stock_ops"), "stock_write_off": "stock_edit",
     "stock_inventory": "stock_edit", "save_norms": "stock_edit",
-    "stock_lots": ("stock_view", "stock_edit"), "stock_expired": ("stock_view", "stock_edit"),
-    "purchase_list": ("stock_view", "stock_edit"), "stock_scan": ("stock_view", "stock_edit"),
+    "stock_lots": ("stock_view", "stock_edit", "stock_ops"), "stock_expired": ("stock_view", "stock_edit"),
+    "purchase_list": ("stock_view", "stock_edit"), "stock_scan": ("stock_view", "stock_edit", "stock_ops"),
     # 3.5: places and transfers, write-off by Dentist Plus visits, the cost of services
-    "stock_locations": ("stock_view", "stock_edit"), "stock_location_save": "stock_edit", "stock_location_delete": "stock_edit",
-    "stock_transfer": "stock_edit", "stock_auto_settings": ("stock_view", "stock_edit"), "stock_auto_settings_save": "stock_edit",
+    "stock_locations": ("stock_view", "stock_edit", "stock_ops"), "stock_location_save": "stock_edit", "stock_location_delete": "stock_edit",
+    "stock_transfer": ("stock_edit", "stock_ops"), "stock_auto_settings": ("stock_view", "stock_edit"), "stock_auto_settings_save": "stock_edit",
     "stock_visits": ("stock_view", "stock_edit"), "stock_visit": ("stock_view", "stock_edit"), "stock_visit_save": "stock_edit",
     "stock_visit_confirm": "stock_edit", "stock_visit_revert": "stock_edit", "stock_visit_skip": "stock_edit",
     "stock_visit_restore": "stock_edit", "service_costs": "accounting", "service_cost_save": "accounting",
     "stock_cost_settings_save": "accounting",
     "equipment_list": ("equipment", "stock_view"), "equipment": ("equipment", "stock_view"),
     "save_equipment": "equipment", "equipment_event": "equipment", "write_off_equipment": "equipment",
+    # 3.10: the nurse's stock — requests, consumption waiting for approval, photos, depreciation of equipment.
+    # A write-off by someone without «Склад: приход, списание» or «согласование» is only a request (checked in Api)
+    "stock_home": ("stock_view", "stock_edit", "stock_ops", "equipment"),
+    "stock_requests": ("stock_view", "stock_edit", "stock_ops", "stock_approve"),
+    "stock_request": ("stock_view", "stock_edit", "stock_ops", "stock_approve"),
+    "stock_request_save": ("stock_edit", "stock_ops"), "stock_request_cancel": ("stock_edit", "stock_ops", "stock_approve"),
+    "stock_request_reject": ("stock_edit", "stock_approve"),
+    "stock_use": ("stock_edit", "stock_ops"), "stock_use_options": ("stock_edit", "stock_ops"),
+    "stock_approvals": ("stock_edit", "stock_ops", "stock_approve"), "stock_approval": ("stock_edit", "stock_ops", "stock_approve"),
+    "stock_approval_decide": "stock_approve", "stock_approval_cancel": ("stock_edit", "stock_ops", "stock_approve"),
+    "stock_photos": ("stock_view", "stock_edit", "stock_ops", "equipment"), "stock_photo": ("stock_view", "stock_edit", "stock_ops", "equipment"),
+    "stock_photo_set": ("stock_edit", "stock_ops", "equipment"), "stock_photo_clear": ("stock_edit", "stock_ops", "equipment"),
+    "equipment_amortization": ("equipment", "stock_view", "accounting"), "amort_settings_save": "accounting",
     # money 2.12: advance, refunds, installments, memberships, cash shifts, insurance (ДМС)
     "money_patient": ("payments", "billing", "patients_view"), "deposit_use": "payments", "refund": "payments",
     "schedule": ("payments", "billing"), "schedule_draft": ("payments", "billing"), "schedule_save": ("payments", "billing"),
@@ -385,6 +403,11 @@ AUDITED = {
     "stock_cost_settings_save": "Настройки себестоимости и материалов в ОПиУ",
     "save_equipment": "Оборудование", "equipment_event": "Обслуживание оборудования",
     "write_off_equipment": "Списание оборудования",
+    "stock_request_save": "Заявка на выдачу материалов", "stock_request_cancel": "Заявка на материалы отменена",
+    "stock_request_reject": "Заявка на материалы отклонена", "stock_use": "Расход материалов (медсестра — на согласование)",
+    "stock_approval_decide": "Согласование списания материалов", "stock_approval_cancel": "Отмена списания на согласовании",
+    "stock_photo_set": "Фото материала или оборудования", "stock_photo_clear": "Фото материала или оборудования убрано",
+    "amort_settings_save": "Амортизация оборудования в ОПиУ",
     "fiscal_open_shift": "Открытие смены на кассе", "fiscal_close_shift": "Закрытие смены (Z-отчёт)",
     "fiscal_x_report": "X-отчёт", "fiscal_retry": "Повтор чека", "fiscal_refund": "Чек возврата",
     "fiscal_for_payment": "Чек по оплате", "fiscal_save_settings": "Настройки кассы",

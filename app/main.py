@@ -98,6 +98,9 @@ class Api:
         # 3.5: write-off by Dentist Plus visits, places of the stock (on Stock) and the cost of services
         from stock_auto import StockAuto
         self._sauto = StockAuto(db, self._stock, self._acc)
+        # 3.10: the nurse's stock — requests, consumption waiting for a manager's approval
+        from stock_flow import StockFlow
+        self._sflow = StockFlow(db, self._stock, self._files)
         # 3.6: treatment plan statuses for sales, the call list for abandoned plans, the reports
         from plan_status import PlanStatus
         self._pst = PlanStatus(db, self._local, self._crm, self._mk, self._sauto)
@@ -143,7 +146,12 @@ class Api:
         return self._stock.delete_location(lid)
 
     def stock_transfer(self, f):
-        return self._stock.transfer(f if isinstance(f, dict) else {}, self._who())
+        """A transfer between places; 3.10: `request_ids` — the cabinets' requests it issues («Выдать в кабинет»)."""
+        f = f if isinstance(f, dict) else {}
+        did = self._stock.transfer(f, self._who())
+        if f.get("request_ids"):
+            self._sflow.issued(f.get("request_ids"), did, f.get("lines"))
+        return did
 
     def stock_auto_settings(self):
         from stock_auto import MODES
@@ -287,6 +295,139 @@ class Api:
 
     def write_off_equipment(self, f):
         return self._stock.write_off_equipment(f, self._who())
+
+    # ------------------------------------------- 3.10: the nurse's stock --
+    def _stock_rights(self):
+        """(perms, login, name, may write off at once, sees everyone's requests)."""
+        perms, u = self._my_perms()
+        login = (u or {}).get("login") or ""
+        direct = bool(perms & {"stock_edit", "stock_approve"})
+        return perms, login, self._who() or login, direct, direct
+
+    def stock_home(self, days=30):
+        perms, login, _, direct, _ = self._stock_rights()
+        out = self._sflow.home(perms, login, days)
+        out["can"] = {"receive": bool(perms & {"stock_edit", "stock_ops"}), "issue": bool(perms & {"stock_edit", "stock_ops"}),
+                      "use": bool(perms & {"stock_edit", "stock_ops"}), "request": bool(perms & {"stock_edit", "stock_ops"}),
+                      "direct": direct, "approve": "stock_approve" in perms, "edit": "stock_edit" in perms,
+                      "patients": bool(perms & {"patients_view", "schedule_edit"})}
+        return out
+
+    def stock_requests(self, f=None):
+        f = f if isinstance(f, dict) else {}
+        _, login, _, _, all_ = self._stock_rights()
+        mine = bool(f.get("mine")) or not all_  # a nurse sees her own requests only
+        return self._sflow.requests(f.get("status"), login if mine else None)
+
+    def stock_request(self, rid):
+        _, login, _, _, all_ = self._stock_rights()
+        r = self._sflow.request(rid)
+        if not all_ and r["created_by"] != login:
+            raise ValueError("Заявка не найдена")
+        return r
+
+    def stock_request_save(self, f):
+        _, login, name, _, all_ = self._stock_rights()
+        return self._sflow.save_request(f, login, name, all_)
+
+    def stock_request_cancel(self, rid):
+        _, login, _, _, all_ = self._stock_rights()
+        return self._sflow.cancel_request(rid, login, all_)
+
+    def stock_request_reject(self, rid, answer=""):
+        _, login, name, _, _ = self._stock_rights()
+        return self._sflow.reject_request(rid, answer, login, name)
+
+    def stock_use(self, f):
+        """«Зафиксировать расход» / «Списать»: done at once with «Склад: приход, списание» or «согласование», otherwise
+        it only waits for a manager — the stock does not change (the rule lives here, not in the screen)."""
+        _, login, name, direct, _ = self._stock_rights()
+        return self._sflow.use(f, direct, login, name)
+
+    def stock_use_options(self, q=""):
+        """Services for «Услуга / процедура» (with their norms) and, for someone who may see patients, the patients found."""
+        perms, _, _, _, _ = self._stock_rights()
+        norms = {}
+        for n in self._stock.norms():
+            norms.setdefault(n["service_id"], []).append({"material_id": n["material_id"], "qty": n["qty"]})
+        svc = [{"id": r["id"], "code": r["code"] or "", "title": r["title"] or "", "norms": norms.get(r["id"], [])}
+               for r in self._db.q("SELECT id, code, title FROM services WHERE COALESCE(active,1)=1 ORDER BY (code IS NULL OR code=''), code, title")]
+        out = {"services": svc, "patients": []}
+        q = str(q or "").strip()
+        if q and perms & {"patients_view", "schedule_edit"}:
+            out["patients"] = [{"id": p["id"], "name": p.get("name") or "", "birth": p.get("birth") or p.get("birthday") or "",
+                                "phone": p.get("phone") or ""} for p in (self.search(q) or [])[:10]]
+        return out
+
+    def stock_approvals(self, f=None):
+        f = f if isinstance(f, dict) else {}
+        _, login, _, _, all_ = self._stock_rights()
+        mine = bool(f.get("mine")) or not all_
+        return self._sflow.approvals(f.get("status"), login if mine else None)
+
+    def stock_approval(self, aid):
+        _, login, _, _, all_ = self._stock_rights()
+        r = self._sflow.approval(aid)
+        if not all_ and r["created_by"] != login:
+            raise ValueError("Запись не найдена")
+        return r
+
+    def stock_approval_decide(self, aid, action, answer=""):
+        perms, login, name, _, _ = self._stock_rights()
+        if "stock_approve" not in perms:  # М: the method map says so too; never by a screen alone
+            raise ValueError("Согласовывать списания может менеджер или директор")
+        return self._sflow.decide(aid, action, answer, login, name)
+
+    def stock_approval_cancel(self, aid):
+        _, login, _, _, all_ = self._stock_rights()
+        return self._sflow.cancel_approval(aid, login, all_)
+
+    def stock_photos(self, ids):
+        return self._files.stock_thumbs(ids)
+
+    def stock_photo(self, fid):
+        return self._files.stock_photo(fid)
+
+    def _photo_target(self, kind, oid):
+        perms, _ = self._my_perms()
+        if kind == "material":
+            if not perms & {"stock_edit", "stock_ops"}:
+                raise ValueError("Фото материала может добавить кладовщик, администратор или медсестра")
+            row = self._db.one("SELECT id, photo_id FROM materials WHERE id=?", (str(oid or ""),))
+        elif kind == "equipment":
+            if not perms & {"equipment", "stock_edit"}:
+                raise ValueError("Фото оборудования может добавить сотрудник с правом «Оборудование»")
+            row = self._db.one("SELECT id, photo_id FROM equipment WHERE id=?", (str(oid or ""),))
+        else:
+            raise ValueError("Неизвестно, к чему фото")
+        if not row:
+            raise ValueError("Материал или оборудование не найдено")
+        return ("materials" if kind == "material" else "equipment"), row
+
+    def stock_photo_set(self, kind, oid, name, data_b64):
+        """A photo of a material or of equipment: made smaller and kept like the patients' files (it goes to the other computers)."""
+        import files
+        table, row = self._photo_target(kind, oid)
+        ph = self._files.add_stock_photo(name, files.b64_bytes(data_b64), self._who())
+        with self._db.tx() as c:
+            c.execute(f"UPDATE {table} SET photo_id=? WHERE id=?", (ph["id"], row["id"]))
+        return {"photo_id": ph["id"], "thumb": self._files.stock_thumbs([ph["id"]]).get(ph["id"])}
+
+    def stock_photo_clear(self, kind, oid):
+        table, row = self._photo_target(kind, oid)
+        with self._db.tx() as c:
+            c.execute(f"UPDATE {table} SET photo_id=NULL WHERE id=?", (row["id"],))
+        return True
+
+    def equipment_amortization(self, m_from=None, m_to=None):
+        from stock_auto import amort_in_pnl
+        perms, _ = self._my_perms()
+        return {**self._stock.amort_report(m_from, m_to), "in_pnl": amort_in_pnl(self._db), "can_pnl": "accounting" in perms}
+
+    def amort_settings_save(self, f):
+        import stock_auto
+        stock_auto.set_amort_in_pnl(self._db, bool((f or {}).get("in_pnl")))
+        return self.equipment_amortization()
 
     # ------------------------------------------------------------- reports --
     def report_revenue(self, date_from=None, date_to=None):
@@ -1736,6 +1877,9 @@ class Api:
                 st["stock_low"] = sum(1 for m in mats if m["low"] or m["balance"] < 0)
                 st["stock_exp"] = sum(1 for m in mats if m["exp_state"])
                 st["stock_alerts"] = sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"])
+            if u is None or {"stock_approve", "stock_ops"} & set(Auth.effective_perms(u)):  # 3.10
+                c = self._sflow.counts((u or {}).get("login") or "", u is None or "stock_approve" in set(Auth.effective_perms(u)))
+                st["stock_wait"] = c.get("to_approve", 0) + c.get("to_issue", 0) + c.get("my_rejected", 0)
         except Exception:  # noqa: BLE001
             pass
         try:  # 3.6: the automatic plan statuses (at most every 10 minutes) and the abandoned plans to call about

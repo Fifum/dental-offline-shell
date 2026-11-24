@@ -11,6 +11,11 @@ Equipment: a register with inventory numbers, location, service history and a wr
 (`stock_moves.location_id`, empty — the main stock), so the balance of a place is the sum of its moves and the clinic's balance
 is still the sum of all moves. A transfer is a document with two moves (− there, + here); lots and expiry stay clinic-wide.
 
+3.10 медсестра и амортизация: materials and equipment may carry a photo (`photo_id` — a row of `patient_files` owned by
+«_stock», so the picture travels to the other computers like an X-ray); equipment has a straight-line depreciation (the cost
+less the salvage value over the useful life, from the month after it was put into service, until it is written off).
+Requests and write-offs waiting for approval are in stock_flow.py.
+
 2.14.1 «без документа»: a receipt bought without an invoice, a write-off without an act or a stock count may be marked
 `stock_docs.nodoc = 1`. The stock itself is always the real one (everything); «по документам» is the balance of the
 documented moves only (plus services and starting balances) — seen with the «Бухгалтерия» right, for the accountant.
@@ -69,6 +74,8 @@ EQ_STATUS = {"in_use": "В работе", "repair": "В ремонте", "storag
 EQ_EVENTS = {"service": "Обслуживание", "repair": "Ремонт", "move": "Перемещение", "note": "Заметка",
              "writeoff": "Списание", "status": "Статус"}
 UNITS = ["шт", "уп", "мл", "г", "фл", "амп", "карп", "набор", "пара", "м"]
+AMORT_METHODS = {"linear": "Линейный"}
+MAX_USEFUL_MONTHS = 600  # 50 years
 
 
 def _now():
@@ -161,6 +168,77 @@ def parse_scan(code):
     return out
 
 
+def _mon(day):
+    """'2026-11-18' or '2026-11' → month index (year * 12 + month − 1); '' → None."""
+    m = re.fullmatch(r"(\d{4})-(\d{2})(?:-\d{2})?", str(day or "")[:10])
+    return int(m[1]) * 12 + int(m[2]) - 1 if m else None
+
+
+def _mon_str(k):
+    return f"{k // 12:04d}-{k % 12 + 1:02d}"
+
+
+def amortization(e, month=None):
+    """Straight-line depreciation of one piece of equipment as of `month` ('YYYY-MM', default — this month, inclusive).
+
+    The cost less the salvage value is spread evenly over the useful life, from the month after the date it was put into
+    service (or bought); a written-off piece is not depreciated after the month of the write-off. The sum of k months is
+    rounded once (not k rounded months), so the last month takes the kopecks and the total is exactly the base."""
+    cost = round(float(e.get("price") or 0), 2)
+    n = int(e.get("useful_months") or 0)
+    start = _mon(e.get("in_service") or e.get("purchase_date"))
+    out = {"on": False, "cost": cost, "method": e.get("amort_method") or "linear", "useful_months": n,
+           "salvage": round(float(e.get("salvage") or 0), 2), "in_service": e.get("in_service") or e.get("purchase_date") or "",
+           "monthly": 0.0, "accumulated": 0.0, "residual": cost, "months_done": 0, "months_left": 0, "first": "", "last": "",
+           "percent": 0.0, "done": False, "stopped": ""}
+    if not (cost > 0 and n > 0 and start is not None):
+        return out
+    base = max(0.0, cost - min(out["salvage"], cost))
+    first, last = start + 1, start + n
+    stop = _mon(e.get("writeoff_date")) if e.get("status") == "written_off" else None
+    now = _mon(month) if month else _mon(date.today().isoformat())
+    upto = min(last, now, stop if stop is not None else last)
+    k = max(0, upto - first + 1)
+    acc = round(base * k / n, 2)
+    out.update(on=True, monthly=round(base / n, 2), accumulated=acc, residual=round(cost - acc, 2), months_done=k,
+               months_left=max(0, n - k) if stop is None else 0, first=_mon_str(first), last=_mon_str(last),
+               percent=round(acc * 100 / base, 1) if base else 100.0, done=k >= n,
+               stopped=_mon_str(stop) if stop is not None else "")
+    return out
+
+
+def amort_charge(e, month):
+    """Depreciation of one piece for one month ('YYYY-MM'): the difference of the totals at its end and the month before."""
+    k = _mon(month)
+    if k is None:
+        return 0.0
+    a, b = amortization(e, _mon_str(k)), amortization(e, _mon_str(k - 1))
+    return round(a["accumulated"] - b["accumulated"], 2) if a["on"] else 0.0
+
+
+def amort_schedule(e):
+    """Every month of the useful life (up to the write-off): charge, total so far and book value."""
+    a = amortization(e)
+    if not a["on"]:
+        return []
+    out, prev = [], 0.0
+    base = max(0.0, a["cost"] - min(a["salvage"], a["cost"]))
+    first, last = _mon(a["first"]), _mon(a["last"])
+    stop = _mon(a["stopped"]) if a["stopped"] else None
+    for k in range(first, last + 1):
+        if stop is not None and k > stop:
+            break
+        acc = round(base * (k - first + 1) / a["useful_months"], 2)
+        out.append({"month": _mon_str(k), "charge": round(acc - prev, 2), "accumulated": acc, "residual": round(a["cost"] - acc, 2)})
+        prev = acc
+    return out
+
+
+def amort_month(db, month):
+    """3.10: depreciation of all the equipment for one month ('YYYY-MM') — a line of the P&L."""
+    return round(sum(amort_charge(e, month) for e in db.q("SELECT * FROM equipment")), 2)
+
+
 class Stock:
     def __init__(self, db):
         self.db = db
@@ -174,6 +252,13 @@ class Stock:
                     db.conn.execute(f"ALTER TABLE stock_docs ADD COLUMN {col}")
             if "location_id" not in {r[1] for r in db.conn.execute("PRAGMA table_info(stock_moves)")}:  # 3.5: the place of a move
                 db.conn.execute("ALTER TABLE stock_moves ADD COLUMN location_id TEXT")
+            # 3.10: photos of materials and equipment, depreciation of equipment
+            if "photo_id" not in {r[1] for r in db.conn.execute("PRAGMA table_info(materials)")}:
+                db.conn.execute("ALTER TABLE materials ADD COLUMN photo_id TEXT")
+            ecols = {r[1] for r in db.conn.execute("PRAGMA table_info(equipment)")}
+            for col in ("photo_id TEXT", "in_service TEXT", "useful_months INTEGER", "salvage REAL DEFAULT 0", "amort_method TEXT"):
+                if col.split()[0] not in ecols:
+                    db.conn.execute(f"ALTER TABLE equipment ADD COLUMN {col}")
             db.conn.commit()
 
     service_location = None  # 3.5: callable(invoice row) -> place of the automatic write-off by an invoice (set by Api)
@@ -394,8 +479,11 @@ class Stock:
                     c.execute("UPDATE materials SET price=? WHERE id=?", (p, mid))
         return did
 
-    def write_off(self, f, user=""):
-        """Manual write-off (spoiled, expired, used outside a service). Cannot go below zero."""
+    def write_off(self, f, user="", did=None, uid=None):
+        """Manual write-off (spoiled, expired, used outside a service). Cannot go below zero.
+
+        3.10: `patient_id` of the form goes to the moves (consumption in treatment); `did` and `uid` give the document and its
+        moves fixed ids, so a write-off approved on two computers at once stays one write-off after syncing."""
         lines = self._lines(f.get("lines"))
         reason = _clean(f.get("reason"), 300)
         if not reason:
@@ -430,8 +518,12 @@ class Stock:
                 name = self.db.one("SELECT name FROM materials WHERE id=?", (mid,))["name"]
                 raise ValueError(f"«{name}», партия {g['lot'] or '—'}: осталось {g['left']:g}, списать {q:g} нельзя")
             lot_of.append(g)
-        did, at = _id("W"), _now()
+        did, at = did or _id("W"), _now()
         day = f.get("date") or date.today().isoformat()
+        tm = str(f.get("time") or "").strip()
+        tm = f"{tm}:00"[:8] if re.fullmatch(r"\d{2}:\d{2}", tm) else at[11:]
+        pid = _clean(f.get("patient_id"), 60) or None
+        has_uid = bool(uid) and "uid" in {r[1] for r in self.db.conn.execute("PRAGMA table_info(stock_moves)")}
         prices = {r["id"]: r["price"] for r in self.db.q("SELECT id, price FROM materials")}
         total = round(sum(q * (prices.get(mid) or 0) for mid, q, _ in lines), 2)
         with self.db.tx() as c:
@@ -439,11 +531,14 @@ class Stock:
                          location_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (did, "writeoff", "" if f.get("nodoc") else self._next_number("writeoff"), day, None, reason,
                        _clean(f.get("comment"), 500), total, user, at, 1 if f.get("nodoc") else 0, loc))
-            for (mid, q, _), g in zip(lines, lot_of):
+            for i, ((mid, q, _), g) in enumerate(zip(lines, lot_of)):
                 why = reason + (f" (партия {g['lot']})" if g and g["lot"] else "")
-                cur = c.execute("""INSERT INTO stock_moves(material_id, qty, price, kind, doc_id, reason, user_name, at, location_id)
-                                   VALUES(?,?,?,?,?,?,?,?,?)""",
-                                (mid, -q, prices.get(mid) or 0, "writeoff", did, why[:300], user, f"{day} {at[11:]}", loc))
+                cols, vals = ("material_id, qty, price, kind, doc_id, reason, user_name, at, location_id, patient_id",
+                              [mid, -q, prices.get(mid) or 0, "writeoff", did, why[:300], user, f"{day} {tm}", loc, pid])
+                if has_uid:
+                    cols += ", uid"
+                    vals.append(f"{uid}-{i}"[:120])
+                cur = c.execute(f"INSERT INTO stock_moves({cols}) VALUES({', '.join('?' * len(vals))})", vals)
                 if g:
                     c.execute("INSERT INTO stock_lots(material_id, move_id, lot, expires, qty, created_at) VALUES(?,?,?,?,?,?)",
                               (mid, cur.lastrowid, g["lot"], g["expires"], -q, at))
@@ -825,6 +920,8 @@ class Stock:
                 "alerts": sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"]),
                 "value": round(sum(m["value"] for m in mats if m["balance"] > 0), 2),
                 "equipment": sum(1 for e in eq if e["status"] != "written_off"),
+                "eq_residual": round(sum(e["amort"]["residual"] for e in eq if e["status"] != "written_off"), 2),  # 3.10
+                "eq_cost": round(sum(e["price"] or 0 for e in eq if e["status"] != "written_off"), 2),
                 "service_due": sum(1 for e in eq if e["status"] != "written_off" and e["next_service"] and e["next_service"] <= today)}
 
     # ============================================================ equipment --
@@ -834,6 +931,7 @@ class Stock:
         for r in rows:
             r["status_title"] = EQ_STATUS.get(r["status"], r["status"])
             r["service_due"] = bool(r["next_service"] and r["next_service"] <= today and r["status"] != "written_off")
+            r["amort"] = amortization(r)  # 3.10
         if not show_written_off:
             rows = [r for r in rows if r["status"] != "written_off"]
         q = (q or "").strip().lower()
@@ -845,6 +943,8 @@ class Stock:
         e = self.db.one("SELECT * FROM equipment WHERE id=?", (eid,))
         if e:
             e["status_title"] = EQ_STATUS.get(e["status"], e["status"])
+            e["amort"] = amortization(e)  # 3.10: depreciation and its months
+            e["amort_schedule"] = amort_schedule(e)
             e["events"] = self.db.q("SELECT * FROM equipment_events WHERE equipment_id=? ORDER BY date DESC, id DESC", (eid,))
             for ev in e["events"]:
                 ev["kind_title"] = EQ_EVENTS.get(ev["kind"], ev["kind"])
@@ -869,6 +969,7 @@ class Stock:
                 _clean(f.get("location"), 100), _clean(f.get("responsible"), 100), _clean(f.get("purchase_date"), 10),
                 max(0, _num(f.get("price"), "Стоимость")), _clean(f.get("warranty_until"), 10), _clean(f.get("next_service"), 10),
                 status, _clean(f.get("comment"), 1000))
+        amort = self._amort_fields(f, vals[8])
         with self.db.tx() as c:
             if old:
                 c.execute("""UPDATE equipment SET inv_number=?, name=?, category=?, model=?, serial=?, location=?, responsible=?,
@@ -878,6 +979,8 @@ class Stock:
                 c.execute("""INSERT INTO equipment(inv_number, name, category, model, serial, location, responsible, purchase_date,
                              price, warranty_until, next_service, status, comment, id, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                           (*vals, eid, _now()))
+            if amort is not None:
+                c.execute("UPDATE equipment SET in_service=?, useful_months=?, salvage=?, amort_method=? WHERE id=?", (*amort, eid))
             if old and old["location"] != vals[5]:
                 c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, user_name, created_at) VALUES(?,?,?,?,?,?)",
                           (eid, "move", date.today().isoformat(), f"{old['location'] or '—'} → {vals[5] or '—'}", user, _now()))
@@ -885,6 +988,55 @@ class Stock:
                 c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, user_name, created_at) VALUES(?,?,?,?,?,?)",
                           (eid, "status", date.today().isoformat(), f"{EQ_STATUS[old['status']]} → {EQ_STATUS[status]}", user, _now()))
         return eid
+
+    @staticmethod
+    def _amort_fields(f, price):
+        """3.10: (in service, useful life in months, salvage value, method) from the form; None — the form has none of them."""
+        keys = ("in_service", "useful_months", "useful_years", "salvage", "amort_method")
+        if not any(k in f for k in keys):
+            return None
+        months = f.get("useful_months")
+        if months in (None, "") and f.get("useful_years") not in (None, ""):
+            months = _num(f.get("useful_years"), "Срок полезного использования") * 12
+        months = int(round(_num(months, "Срок полезного использования"))) if months not in (None, "") else 0
+        if months < 0 or months > MAX_USEFUL_MONTHS:
+            raise ValueError(f"Срок полезного использования — от 1 месяца до {MAX_USEFUL_MONTHS // 12} лет")
+        salvage = max(0, _num(f.get("salvage"), "Ликвидационная стоимость"))
+        if months and salvage > price:
+            raise ValueError("Ликвидационная стоимость больше стоимости оборудования")
+        day = _day(f.get("in_service"), "Дата ввода в эксплуатацию") if f.get("in_service") else ""
+        method = f.get("amort_method") if f.get("amort_method") in AMORT_METHODS else "linear"
+        return day or None, months or None, salvage, method
+
+    def amort_month(self, month):
+        return amort_month(self.db, month)
+
+    def amort_report(self, m_from=None, m_to=None):
+        """Depreciation by months for every piece: the charge of each month, the total so far and the book value today."""
+        t = date.today()
+        a = _mon(m_to) if m_to else _mon(t.isoformat())
+        b = _mon(m_from) if m_from else (a - 11 if a is not None else None)
+        if a is None or b is None:
+            raise ValueError("Укажите месяцы, например 2026-01")
+        b, a = min(a, b), max(a, b)
+        b = max(b, a - 35)  # at most three years at a time
+        months = [_mon_str(k) for k in range(b, a + 1)]
+        rows = []
+        for e in self.db.q("SELECT * FROM equipment ORDER BY name"):
+            am = amortization(e)
+            if not am["on"]:
+                continue
+            vals = [amort_charge(e, m) for m in months]
+            rows.append({"id": e["id"], "inv_number": e["inv_number"], "name": e["name"], "status": e["status"],
+                         "status_title": EQ_STATUS.get(e["status"], e["status"]), "cost": am["cost"], "monthly": am["monthly"],
+                         "accumulated": am["accumulated"], "residual": am["residual"], "last": am["last"], "done": am["done"],
+                         "values": vals, "total": round(sum(vals), 2)})
+        no = self.db.one("""SELECT COUNT(*) AS n FROM equipment WHERE status<>'written_off' AND COALESCE(price,0)>0
+                            AND COALESCE(useful_months,0)=0""")["n"]
+        return {"months": months, "rows": rows, "totals": [round(sum(r["values"][i] for r in rows), 2) for i in range(len(months))],
+                "total": round(sum(r["total"] for r in rows), 2), "cost": round(sum(r["cost"] for r in rows), 2),
+                "accumulated": round(sum(r["accumulated"] for r in rows), 2), "residual": round(sum(r["residual"] for r in rows), 2),
+                "this_month": self.amort_month(t.strftime("%Y-%m")), "without_life": no}
 
     def _next_inv(self):
         nums = [int(r["inv_number"]) for r in self.db.q("SELECT inv_number FROM equipment") if str(r["inv_number"] or "").isdigit()]

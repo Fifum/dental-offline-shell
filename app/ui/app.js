@@ -175,7 +175,7 @@ const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", set
 
 /* ---------------------------------------------------------------- views */
 const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: ["cash_report", "expenses_day"],
-  journal: ["transfer", "reports", "medcard_edit"], refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "equipment", "sterilization"],
+  journal: ["transfer", "reports", "medcard_edit"], refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "stock_ops", "equipment", "sterilization"],
   reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"],
   lab: ["lab", "accounting"], director: "reports"};
 const canView = v => { const p = VIEW_PERM[v]; return !p || (Array.isArray(p) ? canAny(...p) : can(p)); };
@@ -233,7 +233,7 @@ async function refreshStatus() {
   } else { dot.classList.add("on"); title.textContent = "Онлайн";
     sub.textContent = `Обновлено ${ago(st.last_ok)}` + (st.dp_main && st.dp_main.role === "follower" ? ` · через «${st.dp_main.name}»` : ""); }
   $("#syncBtn").disabled = !!st.running;
-  const sb = $("#stockBadge"); if (sb) { const n = st.stock_alerts ?? st.stock_low; sb.hidden = !n; sb.textContent = n || "";
+  const sb = $("#stockBadge"); if (sb) { const n = (st.stock_alerts ?? st.stock_low ?? 0) + (st.stock_wait || 0);  // 3.10: + what waits for approval sb.hidden = !n; sb.textContent = n || "";
     sb.title = [st.stock_low ? `Заканчиваются: ${st.stock_low}` : "", st.stock_exp ? `Истекает срок: ${st.stock_exp}` : ""].filter(Boolean).join(" · "); }
   const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
   if (typeof platformStatus === "function") platformStatus(st);

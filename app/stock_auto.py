@@ -748,6 +748,23 @@ def stock_used(db, a, b):
         return None
 
 
+def amort_in_pnl(db) -> bool:
+    """3.10: the depreciation of the equipment is a line of the P&L (off by default: the clinic may already put the purchase
+    of equipment into the expenses, and then it would be counted twice)."""
+    try:
+        r = db.one("SELECT v FROM stock_settings WHERE k='pnl_amort'")
+        return bool(r and r["v"] == "1")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def set_amort_in_pnl(db, on: bool):
+    with db.tx() as c:
+        c.execute("""INSERT INTO stock_settings(k, v, updated_at) VALUES('pnl_amort', ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v,
+                     updated_at=excluded.updated_at""", ("1" if on else "0", _now()))
+    return on
+
+
 def pnl_mode(db) -> str:
     try:
         r = db.one("SELECT v FROM stock_settings WHERE k='pnl_materials'")

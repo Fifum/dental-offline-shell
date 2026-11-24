@@ -109,6 +109,11 @@ class FinModel:
         fixed = [_line("staff", STAFF, staff, rev, detail=[x for x in pay_rows if x["staff"]])]
         for cat, v in sorted(cats.items(), key=lambda x: -x[1]):
             fixed.append(_line(cat, cat, v, rev))
+        if stock_auto.amort_in_pnl(self.db):  # 3.10: straight-line depreciation of the equipment, a setting of «Бухгалтерия»
+            import stock
+            am = stock.amort_month(self.db, mon)
+            if am:
+                fixed.append(_line("amortization", "Амортизация оборудования", am, rev))
         fixed_total = sum(x["amount"] for x in fixed)
         margin = rev - var_total
         op = margin - fixed_total

@@ -363,6 +363,30 @@ OpenAPI `partner-doc.json`): base `https://api2.dentist-plus.com/partner`, `POST
   `description_doctor` (`write_map["record_fields"]`). Text the doctor already wrote there stays; a record changed here
   later replaces its own earlier text. A record without a visit stays in the manual list.
 
+## The nurse's stock (3.10)
+
+A home screen for the stock in the spirit of a warehouse app: four tiles («Принять поставку», «Выдать в кабинет»,
+«Зафиксировать расход», «Создать заявку»), search that takes a barcode scanner as a keyboard, balances with photos, and on the
+right the tasks of this person, critical balances, the nearest expiry dates and the money in and out for a period.
+
+* **Nothing leaves the stock without a manager.** A new position «Медсестра» and two rights: `stock_ops` (take a delivery,
+  issue to a cabinet, ask for materials, record consumption) and `stock_approve` (approve a write-off, write off at once). A
+  consumption or a write-off by someone without «приход, списание» or «согласование» is a row of `stock_approvals` and the
+  balances stay as they are until someone approves it; a rejection needs a reason. The rule is in `Api.stock_use` and the method
+  map — `stock_write_off`, the stock count and the visit write-off still need `stock_edit`, so the API refuses a nurse too.
+* **Approved once, on any laptop.** The write-off of an approval is the document `A-<id>` and its moves have stable `uid`s, so
+  two managers approving the same row offline converge to one write-off.
+* **Requests** (`stock_requests`): cabinet, need date, priority, materials, drafts. «Выдать в кабинет» is a transfer with
+  three steps; the requests it serves count what was issued and become «выдана» or «выдана частично».
+* **Photos** of materials and equipment are rows of `patient_files` owned by `_stock`, so the existing file transfer (LAN and
+  cloud, checked by size and checksum) carries them; they are shrunk to 1200 px JPEG first, and `stock_photos` never returns a
+  patient's file.
+* **Depreciation** of equipment: straight line from the month after it was put into service, cost less salvage over the useful
+  life, stopped by the write-off; the total of k months is rounded once, so the schedule adds up to the base exactly. A monthly
+  report, the book value in the list and, by a setting of «Бухгалтерия», a line of the P&L.
+
+`app/stock_flow.py` holds requests and approvals, `app/stock.py` the depreciation, `app/ui/stock-nurse.js` the screens.
+
 ## Architecture
 
 ```
@@ -548,6 +572,7 @@ To connect a real account: Settings → untick demo mode → partner API login a
 .venv\Scripts\python tests\test_dp_transfer.py          # 129 checks: no double entry — sections and their settings, the text for Dentist Plus, the mark (kept / dropped), auto mark, «Не перенесено», the reminder, the day report line, reconciliation, sync of marks, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_finance_staff.py        # 150 checks: profit and loss by months, the cash flow by accounts, the administrators' motivation into the payroll and the profit, the timesheet against the schedule, the week and month report (fake SMTP and Telegram, when it is due), sync between computers, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_stock_auto.py           # 129 checks: services of a Dentist Plus visit in its shapes, drafts, the place by chair / branch, never twice (an invoice here, two computers offline), revert and skip, services by hand, the automatic mode from its day, places and transfers, the cost of services, materials in the P&L, sync, rights over HTTP, UI wiring
+.venv\Scripts\python tests\test_stock_nurse.py          # the nurse's stock: her rights over HTTP (a direct write-off is refused), approval and rejection, approved once on two laptops, requests and partial issue, photos (shrunk, never a patient's file), depreciation and the P&L line, UI wiring
 .venv\Scripts\python tests\test_plan_status.py          # 116 checks: plan status history, the automatic rules (bill or Dentist Plus visit → in work, all billed → finished, 60 idle days → abandoned, back on a visit / bill / booking), a manual status wins, the call list and its results with CRM tasks, the report by status and doctor, the motivation, two computers offline, rights over HTTP, UI wiring
 .venv\Scripts\python tests\test_staff_refs.py           # 85 checks: staff in schedules, pay schemes and payouts by login — two laptops with different account ids sync both ways, the migration on start (own rows only, idempotent), gone accounts and rows from an older version as «неизвестный сотрудник», payroll and timesheet unchanged
 .venv\Scripts\python tests\test_platform.py             # 110 checks: two laptops offline converge, conflicts, isolation of clinics, encryption, plans, signed updates, PIN, import
