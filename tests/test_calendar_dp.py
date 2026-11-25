@@ -147,6 +147,11 @@ us = body(plat, "async function updateStart(ver)")
 check("update dialog: notes whole, not cut at 900", "slice(0, 900)" not in us and "notes: (st && st.notes) || \"\"" in us)
 check("settings: notes formatted, not raw <pre>", "notesHtml(st.notes)" in plat and "<pre>${esc(st.notes)}</pre>" not in plat)
 check("the program keeps the whole notes", updates.NOTES_MAX >= 20000 and "notes=notes[:NOTES_MAX]" in (ROOT / "app" / "updates.py").read_text(encoding="utf-8"))
+us_tool = (ROOT / "tools" / "update_sign.py").read_text(encoding="utf-8")
+check("the feed carries the whole notes too", "notes[:4000]" not in us_tool and us_tool.count("notes[:updates.NOTES_MAX]") == 2)
+n311 = (ROOT / "docs" / "Что нового в версии 3.11.txt").read_text(encoding="utf-8-sig")
+check("3.11 notes: no long unbroken line (3.10 draws this update's dialog)", max(len(w) for w in n311.split()) <= 20,
+      max(n311.split(), key=len))
 rs = ui("styles-responsive.css")
 for rule in (".toast{width:max-content;max-width:min(640px,calc(100vw - 32px));overflow-wrap:anywhere}", ".m-h h3{min-width:0;overflow-wrap:anywhere}",
              ".upd-banner{max-width:calc(100vw - 36px);flex-wrap:wrap}", ".drawer{overflow-wrap:break-word}", ".m-f .muted{flex:1 1 0;"):

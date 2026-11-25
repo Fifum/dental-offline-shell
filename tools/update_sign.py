@@ -105,7 +105,7 @@ def release(a):
         doc = {"app": "dentaldesk", "version": ver, "file": name, "size": size, "sha256": sha, "enc": updates.ENC,
                "plain_size": exe.stat().st_size, "plain_sha256": updates._sha256(exe), "date": date.today().isoformat()}
         if notes:
-            doc["notes_enc"] = updates.seal_text(notes[:4000], aes)
+            doc["notes_enc"] = updates.seal_text(notes[:updates.NOTES_MAX], aes)  # 3.11: whole, not 4000
     else:
         name = exe.name
         target = out / name
@@ -113,7 +113,7 @@ def release(a):
             shutil.copy2(exe, target)
         data = target.read_bytes()
         doc = {"app": "dentaldesk", "version": ver, "file": name, "size": len(data),
-               "sha256": hashlib.sha256(data).hexdigest(), "date": date.today().isoformat(), "notes": notes[:4000]}
+               "sha256": hashlib.sha256(data).hexdigest(), "date": date.today().isoformat(), "notes": notes[:updates.NOTES_MAX]}
     doc = updates.sign(doc, key)
     (out / "latest.json").write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"Готово: {out / 'latest.json'} (версия {ver}, {doc['size'] // 1024 // 1024} МБ{', зашифровано' if aes else ''})")
