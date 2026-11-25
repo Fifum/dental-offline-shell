@@ -52,3 +52,24 @@
     }
   };
 })();
+
+/* 3.12.1: a script of the page that did not arrive (the window opens while the program is still starting, and the
+   server could drop a connection) left whole sections out — «loadVoiceSettings is not defined», Settings without
+   their menu. The page that lost a script reloads itself, twice at most in a row. */
+(function () {
+  "use strict";
+  var KEY = "dd.reloaded", failed = [];
+  window.addEventListener("error", function (e) {
+    var t = e && e.target;
+    if (t && t.tagName === "SCRIPT" && t.src) failed.push(t.src);
+  }, true);
+  document.addEventListener("DOMContentLoaded", function () {
+    var s;
+    try { s = window.sessionStorage; s.getItem(KEY); } catch (e) { return; }  // no storage: never risk a loop
+    if (!failed.length) { s.removeItem(KEY); return; }
+    var n = +(s.getItem(KEY) || 0);
+    if (n >= 2) return;
+    s.setItem(KEY, String(n + 1));
+    setTimeout(function () { location.reload(); }, 400 * (n + 1));
+  });
+})();

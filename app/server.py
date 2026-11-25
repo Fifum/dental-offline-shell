@@ -110,8 +110,13 @@ def _strip_patient(p, perms):
 class _ExclusiveServer(ThreadingHTTPServer):
     """2.14.1: the port belongs to this program alone. On Windows another process may otherwise bind 127.0.0.1 on
     the same port while we listen on 0.0.0.0 — and the program's own window would then talk to that process
-    (it looked like «Неверный логин или пароль»). SO_EXCLUSIVEADDRUSE forbids that."""
+    (it looked like «Неверный логин или пароль»). SO_EXCLUSIVEADDRUSE forbids that.
+
+    3.12.1: the queue of connections not accepted yet was 5 (socketserver's default). The window asks for ~50 files
+    at once right when the program starts and is busy; Windows dropped the connections over 5, and the page lacked
+    whole scripts («loadVoiceSettings is not defined», Settings without their sections)."""
     allow_reuse_address = False
+    request_queue_size = 128
 
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
