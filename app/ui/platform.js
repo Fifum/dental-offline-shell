@@ -137,7 +137,7 @@ async function loadUpdatePanel(check) {
     : st.available ? `<div class="pl-sub ok"><div><b>Доступна версия ${esc(st.latest)}</b>${st.date ? " от " + esc(fmtDate(st.date)) : ""} · ${esc(PL_MB(st.size))}</div><div class="muted">Сейчас установлена ${esc(st.current)}</div></div>`
     : st.unpublished ? `<div class="bk-state">Сейчас установлена версия <b>${esc(st.current)}</b>. Обновления ещё не опубликованы — когда выйдет новая версия, программа найдёт её сама${st.checked_at ? ` · проверено ${esc(fmtDT(st.checked_at))}` : ""}</div>`
     : `<div class="bk-state">Установлена последняя версия <b>${esc(st.current)}</b>${st.checked_at ? ` · проверено ${esc(fmtDT(st.checked_at))}` : ""}</div>`;
-  const notes = st.available && st.notes ? `<details class="pl-notes"><summary>Что нового</summary><pre>${esc(st.notes)}</pre></details>` : "";
+  const notes = st.available && st.notes ? `<details class="pl-notes"><summary>Что нового</summary><div class="pl-notes-b">${notesHtml(st.notes)}</div></details>` : "";
   const err = st.error ? `<div class="warn-line">${esc(st.error)}</div>` : "";
   const prog = st.downloading ? `<div class="pl-prog"><i style="width:${st.progress}%"></i></div><div class="muted">Скачиваем… ${st.progress}%</div>` : "";
   const may = !client && updMay();  // М20: «Настройки» and the program's own window on this computer
@@ -257,9 +257,9 @@ async function updateStart(ver) {
   if (pw && pw.is_client) { try { if (await pw.is_client()) return toast("Этот компьютер подключён к серверу клиники: обновите программу на компьютере-сервере", true); } catch (e) {} }
   let st = null;
   try { st = await api.update_status(); } catch (e) {}
-  const notes = st && st.notes ? "\n\nЧто нового:\n" + st.notes.slice(0, 900) + (st.notes.length > 900 ? "…" : "") : "";
-  if (!(await ask(`Обновить программу до версии ${ver}?`, {ok: "Обновить",
-    text: "Программа скачает обновление (" + (st && st.size ? PL_MB(st.size) : "около 120 МБ") + "), проверит подпись разработчика, закроется, сохранит резервную копию и откроется уже новой версией. Это займёт несколько минут. Предупредите коллег, если они работают с этим компьютером." + notes}))) return;
+  // 3.11: «Что нового» goes whole into its own scrolling block of the dialog (it was cut at 900 letters and stretched the window)
+  if (!(await ask(`Обновить программу до версии ${ver}?`, {ok: "Обновить", notes: (st && st.notes) || "",
+    text: "Программа скачает обновление (" + (st && st.size ? PL_MB(st.size) : "около 120 МБ") + "), проверит подпись разработчика, закроется, сохранит резервную копию и откроется уже новой версией. Это займёт несколько минут. Предупредите коллег, если они работают с этим компьютером."}))) return;
   UPD.want = true; UPD.busy = false; UPD.drawn = "";
   try { await api.update_download(); } catch (e) { UPD.want = false; return toast(errText(e), true); }
   try { const s = await api.status(); if (s && s.update) updateBanner(s.update); } catch (e) {}

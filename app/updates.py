@@ -72,6 +72,8 @@ def sign(doc: dict, private_key) -> dict:
     return out
 
 
+NOTES_MAX = 30000   # 3.11: «Что нового» of 3.10 was ~6000 letters and was cut at 4000 in the update dialog
+
 # ------------------------------------------------------------------ encryption of the installer and the notes
 def enc_key() -> bytes | None:
     """The build's update key (brand.json → update_key), or None for a build without one."""
@@ -279,7 +281,7 @@ class Updater:
                 self.state["ready"] = ""  # another file than the one downloaded before
             self._doc = doc
             self._last_logged = ""
-            self.state.update(latest=doc["version"], available=newer, notes=notes[:4000],
+            self.state.update(latest=doc["version"], available=newer, notes=notes[:NOTES_MAX],
                               size=int(doc.get("plain_size") or doc["size"]), date=str(doc.get("date") or ""), error="",
                               unpublished=False)
         except NotModified:

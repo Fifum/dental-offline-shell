@@ -72,14 +72,41 @@ const ASK_ICONS = {
   warn: '<svg viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.5v.01"/></svg>',
   edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
 };
-function askLayer({title, text = "", icon = "question", ok = "Да", cancel = "Отмена", danger = false, fields = null}) {
+/** 3.11: release notes («Что нового») as headings, paragraphs and lists instead of raw text: the «━━━» rules of the
+    notes file are dropped, the line between two rules (or an all-caps line) becomes a heading, «•» lines become a list. */
+function notesHtml(text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  const rule = s => /^\s*[━─═=_*~·-]{3,}\s*$/.test(s);
+  const bullet = /^\s*[•●▪◦*–—-]\s+/, num = /^\s*\d{1,2}[.)]\s+/;
+  const caps = s => s.length <= 70 && /[A-ZА-ЯЁ]/.test(s) && !/[a-zа-яё]/.test(s);
+  let html = "", list = "";
+  const closeList = () => { if (list) { html += `</${list}>`; list = ""; } };
+  lines.forEach((raw, i) => {
+    const s = raw.trim();
+    if (!s || rule(s)) { closeList(); return; }
+    const prev = (lines[i - 1] || "").trim(), next = (lines[i + 1] || "").trim();
+    if (!html && /что нового/i.test(s)) { html += `<div class="nt-title">${esc(s)}</div>`; return; }
+    if ((rule(prev) && rule(next)) || caps(s)) { closeList(); html += `<h5>${esc(s)}</h5>`; return; }
+    const kind = bullet.test(s) ? "ul" : num.test(s) ? "ol" : "";
+    if (kind) {
+      if (list !== kind) { closeList(); html += `<${kind}>`; list = kind; }
+      html += `<li>${esc(s.replace(kind === "ul" ? bullet : num, ""))}</li>`;
+      return;
+    }
+    closeList(); html += `<p>${esc(s)}</p>`;
+  });
+  closeList();
+  return `<div class="nt">${html}</div>`;
+}
+function askLayer({title, text = "", icon = "question", ok = "Да", cancel = "Отмена", danger = false, fields = null, notes = ""}) {
   return new Promise(resolve => {
     const prevFocus = document.activeElement;
     const el = document.createElement("div");
     el.className = "ask-wrap";
-    el.innerHTML = `<div class="ask ${danger ? "danger" : ""}" role="alertdialog" aria-modal="true" aria-labelledby="askT">
+    el.innerHTML = `<div class="ask ${danger ? "danger" : ""} ${notes ? "has-notes" : ""}" role="alertdialog" aria-modal="true" aria-labelledby="askT">
       <div class="ask-ic ${danger ? "danger" : icon}">${ASK_ICONS[danger ? "danger" : icon] || ASK_ICONS.question}</div>
       <div class="ask-c"><h3 id="askT">${esc(title)}</h3>${text ? `<p>${esc(text).replace(/\n/g, "<br>")}</p>` : ""}
+        ${notes ? `<section class="ask-notes" tabindex="0" aria-label="Что нового"><div class="ask-notes-h">Что нового</div>${notesHtml(notes)}</section>` : ""}
         ${fields ? `<div class="ask-f">${fields.map((f, i) => `<label>${esc(f.label)}<input class="input" data-i="${i}" type="${f.type || "text"}" value="${esc(f.value ?? "")}" ${f.type === "number" ? 'step="any" min="0"' : ""}></label>`).join("")}</div>` : ""}
         <div class="ask-err"></div></div>
       <div class="ask-b"><button class="btn ghost" data-a="no">${esc(cancel)}</button><button class="btn ${danger ? "danger-btn" : ""}" data-a="yes">${esc(ok)}</button></div></div>`;
@@ -102,7 +129,7 @@ function askLayer({title, text = "", icon = "question", ok = "Да", cancel = "�
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(fields ? null : false); }
       else if (e.key === "Enter" && !(e.target.tagName === "BUTTON" && e.target.dataset.a === "no")) { e.preventDefault(); e.stopPropagation(); yes(); }
       else if (e.key === "Tab") {  // keep focus inside the dialog
-        const f = $$("input, button", el); const i = f.indexOf(document.activeElement);
+        const f = $$("input, button, [tabindex='0']", el); const i = f.indexOf(document.activeElement);
         if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
       }
     };
@@ -259,18 +286,44 @@ async function refreshStatus() {
 $("#syncBtn").onclick = async () => { await api.sync_now(); setTimeout(refreshStatus, 400); };
 
 /* ------------------------------------------------------------ schedule */
-const DOC_COLORS = ["#6D0100", "#3E5C8A", "#5E7F5A", "#A8742A", "#6B5B7B", "#3F6F73", "#8C4A5E", "#7A6A4F", "#4F5D75", "#9A5B3C"];
+/* 3.11: the calendar is laid out like the one in Dentist Plus, so staff working in both programs see the same thing:
+   a day bar «25 ноября, 2026 (среда)», a coloured band per doctor (or chair) with the working hours, a time scale every
+   30 minutes, cards with a status icon, «09:00 - 10:00», the patient, and «⋮» for actions (also on the right click).
+   The menus, the doctor's month and «Настройки календаря» are in calendar-dp.js; dragging is in calendar-dnd.js. */
+const DOC_COLORS = ["#5E9E3A", "#E0393E", "#2B8AD8", "#EE9A1C", "#8D5CC4", "#169C9C", "#D24A8C", "#6E8295", "#B07D2A", "#4058C8"];
 const docColor = id => { const ids = ((S.dayData || {}).doctors || []).map(d => d.id); const i = ids.indexOf(id); return DOC_COLORS[(i < 0 ? 0 : i) % DOC_COLORS.length]; };
 S.days = +(localStorage.getItem("dd.days") || 1);
 S.by = localStorage.getItem("dd.by") || "doctor";
 S.hiddenDocs = new Set(JSON.parse(localStorage.getItem("dd.hiddenDocs") || "[]"));
 const DAYS_LBL = {1: "На день", 2: "2 дня", 3: "3 дня", 7: "Неделя"};
+/** «Настройки календаря» of this computer (the gear): scale, colours of doctors and of statuses. */
+const CAL = {
+  get: (k, d) => { try { const v = localStorage.getItem("dd.cal." + k); return v === null ? d : v; } catch (e) { return d; } },
+  set: (k, v) => { try { localStorage.setItem("dd.cal." + k, v); } catch (e) { /* storage off */ } },
+};
+const CAL_SCALE = {compact: 56, normal: 76, large: 96};  // pixels per hour
+const calPx = () => (CAL_SCALE[CAL.get("scale", "normal")] || CAL_SCALE.normal) / 60;
+let PX = calPx(); // px per minute (calendar-dnd.js reads it while dragging)
+const dayLong = d => `${d.getDate()} ${MONTHS[d.getMonth()]}, ${d.getFullYear()}`;
+/* the status of a visit as a small round icon on its card, the way Dentist Plus marks it */
+const ST_IC = {
+  "st-new": '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 8v4.3l2.8 1.7"/></svg>',
+  "st-ok": '<svg viewBox="0 0 24 24"><path d="m6.5 12.5 3.6 3.5 7.4-8"/></svg>',
+  "st-come": '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5.8 19.5c.7-3.6 3.1-5.5 6.2-5.5s5.5 1.9 6.2 5.5"/></svg>',
+  "st-done": '<svg viewBox="0 0 24 24"><path d="m3.8 12.6 3.4 3.3 6.4-7.2M10.6 15.4l.6.5 6.6-7.4"/></svg>',
+  "st-cancel": '<svg viewBox="0 0 24 24"><path d="m7.5 7.5 9 9M16.5 7.5l-9 9"/></svg>',
+};
+const CAL_IC = {
+  comment: '<svg viewBox="0 0 24 24"><path d="M4.5 5.5h15v10h-8l-4.5 3.5v-3.5H4.5z"/></svg>',
+  repeat: '<svg viewBox="0 0 24 24"><path d="M5 11a7 7 0 0 1 12-4.6M19 13a7 7 0 0 1-12 4.6M17 3.5v3.3h-3.3M7 20.5v-3.3h3.3"/></svg>',
+};
 
 async function loadDay() {
   const d = parseDay(S.day);
   const last = parseDay(addDays(S.day, S.days - 1));
-  $("#dayTitle").textContent = S.days === 1 ? `${WD[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`
-    : `${d.getDate()} ${MONTHS[d.getMonth()]} — ${last.getDate()} ${MONTHS[last.getMonth()]}`;
+  const label = S.days === 1 ? dayLong(d) : `${d.getDate()} ${MONTHS[d.getMonth()]} — ${dayLong(last)}`;
+  $("#dayLabel").textContent = label;
+  S.dayLabel = (S.days === 1 ? `${WD[d.getDay()]}, ` : "") + label;  // the heading of the printed schedule
   $("#dayPick").value = S.day;
   $("#ddDaysLbl").textContent = DAYS_LBL[S.days] || S.days + " дн.";
   $("#ddByLbl").textContent = S.by === "chair" ? "По креслам" : "По докторам";
@@ -284,7 +337,7 @@ async function loadDay() {
   fillDocsMenu(res.doctors);
   const v = res.visits.filter(x => S.by === "chair" || !S.hiddenDocs.has(x.doctor_id || "_"));
   const active = v.filter(x => stClass(x.status) !== "st-cancel").length;
-  $("#daySub").textContent = v.length ? `${v.length} ${plural(v.length, "запись", "записи", "записей")}${active !== v.length ? `, из них ${v.length - active} отменено` : ""}` : "";
+  $("#daySub").textContent = v.length ? `${S.days === 1 ? WD[d.getDay()][0].toUpperCase() + WD[d.getDay()].slice(1) + ": " : ""}${v.length} ${plural(v.length, "запись", "записи", "записей")}${active !== v.length ? `, из них ${v.length - active} отменено` : ""}` : "";
   const visibleDocs = res.doctors.filter(d => (!S.branch || !d.branch_id || d.branch_id === S.branch) && !S.hiddenDocs.has(d.id));
   const allHidden = S.by === "doctor" && res.doctors.length > 0 && !visibleDocs.length;
   const gridAnyway = S.mode === "grid" && visibleDocs.length && S.settings.show_empty_doctors !== false;
@@ -309,7 +362,7 @@ function fillBranches(branches) {
 function fillDocsMenu(doctors) {
   const list = doctors.filter(d => !S.branch || !d.branch_id || d.branch_id === S.branch);
   const shown = list.filter(d => !S.hiddenDocs.has(d.id)).length;
-  $("#ddDocsLbl").textContent = `Выбрано докторов: ${shown === list.length ? "все" : shown}`;
+  $("#ddDocsLbl").innerHTML = `<span class="dl-w">Выбрано д</span><span class="dl-s">Д</span>окторов: ${shown === list.length ? "все" : shown}`;
   $("#docsMenu").innerHTML = `<div class="dm-h"><button class="linkbtn" data-all="1">Все</button><button class="linkbtn" data-all="0">Никого</button></div>` +
     list.map(d => `<label class="dm-row"><input type="checkbox" data-doc="${esc(d.id)}" ${S.hiddenDocs.has(d.id) ? "" : "checked"}><i style="background:${docColor(d.id)}"></i>${esc(d.name)}</label>`).join("");
   $$("#docsMenu input").forEach(cb => cb.onchange = () => { cb.checked ? S.hiddenDocs.delete(cb.dataset.doc) : S.hiddenDocs.add(cb.dataset.doc); saveDocs(); loadDay(); });
@@ -318,7 +371,6 @@ function fillDocsMenu(doctors) {
 const saveDocs = () => localStorage.setItem("dd.hiddenDocs", JSON.stringify([...S.hiddenDocs]));
 function renderWeek() {}
 
-const PX = 84 / 60; // px per minute: a 30-min visit fits name + time
 function buildColumns(dayVisits, doctors, day) {
   const cols = new Map();
   if (S.by === "chair") {
@@ -336,8 +388,17 @@ function buildColumns(dayVisits, doctors, day) {
   }
   return [...cols.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
 }
+/** The doctor a column belongs to: itself by doctors, the one with most visits in the chair by chairs (Dentist Plus
+    shows the doctor working in the chair on the chair's band). */
+function colDoctor(c) {
+  if (!c.chair) return c.id === "_" ? "" : c.id;
+  const n = {};
+  c.items.forEach(x => { if (x.doctor_id && stClass(x.status) !== "st-cancel") n[x.doctor_id] = (n[x.doctor_id] || 0) + 1; });
+  return Object.keys(n).sort((a, b) => n[b] - n[a])[0] || (c.items.find(x => x.doctor_id) || {}).doctor_id || "";
+}
 function renderGrid(res) {
-  const doctors = res.doctors;
+  PX = calPx();
+  const doctors = res.doctors, byId = Object.fromEntries(doctors.map(d => [d.id, d]));
   const perDay = res.perDay.map(pd => ({day: pd.day, shifts: pd.shifts, cols: buildColumns(pd.visits, doctors, pd.day)}));
   const all = perDay.flatMap(p => p.cols);
   let h0 = +S.settings.day_start || 8, h1 = +S.settings.day_end || 21;
@@ -345,26 +406,34 @@ function renderGrid(res) {
   h1 = Math.min(24, h1);
   const top = h0 * 60, height = (h1 - h0) * 60 * PX;
   const grid = $("#grid");
-  const colW = S.days > 2 ? 150 : 190;
+  grid.classList.toggle("no-doc-colors", CAL.get("docColors", "1") !== "1");
+  grid.classList.toggle("no-st-colors", CAL.get("stColors", "1") !== "1");
+  grid.classList.toggle("by-chair", S.by === "chair");
+  const colW = S.days > 2 ? 150 : 180;
   grid.style.gridTemplateColumns = `56px repeat(${Math.max(1, all.length)}, minmax(${colW}px, 1fr))`;
   const today = iso(new Date());
-  // row 1: days, row 2: doctor/chair headers
+  // row 1: «25 ноября, 2026 (среда)»; row 2: the band of every doctor / chair
   let html = `<div class="g-corner" style="grid-row:1 / span 2"></div>`;
   for (const p of perDay) {
     const d = parseDay(p.day);
-    html += `<div class="g-day ${p.day === today ? "today" : ""}" style="grid-column:span ${Math.max(1, p.cols.length)}">${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} <span>(${WD[d.getDay()]})</span></div>`;
+    html += `<div class="g-day ${p.day === today ? "today" : ""}" style="grid-column:span ${Math.max(1, p.cols.length)}">${dayLong(d)} <span>(${WD[d.getDay()]})</span></div>`;
   }
   for (const p of perDay) {
-    if (!p.cols.length) { html += `<div class="g-head"><span class="muted">нет записей</span></div>`; continue; }
+    if (!p.cols.length) { html += `<div class="g-head gh-empty"><span class="muted">нет записей</span></div>`; continue; }
     for (const c of p.cols) {
-      const pos = doctors.find(d => d.id === c.id) || {};
-      const color = c.chair ? "#7A8794" : docColor(c.id);
+      const docId = colDoctor(c), doc = byId[docId] || {};
+      c.color = docId ? docColor(docId) : "#7A8794";
+      const name = c.chair ? (doc.name || (c.items.find(x => x.doctor_id === docId) || {}).doctor_name || "Врач не указан") : c.name;
+      const more = c.chair ? new Set(c.items.map(x => x.doctor_id).filter(x => x && x !== docId)).size : 0;
+      const shift = docId && p.shifts ? p.shifts[docId] : undefined;  // work schedule, when the clinic keeps one
       const first = c.items.map(x => x.start).sort()[0], lastE = c.items.map(x => x.end || x.start).sort().slice(-1)[0];
-      const shift = !c.chair && p.shifts ? p.shifts[c.id] : undefined;  // work schedule, when the clinic keeps one
-      const sub = c.chair ? [...new Set(c.items.map(x => x.doctor_name).filter(Boolean))].slice(0, 2).join(", ")
-        : p.shifts ? (shift ? `смена ${shift.start} – ${shift.end}${shift.source === "dp" ? " · Dentist Plus" : ""}` : "выходной по графику") : (first ? `${hm(first)} – ${hm(lastE)}` : "нет записей");
-      html += `<div class="g-head" style="--dc:${color}"><div class="gh-band"><span class="gh-av">${esc(initials(c.name))}</span><span class="gh-n">${esc(c.name)}<small>${esc(sub)}</small></span></div>
-        <div class="gh-meta">${c.items.length} ${plural(c.items.length, "запись", "записи", "записей")}${pos.position ? " · " + esc(pos.position) : ""}</div></div>`;
+      const hours = p.shifts && docId ? (shift ? `${shift.start} - ${shift.end}` : "выходной по графику") : first ? `${hm(first)} - ${hm(lastE)}` : "нет записей";
+      const why = shift ? (shift.source === "dp" ? "график из Dentist Plus" : "смена по графику работы") : p.shifts && docId ? "по графику работы выходной" : "первая и последняя запись дня";
+      const n = c.items.filter(x => stClass(x.status) !== "st-cancel").length;
+      html += `<div class="g-head" style="--dc:${c.color}">${c.chair ? `<div class="gh-chair">${esc(c.name)}</div>` : ""}
+        <button type="button" class="gh-band" data-doc="${esc(docId)}" data-day="${p.day}" title="${esc(name)}${doc.position ? " · " + esc(doc.position) : ""} — ${why}. Нажмите: рабочие дни врача за месяц">
+          <span class="gh-av">${esc(initials(name))}</span><span class="gh-n"><span class="gh-nm">${esc(name)}${more ? ` <i title="ещё врачи в этом кресле">+${more}</i>` : ""}</span><small>${esc(hours)}</small></span>
+          <span class="gh-cnt" title="${n} ${plural(n, "запись", "записи", "записей")}">${n}</span></button></div>`;
     }
   }
   let times = "";
@@ -373,12 +442,13 @@ function renderGrid(res) {
   const nowM = new Date().getHours() * 60 + new Date().getMinutes();
   const ws = +S.settings.day_start || 8, we = +S.settings.day_end || 21;
   for (const p of perDay) {
-    const cols = p.cols.length ? p.cols : [{id: "_", day: p.day, items: []}];
+    const cols = p.cols.length ? p.cols : [{id: "_", day: p.day, items: [], color: "#7A8794"}];
     for (const c of cols) {
       let lines = "";
       for (let m = top; m < h1 * 60; m += 30) lines += `<div class="hl ${m % 60 ? "half" : ""}" style="top:${(m - top) * PX}px"></div>`;
       // hatched time outside working hours: the doctor's shift when there is a work schedule for the day, else the clinic's day
-      const sh = !c.chair && p.shifts && c.id !== "_" ? (p.shifts[c.id] || {start: "00:00", end: "00:00"}) : null;
+      const docId = c.chair ? colDoctor(c) : (c.id === "_" ? "" : c.id);
+      const sh = p.shifts && docId ? (p.shifts[docId] || {start: "00:00", end: "00:00"}) : null;
       const cs = sh ? Math.max(top, mins("0000-00-00 " + sh.start)) : ws * 60, ce = sh ? Math.min(h1 * 60, Math.max(cs, mins("0000-00-00 " + sh.end))) : we * 60;
       if (cs > top) lines += `<div class="off-hours" style="top:0;height:${(cs - top) * PX}px"></div>`;
       if (ce < h1 * 60) lines += `<div class="off-hours" style="top:${(ce - top) * PX}px;height:${(h1 * 60 - ce) * PX}px"></div>`;
@@ -394,30 +464,41 @@ function renderGrid(res) {
       for (const grp of groups) { const n = Math.max(...grp.map(v => v._lane)) + 1; grp.forEach(v => v._n = n); }
       let evs = "";
       for (const v of items) {
-        const hgt = Math.max(24, (v._e - v._s) * PX - 3), w = 100 / v._n, short = hgt < 46;
-        const dc = docColor(v.doctor_id);
-        evs += `<div class="ev ${stClass(v.status)} ${v.local ? "is-local" : ""} ${v.conflict ? "is-conflict" : ""}" data-id="${esc(v.id)}" title="${esc((v.patient_name || "") + " · " + (v.status || "") + (v.local ? " · изменено в программе" : "") + (v.conflict ? " · ДВОЙНАЯ ЗАПИСЬ у врача" : ""))}" style="--dc:${dc};top:${(v._s - top) * PX + 1}px;height:${hgt}px;left:calc(${w * v._lane}% + 4px);right:auto;width:calc(${w}% - 8px)">
-          <div class="ev-t"><span class="st-dot"></span>${hm(v.start)} – ${hm(v.end)}${v.local ? '<i class="lc" title="Нужно перенести в Dentist Plus"></i>' : ""}${v.comment ? '<i class="cm" title="' + esc(v.comment) + '">💬</i>' : ""}</div>
+        const hgt = Math.max(22, (v._e - v._s) * PX - 2), w = 100 / v._n, short = hgt < 34, tall = hgt >= 50;
+        const sc = stClass(v.status) || "st-new";
+        const flags = (v.comment ? `<i class="f-ic" title="${esc(v.comment)}">${CAL_IC.comment}</i>` : "")
+          + (v.series_id ? `<i class="f-ic" title="Повторяющийся визит">${CAL_IC.repeat}</i>` : "")
+          + (v.local ? '<i class="lc" title="Нужно перенести в Dentist Plus"></i>' : "");
+        evs += `<div class="ev ${stClass(v.status)} ${v.local ? "is-local" : ""} ${v.conflict ? "is-conflict" : ""} ${short ? "is-short" : ""}" data-id="${esc(v.id)}" title="${esc((v.patient_name || "") + " · " + (v.status || "") + (v.title ? " · " + v.title : "") + (v.local ? " · изменено в программе" : "") + (v.conflict ? " · ДВОЙНАЯ ЗАПИСЬ у врача" : ""))}" style="--dc:${docColor(v.doctor_id)};top:${(v._s - top) * PX + 1}px;height:${hgt}px;left:calc(${w * v._lane}% + 3px);right:auto;width:calc(${w}% - 6px)">
+          <span class="ev-ic" aria-hidden="true">${ST_IC[sc]}</span><div class="ev-t">${hm(v.start)} - ${hm(v.end)}${flags}</div>
           <b>${esc(v.patient_name || "Пациент #" + (v.patient_id || "?"))}</b>
-          ${short ? "" : `<div class="s">${esc(v.title || "")}${S.by === "chair" && v.doctor_name ? " · " + esc(v.doctor_name) : ""}</div>`}</div>`;
+          ${tall ? `<div class="s">${esc(v.title || "")}${S.by === "chair" && v.doctor_name ? (v.title ? " · " : "") + esc(v.doctor_name) : ""}</div>` : ""}
+          <button type="button" class="ev-k" title="Действия с записью" aria-label="Действия с записью">⋮</button></div>`;
       }
       const now = p.day === today && nowM >= top && nowM <= h1 * 60 ? `<div class="now-line" style="top:${(nowM - top) * PX}px"></div>` : "";
       const docAttr = S.by === "chair" ? "" : (c.id === "_" ? "" : c.id);
-      html += `<div class="g-col ${p.day === today ? "is-today" : ""}" data-doc="${esc(docAttr)}" data-chair="${esc(S.by === "chair" && c.id !== "_" ? c.id : "")}" data-day="${p.day}" data-top="${top}" style="height:${height}px">${lines}${now}${evs}<div class="slot-hover" hidden></div></div>`;
+      html += `<div class="g-col ${p.day === today ? "is-today" : ""}" data-doc="${esc(docAttr)}" data-chair="${esc(S.by === "chair" && c.id !== "_" ? c.id : "")}" data-day="${p.day}" data-top="${top}" style="--dc:${c.color || "#7A8794"};height:${height}px">${lines}${now}${evs}<div class="slot-hover" hidden></div></div>`;
     }
   }
   grid.innerHTML = html;
-  $$(".ev", grid).forEach(el => el.onclick = e => { e.stopPropagation(); openVisit(el.dataset.id); });
+  const menu = (e, id) => { e.preventDefault(); e.stopPropagation(); if (typeof calVisitMenu === "function") calVisitMenu(id, e); };
+  $$(".ev", grid).forEach(el => {
+    el.onclick = e => { e.stopPropagation(); if (e.target.closest(".ev-k")) return menu(e, el.dataset.id); openVisit(el.dataset.id); };
+    el.oncontextmenu = e => menu(e, el.dataset.id);
+  });
+  $$(".gh-band", grid).forEach(b => b.onclick = e => { e.stopPropagation(); if (typeof calDoctorMonth === "function") calDoctorMonth(b); });
   if (typeof enableDragMove === "function") enableDragMove(grid);
   const slot = +S.settings.slot_min || 15;
   const minuteAt = (col, e) => { const y = e.clientY - col.getBoundingClientRect().top; return Math.floor((+col.dataset.top + y / PX) / slot) * slot; };
+  const at = m => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
   if (can("schedule_edit")) $$(".g-col", grid).forEach(col => {
     const hov = $(".slot-hover", col);
     col.onmousemove = e => { if (e.target.closest(".ev")) { hov.hidden = true; return; } const m = minuteAt(col, e);
-      hov.hidden = false; hov.style.top = (m - col.dataset.top) * PX + "px"; hov.style.height = 30 * PX + "px"; hov.textContent = `+ ${pad(Math.floor(m / 60))}:${pad(m % 60)}`; };
+      hov.hidden = false; hov.style.top = (m - col.dataset.top) * PX + "px"; hov.style.height = 30 * PX + "px"; hov.textContent = `+ ${at(m)}`; };
     col.onmouseleave = () => hov.hidden = true;
     col.onclick = e => { if (e.target.closest(".ev")) return; const m = minuteAt(col, e);
-      openBooking({doctor_id: col.dataset.doc, chair: col.dataset.chair, start: `${col.dataset.day} ${pad(Math.floor(m / 60))}:${pad(m % 60)}`}); };
+      openBooking({doctor_id: col.dataset.doc, chair: col.dataset.chair, start: `${col.dataset.day} ${at(m)}`}); };
+    col.oncontextmenu = e => { if (e.target.closest(".ev")) return; e.preventDefault(); if (typeof calSlotMenu === "function") calSlotMenu(col, minuteAt(col, e), e); };
   });
   if (perDay.some(p => p.day === today) && !grid.dataset.scrolled) { $(".sched-wrap").scrollTop = Math.max(0, (nowM - top - 60) * PX); grid.dataset.scrolled = 1; }
 }
@@ -442,13 +523,15 @@ $("#prevDay").onclick = () => { S.day = addDays(S.day, -S.days); loadDay(); };
 $("#nextDay").onclick = () => { S.day = addDays(S.day, S.days); loadDay(); };
 $("#todayBtn").onclick = () => { S.day = iso(new Date()); $("#grid").dataset.scrolled = ""; loadDay(); };
 $("#dayPick").onchange = e => { if (e.target.value) { S.day = e.target.value; loadDay(); } };
+/* 3.11: the date in the middle of «‹ 25 ноября, 2026 ›» opens the calendar of the field under it */
+$("#dayLabel").onclick = () => { const i = $("#dayPick"); try { i.showPicker(); } catch (e) { i.focus(); i.click(); } };
 $("#branchSel").onchange = e => { S.branch = e.target.value; loadDay(); };
 $("#newVisitBtn").onclick = () => openBooking({start: `${S.day} ${pad(Math.max(+S.settings.day_start || 8, Math.min(20, new Date().getHours() + 1)))}:00`});
 $("#printBtn").onclick = () => {
   const v = (S.dayData || {}).visits || [];
   const byDoc = {};
   v.forEach(x => (byDoc[(S.days > 1 ? x.start.slice(0, 10) + " · " : "") + (x.doctor_name || "Без врача")] ||= []).push(x));
-  $("#printArea").innerHTML = `<h2>Расписание: ${esc($("#dayTitle").textContent)}</h2><div>Данные на ${esc(fmtDT(S.status.last_ok))}</div>` +
+  $("#printArea").innerHTML = `<h2>Расписание: ${esc(S.dayLabel || "")}</h2><div>Данные на ${esc(fmtDT(S.status.last_ok))}</div>` +
     Object.entries(byDoc).sort().map(([doc, items]) => `<h3>${esc(doc)}</h3><table><tr><th>Время</th><th>Пациент</th><th>Телефон</th><th>Услуга</th><th>Статус</th></tr>${
       items.map(x => `<tr><td>${hm(x.start)}–${hm(x.end)}</td><td>${esc(x.patient_name || "")}</td><td>${esc(x.patient_phone || "")}</td><td>${esc(x.title || "")}</td><td>${esc(x.status || "")}</td></tr>`).join("")}</table>`).join("");
   window.print();

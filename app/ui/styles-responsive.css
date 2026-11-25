@@ -10,6 +10,19 @@
 /* wide tables scroll inside their own frame instead of dragging the whole page sideways */
 .tbl-scroll{max-width:100%}
 .modal{max-width:calc(100vw - 16px)}
+/* 3.11: no text runs past the edge of a window and none is cut off: dialogs, toasts, banners, the visit panel */
+.modal{overflow-wrap:break-word}
+.m-h{gap:12px}
+.m-h h3{min-width:0;overflow-wrap:anywhere}
+.m-f .muted{flex:1 1 0;min-width:min(150px,100%)}
+.m-f .muted:empty{min-width:0}  /* the note at the bottom wraps instead of pushing the buttons onto a line of their own */
+.toast{width:max-content;max-width:min(640px,calc(100vw - 32px));overflow-wrap:anywhere}
+.banner,.warn-line,.local-note,.conflict-note,.series-note{overflow-wrap:anywhere;min-width:0}
+.upd-banner{max-width:calc(100vw - 36px);flex-wrap:wrap}
+.upd-banner>span{min-width:0;overflow-wrap:anywhere}
+.drawer{overflow-wrap:break-word}
+.dw-h h3{overflow-wrap:anywhere}
+.hint-bar>span{min-width:0;overflow-wrap:anywhere}
 
 @media (max-width:1250px){
   .topbar{gap:4px;padding:8px 12px}

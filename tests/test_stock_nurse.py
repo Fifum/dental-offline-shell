@@ -367,7 +367,7 @@ for fn in ("stockHome", "openRequestScreen", "openUseScreen", "openIssueScreen",
 check("tiles", all(t in js for t in ("Принять поставку", "Выдать в кабинет", "Зафиксировать расход", "Создать заявку")))
 check("double click guarded", js.count("busy(") >= 5)
 check("version 3.10", tuple(map(int, config.VERSION.split("."))) >= (3, 10, 0), config.VERSION)
-notes = ROOT / "docs" / f"Что нового в версии {'.'.join(config.VERSION.split('.')[:2])}.txt"
+notes = ROOT / "docs" / "Что нового в версии 3.10.txt"  # the notes of the nurse's stock (later versions have their own)
 check("what's new", notes.exists() and "медсестр" in notes.read_text(encoding="utf-8").lower(), notes)
 
 print(f"OK: {OK[0]}  FAIL: {len(FAIL)}")

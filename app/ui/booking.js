@@ -10,29 +10,30 @@ async function openBooking(v = {}) {
   const brSel = v.branch_id || docBranch(v.doctor_id) || S.branch;
   const brOpts = R.branches.map(b => `<option value="${esc(b.id)}" ${b.id === brSel ? "selected" : ""}>${esc(b.name)}</option>`).join("");
   const box = modal(`
-    <div class="m-h"><h3>${editing ? "Перенос / изменение записи" : "Новая запись"}</h3><button class="x" data-close>×</button></div>
+    <div class="m-h"><h3>${editing ? "Изменить визит" : "Новый визит"}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
+      <!-- 3.11: the order of «Новый визит» in Dentist Plus: doctor, date and time, then the patient -->
+      <div class="grid2">
+        <label class="fl">Врач<select class="input" id="bkDoc">${docOpts}</select></label>
+        ${R.branches.length > 1 ? `<label class="fl">Филиал<select class="input" id="bkBr">${brOpts}</select></label>` : `<span></span>`}
+      </div>
+      <div class="grid3">
+        <label class="fl">Дата визита<input class="input" type="date" id="bkDate" value="${start.slice(0, 10)}"></label>
+        <label class="fl">Время визита<input class="input" type="time" id="bkTime" step="300" value="${start.slice(11, 16)}"></label>
+        <label class="fl">Продолжительность<select class="input" id="bkDur">${[15, 30, 45, 60, 75, 90, 120, 150, 180].map(m => `<option value="${m}" ${m === dur ? "selected" : ""}>${m < 60 ? m + " мин" : (m / 60) + " ч" + (m % 60 ? "" : "")}</option>`).join("")}${[15, 30, 45, 60, 75, 90, 120, 150, 180].includes(dur) ? "" : `<option value="${dur}" selected>${dur} мин</option>`}</select></label>
+      </div>
       <label class="fl">Пациент</label>
       <div class="pat-pick" id="bkPat">
         ${v.patient_id ? `<div class="chosen"><span class="av">${esc(initials(v.patient_name))}</span><b>${esc(v.patient_name || v.patient_id)}</b>${editing ? "" : '<button class="linkbtn" id="bkChange">изменить</button>'}</div>` : ""}
         <div class="pp-search" ${v.patient_id ? "hidden" : ""}>
           <input class="input" id="bkQ" placeholder="ФИО или телефон" autocomplete="off" ${v.patient_id ? "" : "autofocus"}>
           <div class="pp-list" id="bkList"></div>
-          <button class="linkbtn" id="bkNewP">+ Новый пациент</button>
+          <button class="linkbtn" id="bkNewP">+ Создать пациента</button>
           <div class="pp-new" id="bkNewForm" hidden>
             <div class="grid3"><input class="input" id="npL" placeholder="Фамилия"><input class="input" id="npF" placeholder="Имя"><input class="input" id="npM" placeholder="Отчество"></div>
             <div class="grid3"><input class="input" id="npPh" placeholder="Телефон"><input class="input" id="npB" type="date" title="Дата рождения"><select class="input" id="npG"><option value="">Пол</option><option>М</option><option>Ж</option></select></div>
           </div>
         </div>
-      </div>
-      <div class="grid3">
-        <label class="fl">Дата<input class="input" type="date" id="bkDate" value="${start.slice(0, 10)}"></label>
-        <label class="fl">Начало<input class="input" type="time" id="bkTime" step="300" value="${start.slice(11, 16)}"></label>
-        <label class="fl">Длительность<select class="input" id="bkDur">${[15, 30, 45, 60, 75, 90, 120, 150, 180].map(m => `<option value="${m}" ${m === dur ? "selected" : ""}>${m < 60 ? m + " мин" : (m / 60) + " ч" + (m % 60 ? "" : "")}</option>`).join("")}${[15, 30, 45, 60, 75, 90, 120, 150, 180].includes(dur) ? "" : `<option value="${dur}" selected>${dur} мин</option>`}</select></label>
-      </div>
-      <div class="grid2">
-        <label class="fl">Врач<select class="input" id="bkDoc">${docOpts}</select></label>
-        ${R.branches.length > 1 ? `<label class="fl">Филиал<select class="input" id="bkBr">${brOpts}</select></label>` : `<span></span>`}
       </div>
       <div class="grid2"><label class="fl">Кресло / кабинет<input class="input" id="bkChair" value="${esc(v.chair || "")}" placeholder="необязательно"></label><span></span></div>
       <label class="fl">Услуга / цель визита<input class="input" id="bkTitle" list="bkSvc" value="${esc(v.title || "")}" placeholder="Например: Лечение кариеса"></label>
@@ -44,7 +45,8 @@ async function openBooking(v = {}) {
       <div class="warn-line" id="bkWarn" hidden></div>
     </div>
     <div class="m-f"><span class="muted">Запись появится в расписании с пометкой «перенести в Dentist Plus»</span>
-      <button class="btn ghost" data-close>Отмена</button><button class="btn" id="bkSave">${editing ? "Сохранить" : "Записать"}</button></div>`);
+      <button class="btn ghost" data-close>Отмена</button><button class="btn" id="bkSave">Сохранить</button></div>`);
+  box.classList.add("dpc-modal");  // 3.11: the blue of the calendar, like «Новый визит» in Dentist Plus
   let patientId = v.patient_id || null;
   api.services("").then(sv => $("#bkSvc", box).innerHTML = sv.map(s => `<option value="${esc(s.title)}">`).join(""));
   const q = $("#bkQ", box);

@@ -48,7 +48,7 @@ function enableDragMove(grid) {
         st.ghost.style.left = "4px"; st.ghost.style.width = "calc(100% - 8px)";
         const s = `${pad(Math.floor(m / 60))}:${pad(m % 60)}`, en = m + dur;
         const t = st.ghost.querySelector(".ev-t");
-        if (t) t.textContent = `${s} – ${pad(Math.floor(en / 60) % 24)}:${pad(en % 60)}`;
+        if (t) t.textContent = `${s} - ${pad(Math.floor(en / 60) % 24)}:${pad(en % 60)}`;
         st.target = {col, day: col.dataset.day, minute: m, dur};
       };
       const move = ev => {

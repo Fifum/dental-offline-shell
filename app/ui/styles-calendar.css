@@ -1,0 +1,211 @@
+/* ===== 3.11: the schedule laid out like the calendar of Dentist Plus =====
+   Staff work in both programs at once, so the calendar keeps the look they know from Dentist Plus: one toolbar
+   («Расписание:», blue view menus, «Выбрано докторов», the date between arrows, the gear, a blue «Новый визит»),
+   a grey day bar, a band in the doctor's colour over every column, a scale every 30 minutes, light working hours,
+   hatched hours off, cards with a round status icon and «⋮». Only the schedule changes: the rest of the program keeps
+   the 3.9 «Лаунж» look. Loaded after styles-lounge.css; every rule is inside the schedule or its own popups. */
+
+:root{
+  --dpc-blue:#1E88D6; --dpc-blue-h:#1673B8; --dpc-blue-soft:#E7F2FC; --dpc-bg:#FFFFFF; --dpc-day:#F1F3F6;
+  --dpc-line:#DFE4EA; --dpc-line2:#ECEFF3; --dpc-ink:#25313C; --dpc-muted:#768391; --dpc-pill:#EEF1F4; --dpc-pill-h:#E2E7EC;
+  --dpc-hatch:#E8ECF0; --dpc-now:#E5322D; --dpc-work-bg:#CDEAB4; --dpc-work-ink:#2E5C15;
+}
+@media screen{
+  :root[data-theme="dark"]{
+    --dpc-blue:#4FA6EA; --dpc-blue-h:#6CB6EF; --dpc-blue-soft:#18293A; --dpc-bg:#1C1B19; --dpc-day:#23262A;
+    --dpc-line:#353A40; --dpc-line2:#2A2E33; --dpc-ink:#E6E9EC; --dpc-muted:#9AA5B1; --dpc-pill:#272B30; --dpc-pill-h:#30353B;
+    --dpc-hatch:#2B3035; --dpc-now:#F0625D; --dpc-work-bg:#284019; --dpc-work-ink:#BFE5A2;
+  }
+}
+
+/* ---------- the toolbar ---------- */
+#view-schedule .cal-bar.dpc-bar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 6px;padding:10px 16px;margin:0 0 8px;
+  background:var(--panel);border-bottom:1px solid var(--line)}
+#view-schedule .dpc-bar .cal-sub{display:flex;align-items:center;gap:8px;padding:0;margin:0 2px 0 0;min-width:0}
+#view-schedule .dpc-bar .cal-sub h1{font:600 14.5px/1.2 var(--font);font-variant:normal;letter-spacing:0;color:var(--dpc-ink);white-space:nowrap;margin:0}
+#dayTitle::after{content:":"}
+#view-schedule .dpc-bar .dd-btn{color:var(--dpc-blue);font-weight:500;font-size:13.5px;padding:6px 5px;border-radius:6px;gap:2px}
+#view-schedule .dpc-bar .dd-btn:hover{background:var(--dpc-blue-soft)}
+#view-schedule .dpc-bar .dd-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2}
+#view-schedule .dpc-bar #branchSel{width:auto;field-sizing:content;height:30px;border:0;border-radius:6px;background:transparent;color:var(--dpc-blue);font-weight:500;font-size:13.5px;padding:0 2px 0 5px;cursor:pointer;max-width:200px;box-shadow:none}
+#view-schedule .dpc-bar #branchSel:hover{background:var(--dpc-blue-soft)}
+#view-schedule .dpc-bar #branchSel option{color:var(--ink)}
+#view-schedule .dpc-bar .cb-gap{flex:1 1 8px}
+#view-schedule .dpc-pill,#view-schedule .dpc-bar #ddDocs .dd-btn.dpc-pill{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 14px;border:0;border-radius:17px;
+  background:var(--dpc-pill);color:var(--dpc-ink);font:500 13px var(--font);cursor:pointer;white-space:nowrap;position:relative}
+#view-schedule .dpc-pill:hover,#view-schedule .dpc-bar #ddDocs .dd-btn.dpc-pill:hover{background:var(--dpc-pill-h)}
+#view-schedule .dpc-pill svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+#view-schedule .dpc-sq{display:grid;place-items:center;width:34px;height:34px;flex:none;border:0;border-radius:8px;background:var(--dpc-pill);color:var(--dpc-ink);cursor:pointer;padding:0}
+#view-schedule .dpc-sq:hover{background:var(--dpc-pill-h)}
+#view-schedule .dpc-sq svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+#view-schedule .datenav.dpc-date{position:relative;height:34px;border:0;border-radius:17px;background:var(--dpc-pill);overflow:visible}
+#view-schedule .dpc-date>button{width:30px;height:34px;color:var(--dpc-muted);border-radius:17px}
+#view-schedule .dpc-date>button:hover{background:var(--dpc-pill-h);color:var(--dpc-ink)}
+#view-schedule .datenav .dpc-day{width:auto;min-width:138px;padding:0 4px;font:500 13.5px var(--font);color:var(--dpc-ink);white-space:nowrap;border-radius:6px}
+#view-schedule .datenav #dayPick{position:absolute;left:50%;bottom:2px;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none}
+#view-schedule .btn.dpc-new{height:34px;padding:0 16px;border-radius:17px;background:var(--dpc-blue);border-color:var(--dpc-blue);color:#fff;font-weight:600}
+#view-schedule .btn.dpc-new:hover{background:var(--dpc-blue-h);border-color:var(--dpc-blue-h)}
+#view-schedule .btn.dpc-new svg{stroke:#fff}
+#view-schedule .dpc-new kbd.kb{border-color:rgba(255,255,255,.7)}
+#view-schedule .dpc-bar :is(.dd-btn,.dpc-pill,.dpc-sq,.dpc-day,.dpc-new):focus-visible{outline:2px solid var(--dpc-blue);outline-offset:2px}
+/* the second line: how many visits, the colours of the statuses */
+#view-schedule .cal-tools.dpc-info{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 16px 8px;min-height:24px}
+#view-schedule .dpc-info #daySub{font-size:12.5px;color:var(--dpc-muted);white-space:nowrap}
+#view-schedule .dpc-info .st-legend span{height:22px;font-size:11.5px;padding:0 8px}
+#view-schedule .next-card{margin:0 16px 10px}
+
+/* ---------- the grid ---------- */
+#view-schedule .sched-wrap{margin:0 16px 12px;border:1px solid var(--dpc-line);border-radius:6px;background:var(--dpc-bg);box-shadow:none}
+#grid .g-corner{background:var(--dpc-bg);border-color:var(--dpc-line)}
+#grid .g-day{height:34px;padding:7px 12px;background:var(--dpc-day);border-bottom:1px solid var(--dpc-line);border-right:2px solid var(--dpc-line);
+  font:600 13px/20px var(--font);font-variant:normal;letter-spacing:0;color:var(--dpc-ink);overflow:hidden;text-overflow:ellipsis}
+#grid .g-day span{color:var(--dpc-ink);font-weight:600}
+#grid .g-day.today{background:var(--dpc-blue-soft);color:var(--dpc-blue)}
+#grid .g-day.today span{color:var(--dpc-blue)}
+#grid .g-day.today::after{background:var(--dpc-blue);color:#fff;border-radius:9px;padding:1px 8px}
+#grid .g-head{top:34px;display:flex;flex-direction:column;justify-content:flex-end;padding:0;min-width:0;background:var(--dpc-bg);
+  border-bottom:1px solid var(--dpc-line);border-right:1px solid var(--dpc-line)}
+#grid .g-head.gh-empty{justify-content:center;padding:8px 10px;font-size:12px}
+#grid .gh-chair{padding:4px 8px 3px;text-align:center;font-size:11.5px;font-weight:600;color:var(--dpc-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#grid .gh-band{display:flex;align-items:center;gap:7px;width:100%;min-height:40px;margin:0;padding:5px 8px;border:0;border-radius:0;
+  background:var(--dc,#7A8794);color:#fff;font:inherit;text-align:left;cursor:pointer;box-shadow:none;filter:none!important}
+#grid .gh-band:hover{filter:brightness(1.07)!important}
+#grid .gh-band:focus-visible{outline:2px solid var(--dpc-blue);outline-offset:-2px}
+#grid .gh-av{width:24px;height:24px;flex:none;display:grid;place-items:center;border:0;border-radius:50%;background:rgba(255,255,255,.92);
+  color:var(--dc,#7A8794);font:700 10.5px var(--font);font-variant:normal}
+#grid .gh-n{display:flex;flex-direction:column;flex:1;min-width:0;color:#fff;font-size:12px;font-weight:600;line-height:1.25}
+#grid .gh-nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#grid .gh-nm i{font-style:normal;font-weight:500;opacity:.85}
+#grid .gh-n small{color:rgba(255,255,255,.92);font-size:11px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#grid .gh-cnt{flex:none;min-width:20px;height:18px;padding:0 6px;display:grid;place-items:center;border-radius:9px;background:rgba(255,255,255,.24);font-size:11px;font-weight:700}
+#grid.no-doc-colors .gh-band{background:var(--dpc-pill);color:var(--dpc-ink)}
+#grid.no-doc-colors .gh-n{color:var(--dpc-ink)}
+#grid.no-doc-colors .gh-n small{color:var(--dpc-muted)}
+#grid.no-doc-colors .gh-av{background:var(--dpc-bg);color:var(--dpc-ink)}
+#grid.no-doc-colors .gh-cnt{background:rgba(0,0,0,.07)}
+:root[data-theme="dark"] #grid .gh-band{filter:saturate(.85) brightness(.9)!important}
+/* the time scale: every half hour */
+#grid .g-times{background:var(--dpc-bg);border-right:1px solid var(--dpc-line)}
+#grid .g-times div,#grid .g-times div.half{right:7px;font-size:11.5px;color:var(--dpc-ink);opacity:1;font-variant-numeric:tabular-nums;transform:translateY(-7px)}
+#grid .g-times div.half{color:var(--dpc-muted)}
+/* a column: the doctor's colour on the left, light working hours, hatched hours off */
+#grid .g-col{border-right:1px solid var(--dpc-line);border-left:3px solid var(--dc,#7A8794);background:var(--dpc-bg);
+  background:color-mix(in srgb,var(--dc,#7A8794) 6%,var(--dpc-bg));cursor:pointer}
+#grid .g-col.is-today{background:color-mix(in srgb,var(--dc,#7A8794) 6%,var(--dpc-bg))}
+#grid.no-doc-colors .g-col{border-left-color:var(--dpc-line2);background:var(--dpc-bg)}
+#grid .g-col .hl{border-top:1px solid var(--dpc-line2)}
+#grid .g-col .hl.half{border-top-style:solid;border-color:var(--dpc-line2);opacity:.6}
+#grid .off-hours{background:repeating-linear-gradient(135deg,var(--dpc-hatch) 0 5px,var(--dpc-bg) 5px 12px)}
+#grid .now-line{border-top:2px solid var(--dpc-now)}
+#grid .now-line::before{background:var(--dpc-now)}
+#grid .slot-hover{border:1.5px dashed var(--dpc-blue);border-radius:4px;background:var(--dpc-blue-soft);color:var(--dpc-blue);font-size:11.5px;padding:2px 8px}
+
+/* ---------- a visit card ---------- */
+#grid .ev{padding:3px 18px 3px 26px;border:1px solid var(--st-new);border-radius:4px;background:var(--st-new-bg);box-shadow:none;font-size:12px;line-height:1.28;overflow:hidden}
+#grid .ev .ev-ic{position:absolute;left:4px;top:4px;width:17px;height:17px;display:grid;place-items:center;border-radius:50%;background:var(--st-new);color:#fff}
+#grid .ev .ev-ic svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.3;stroke-linecap:round;stroke-linejoin:round}
+#grid .ev .ev-t{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dpc-muted);white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
+#grid .ev .f-ic{display:inline-grid;place-items:center;color:var(--dpc-muted);font-style:normal}
+#grid .ev .f-ic svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#grid .ev .lc{margin:0 0 0 1px}
+#grid .ev b{display:block;font-size:12px;font-weight:700;color:var(--dpc-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#grid .ev .s{font-size:11px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#grid .ev .ev-k{position:absolute;top:1px;right:1px;width:16px;height:20px;padding:0;border:0;border-radius:3px;background:none;color:var(--dpc-muted);
+  font:700 14px/20px var(--font);cursor:pointer;opacity:.75}
+#grid .ev .ev-k:hover,#grid .ev .ev-k:focus-visible{opacity:1;background:rgba(0,0,0,.08);color:var(--dpc-ink)}
+#grid .ev.st-ok{border-color:var(--st-ok);background:var(--st-ok-bg)}
+#grid .ev.st-ok .ev-ic{background:var(--st-ok)}
+#grid .ev.st-come{border-color:var(--st-come);background:var(--st-come-bg)}
+#grid .ev.st-come .ev-ic{background:var(--st-come)}
+#grid .ev.st-done{border-color:var(--st-done);background:var(--st-done-bg)}
+#grid .ev.st-done .ev-ic{background:var(--st-done)}
+#grid .ev.st-done b{color:var(--ink2)}
+#grid .ev.st-cancel{border-color:var(--st-cancel);background:var(--st-cancel-bg);opacity:.85}
+#grid .ev.st-cancel .ev-ic{background:var(--st-cancel)}
+#grid .ev.st-cancel b{text-decoration:line-through}
+#grid.no-st-colors .ev{border-color:var(--dc);background:color-mix(in srgb,var(--dc) 12%,var(--dpc-bg))}
+#grid.no-st-colors .ev .ev-ic{background:var(--dc)}
+/* a short visit (15–20 minutes): the time and the patient on one line */
+#grid .ev.is-short{display:flex;align-items:center;gap:6px;padding-top:0;padding-bottom:0}
+#grid .ev.is-short .ev-ic{top:50%;transform:translateY(-50%);width:15px;height:15px}
+#grid .ev.is-short .ev-ic svg{width:10px;height:10px}
+#grid .ev.is-short .ev-t{flex:none}
+#grid .ev.is-short b{flex:1;min-width:0}
+#grid .ev.is-short .ev-k{top:50%;transform:translateY(-50%)}
+#grid .ev.sel{outline:2px solid var(--dpc-blue);outline-offset:1px}
+#grid .ev:hover{box-shadow:0 3px 10px -4px rgba(20,40,60,.35)}
+
+/* ---------- the menu of a visit («⋮», right click) and of free time ---------- */
+.cal-menu{position:fixed;z-index:66;min-width:230px;max-width:min(320px,calc(100vw - 16px));padding:4px;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;box-shadow:0 12px 34px rgba(16,32,42,.2);font-size:13px;animation:fadeIn 120ms ease both}
+.cal-menu .cm-title{display:flex;flex-direction:column;gap:2px;padding:7px 10px 8px;border-bottom:1px solid var(--line2);margin-bottom:3px;overflow-wrap:anywhere}
+.cal-menu .cm-title b{font-weight:600;color:var(--ink)}
+.cal-menu .cm-title small{color:var(--muted);font-size:11.5px}
+.cal-menu .cm-title .pill{font-size:11px;padding:0 6px}
+.cal-menu .cm-head{padding:6px 10px 2px;font:600 10.5px var(--font);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.cal-menu .cm-sep{height:1px;background:var(--line2);margin:4px 2px}
+.cal-menu button{display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:5px 10px;border:0;border-radius:6px;background:none;color:var(--ink);
+  font:inherit;text-align:left;cursor:pointer}
+.cal-menu button:hover,.cal-menu button:focus-visible{background:var(--dpc-blue-soft);outline:0}
+.cal-menu button svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:var(--muted)}
+.cal-menu button span{flex:1;min-width:0}
+.cal-menu button kbd{font:600 10.5px var(--font);color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.cal-menu button.cm-st svg{color:#fff;background:var(--st-new);border-radius:50%;padding:2px;stroke-width:2.4}
+.cal-menu button.cm-st.st-ok svg{background:var(--st-ok)}
+.cal-menu button.cm-st.st-come svg{background:var(--st-come)}
+.cal-menu button.cm-st.st-done svg{background:var(--st-done)}
+.cal-menu button.danger{color:var(--st-cancel)}
+.cal-menu button.danger svg{color:var(--st-cancel)}
+.cal-menu button.danger:hover{background:var(--st-cancel-bg)}
+
+/* ---------- the doctor's month (a click on the band) ---------- */
+.cal-pop{position:fixed;z-index:64;width:276px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 14px 36px rgba(16,32,42,.22);animation:fadeIn 120ms ease both}
+.cal-pop .cp-h{display:flex;align-items:center;gap:10px;margin-bottom:10px;min-width:0}
+.cal-pop .cp-h>div{display:flex;flex-direction:column;min-width:0}
+.cal-pop .cp-h b{font-size:14px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.cal-pop .cp-h small{font-size:12px;color:var(--muted)}
+.cal-pop .cp-av{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--dc);color:#fff;font:700 14px var(--font)}
+.cal-pop .cp-nav{display:flex;align-items:center;justify-content:space-between;margin:2px 0 6px}
+.cal-pop .cp-nav b{font-size:13px;font-weight:600;color:var(--ink)}
+.cal-pop .cp-nav button{width:28px;height:26px;border:0;border-radius:6px;background:none;color:var(--muted);font-size:18px;cursor:pointer}
+.cal-pop .cp-nav button:hover{background:var(--dpc-pill)}
+.cal-pop .cp-wd,.cal-pop .cp-days{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-pop .cp-wd span{text-align:center;font-size:11px;color:var(--muted)}
+.cal-pop .cp-days button{height:28px;padding:0;border:0;border-radius:4px;background:var(--dpc-pill);color:var(--ink);font:500 12.5px var(--font);cursor:pointer}
+.cal-pop .cp-days button:hover{background:var(--dpc-pill-h)}
+.cal-pop .cp-days button.work{background:var(--dpc-work-bg);color:var(--dpc-work-ink);font-weight:600}
+.cal-pop .cp-days button.today{box-shadow:inset 0 0 0 2px var(--dpc-blue)}
+.cal-pop .cp-days button.on{background:var(--dpc-blue);color:#fff}
+.cal-pop .cp-f{margin-top:10px;font-size:11.5px;line-height:1.45;color:var(--muted)}
+
+/* ---------- «Настройки календаря» ---------- */
+.cal-set .cs-row{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--line2);cursor:pointer}
+.cal-set .cs-row input{margin-top:3px;accent-color:var(--dpc-blue);width:16px;height:16px;flex:none}
+.cal-set .cs-row span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cal-set .cs-row b{font-weight:600;font-size:13.5px;color:var(--ink)}
+.cal-set .cs-row small{font-size:12px;color:var(--muted)}
+.cal-set .cs-scale{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0 4px}
+.cal-set .cs-scale b{font-weight:600;font-size:13.5px}
+
+/* ---------- «Новый визит»: the calendar's blue for its main button ---------- */
+.modal.dpc-modal .m-f .btn:not(.ghost){background:var(--dpc-blue);border-color:var(--dpc-blue);color:#fff}
+.modal.dpc-modal .m-f .btn:not(.ghost):hover{background:var(--dpc-blue-h);border-color:var(--dpc-blue-h)}
+.modal.dpc-modal .linkbtn{color:var(--dpc-blue)}
+
+/* ---------- narrower windows: the toolbar wraps, labels give way first ---------- */
+@media (max-width:1600px){
+  #view-schedule .dpc-new kbd.kb,#view-schedule .dpc-bar .cal-sub .dp-src,#view-schedule .wait-btn .wb-l{display:none}
+  #view-schedule .wait-btn{padding:0 11px}
+  #view-schedule .dpc-bar{gap:6px 4px}
+  #view-schedule .dpc-bar #branchSel{max-width:130px}
+  #view-schedule .datenav .dpc-day{min-width:126px}
+}
+#ddDocsLbl .dl-s{display:none}
+@media (max-width:1440px){
+  #view-schedule #ddDocsLbl .dl-w{display:none}
+  #view-schedule #ddDocsLbl .dl-s{display:inline}
+}
+.app.insp-docked #view-schedule .dpc-new kbd.kb{display:none}
+@media print{#view-schedule .dpc-info{display:none!important}}
+#view-schedule .st-legend[hidden]{display:none}

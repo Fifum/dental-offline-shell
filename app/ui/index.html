@@ -3,30 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <meta name="color-scheme" content="light dark">
-<script src="theme.js?v=3.10.2"></script>
+<script src="theme.js?v=3.11.0"></script>
 <title>Dental Desk</title>
-<link rel="stylesheet" href="styles.css?v=3.10.2">
-<link rel="stylesheet" href="styles-v2.css?v=3.10.2">
-<link rel="stylesheet" href="styles-brand.css?v=3.10.2">
-<link rel="stylesheet" href="styles-auth.css?v=3.10.2">
-<link rel="stylesheet" href="styles-motion.css?v=3.10.2">
-<link rel="stylesheet" href="styles-stock.css?v=3.10.2">
-<link rel="stylesheet" href="styles-office.css?v=3.10.2">
-<link rel="stylesheet" href="styles-medcard.css?v=3.10.2">
-<link rel="stylesheet" href="styles-theme.css?v=3.10.2">
-<link rel="stylesheet" href="styles-teeth.css?v=3.10.2">
-<link rel="stylesheet" href="styles-voice.css?v=3.10.2">
-<link rel="stylesheet" href="styles-platform.css?v=3.10.2">
-<link rel="stylesheet" href="styles-director.css?v=3.10.2">
-<link rel="stylesheet" href="styles-plans.css?v=3.10.2">
-<link rel="stylesheet" href="styles-crm.css?v=3.10.2">
-<link rel="stylesheet" href="styles-finance.css?v=3.10.2">
-<link rel="stylesheet" href="styles-ai.css?v=3.10.2">
-<link rel="stylesheet" href="styles-settings.css?v=3.10.2">
-<link rel="stylesheet" href="styles-staff.css?v=3.10.2">
-<link rel="stylesheet" href="styles-lounge.css?v=3.10.2">
-<link rel="stylesheet" href="styles-stocknurse.css?v=3.10.2">
-<link rel="stylesheet" href="styles-responsive.css?v=3.10.2">
+<link rel="stylesheet" href="styles.css?v=3.11.0">
+<link rel="stylesheet" href="styles-v2.css?v=3.11.0">
+<link rel="stylesheet" href="styles-brand.css?v=3.11.0">
+<link rel="stylesheet" href="styles-auth.css?v=3.11.0">
+<link rel="stylesheet" href="styles-motion.css?v=3.11.0">
+<link rel="stylesheet" href="styles-stock.css?v=3.11.0">
+<link rel="stylesheet" href="styles-office.css?v=3.11.0">
+<link rel="stylesheet" href="styles-medcard.css?v=3.11.0">
+<link rel="stylesheet" href="styles-theme.css?v=3.11.0">
+<link rel="stylesheet" href="styles-teeth.css?v=3.11.0">
+<link rel="stylesheet" href="styles-voice.css?v=3.11.0">
+<link rel="stylesheet" href="styles-platform.css?v=3.11.0">
+<link rel="stylesheet" href="styles-director.css?v=3.11.0">
+<link rel="stylesheet" href="styles-plans.css?v=3.11.0">
+<link rel="stylesheet" href="styles-crm.css?v=3.11.0">
+<link rel="stylesheet" href="styles-finance.css?v=3.11.0">
+<link rel="stylesheet" href="styles-ai.css?v=3.11.0">
+<link rel="stylesheet" href="styles-settings.css?v=3.11.0">
+<link rel="stylesheet" href="styles-staff.css?v=3.11.0">
+<link rel="stylesheet" href="styles-lounge.css?v=3.11.0">
+<link rel="stylesheet" href="styles-stocknurse.css?v=3.11.0">
+<link rel="stylesheet" href="styles-calendar.css?v=3.11.0">
+<link rel="stylesheet" href="styles-responsive.css?v=3.11.0">
 </head>
 <body>
 <div class="app">
@@ -73,29 +74,33 @@
 
     <!-- ===================== SCHEDULE ===================== -->
     <section class="view" id="view-schedule">
-      <header class="cal-bar">
-        <div class="cal-sub"><h1 id="dayTitle">Расписание</h1><span class="dp-src" title="Записи на приём и врачи приходят из Dentist Plus — официальной системы клиники. Новые записи и переносы уходят в Dentist Plus">из Dentist Plus</span><span class="muted" id="daySub"></span></div>
-        <div class="datenav">
+      <!-- 3.11: the toolbar of Dentist Plus — «Расписание:» with the view menus on the left; doctors, the date and «Новый визит» on the right -->
+      <header class="cal-bar dpc-bar">
+        <div class="cal-sub"><h1 id="dayTitle">Расписание</h1><span class="dp-src" title="Записи на приём и врачи приходят из Dentist Plus — официальной системы клиники. Новые записи и переносы уходят в Dentist Plus">из Dentist Plus</span></div>
+        <div class="dd" id="ddDays"><button class="dd-btn" title="Сколько дней показать"><span id="ddDaysLbl">На день</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+          <div class="dd-menu"><button data-days="1">На день</button><button data-days="2">2 дня</button><button data-days="3">3 дня</button><button data-days="7">Неделя</button></div></div>
+        <div class="dd" id="ddBy"><button class="dd-btn" title="Колонки: врачи или кресла"><span id="ddByLbl">По докторам</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+          <div class="dd-menu"><button data-by="doctor">По докторам</button><button data-by="chair">По креслам</button></div></div>
+        <div class="dd" id="ddMode"><button class="dd-btn" title="Сетка по времени или список"><span id="ddModeLbl">Сетка</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+          <div class="dd-menu" id="modeSeg"><button data-mode="grid">Сетка</button><button data-mode="list">Список</button></div></div>
+        <select id="branchSel" class="input sm-sel" title="Филиал"></select>
+        <span class="cb-gap"></span>
+        <div class="dd right" id="ddDocs"><button class="dd-btn dpc-pill" title="Каких врачей показать"><span id="ddDocsLbl">Выбрано докторов: все</span></button>
+          <div class="dd-menu docs-menu" id="docsMenu"></div></div>
+        <button class="dpc-pill wait-btn" id="waitBtn" data-perm-any="schedule_view,schedule_edit" title="Лист ожидания: кто хочет записаться, если освободится время"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span class="wb-l">Лист ожидания</span><i class="badge sm" id="waitBadge" hidden></i></button>
+        <button class="dpc-sq" id="todayBtn" title="Сегодня (Home)"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M8 3v4M16 3v4M3.5 10h17M9 14.5l2 2 4-4"/></svg></button>
+        <div class="datenav dpc-date">
           <button id="prevDay" title="Назад (←)">‹</button>
-          <input type="date" id="dayPick">
+          <button class="dpc-day" id="dayLabel" title="Выбрать дату"></button>
+          <input type="date" id="dayPick" tabindex="-1" aria-label="Дата">
           <button id="nextDay" title="Вперёд (→)">›</button>
         </div>
-        <button class="pill-btn" id="todayBtn">Сегодня</button>
-        <span class="cb-gap"></span>
-        <button class="pill-btn wait-btn" id="waitBtn" data-perm-any="schedule_view,schedule_edit" title="Лист ожидания: кто хочет записаться, если освободится время"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span class="wb-l">Ожидание</span><i class="badge sm" id="waitBadge" hidden></i></button>
-        <button class="icon-btn" id="printBtn" title="Распечатать расписание"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button>
-        <button class="btn" id="newVisitBtn" data-perm="schedule_edit" title="Записать пациента на приём (F2)"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M12 9.5v7M8.5 13h7"/></svg>Записать<kbd class="kb">F2</kbd></button>
+        <button class="dpc-sq" id="calSetBtn" title="Настройки календаря"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg></button>
+        <button class="dpc-sq" id="printBtn" title="Распечатать расписание"><svg viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H4.5V10.5a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5V17H17"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></svg></button>
+        <button class="btn dpc-new" id="newVisitBtn" data-perm="schedule_edit" title="Записать пациента на приём (F2)"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M12 9.5v7M8.5 13h7"/></svg>Новый визит<kbd class="kb">F2</kbd></button>
       </header>
-      <div class="cal-tools">
-        <div class="dd" id="ddDays"><button class="dd-btn"><span id="ddDaysLbl">На день</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
-          <div class="dd-menu"><button data-days="1">На день</button><button data-days="2">2 дня</button><button data-days="3">3 дня</button><button data-days="7">Неделя</button></div></div>
-        <div class="dd" id="ddBy"><button class="dd-btn"><span id="ddByLbl">По докторам</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
-          <div class="dd-menu"><button data-by="doctor">По докторам</button><button data-by="chair">По креслам</button></div></div>
-        <div class="dd" id="ddMode"><button class="dd-btn"><span id="ddModeLbl">Сетка</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
-          <div class="dd-menu" id="modeSeg"><button data-mode="grid">Сетка</button><button data-mode="list">Список</button></div></div>
-        <select id="branchSel" class="input sm-sel"></select>
-        <div class="dd right" id="ddDocs"><button class="dd-btn pill-btn"><span id="ddDocsLbl">Выбрано докторов: все</span></button>
-          <div class="dd-menu docs-menu" id="docsMenu"></div></div>
+      <div class="cal-tools dpc-info">
+        <span class="muted" id="daySub"></span>
         <span class="cb-gap"></span>
         <div class="st-legend" title="Цвет записи показывает её статус"><span class="lg-new">Записан</span><span class="lg-ok">Подтвердил</span><span class="lg-come">В клинике</span><span class="lg-done">Завершён</span><span class="lg-cancel">Отменён, не пришёл</span></div>
       </div>
@@ -435,50 +440,51 @@
   <button class="btn" id="veilOffline" hidden style="width:100%;justify-content:center;margin-top:14px">Открыть сохранённую копию (только просмотр)</button>
   <div class="auth-foot"><span></span><button id="veilSetup" hidden>Выбрать другой сервер</button></div></div></div>
 <div id="printArea" class="print-only"></div>
-<script src="app.js?v=3.10.2"></script>
-<script src="booking.js?v=3.10.2"></script>
-<script src="calendar-dnd.js?v=3.10.2"></script>
-<script src="waitlist.js?v=3.10.2"></script>
-<script src="steril.js?v=3.10.2"></script>
-<script src="files.js?v=3.10.2"></script>
-<script src="perio.js?v=3.10.2"></script>
-<script src="sign.js?v=3.10.2"></script>
-<script src="taxcert.js?v=3.10.2"></script>
-<script src="lab.js?v=3.10.2"></script>
-<script src="money.js?v=3.10.2"></script>
-<script src="finance.js?v=3.10.2"></script>
-<script src="record.js?v=3.10.2"></script>
-<script src="docs.js?v=3.10.2"></script>
-<script src="billing.js?v=3.10.2"></script>
-<script src="plans.js?v=3.10.2"></script>
-<script src="journal.js?v=3.10.2"></script>
-<script src="refs.js?v=3.10.2"></script>
-<script src="tpl-editor.js?v=3.10.2"></script>
-<script src="staff.js?v=3.10.2"></script>
-<script src="stock.js?v=3.10.2"></script>
-<script src="stock-lots.js?v=3.10.2"></script>
-<script src="stock-auto.js?v=3.10.2"></script>
-<script src="stock-nurse.js?v=3.10.2"></script>
-<script src="fiscal.js?v=3.10.2"></script>
-<script src="backup.js?v=3.10.2"></script>
-<script src="reports.js?v=3.10.2"></script>
-<script src="director.js?v=3.10.2"></script>
-<script src="accounting.js?v=3.10.2"></script>
-<script src="finmodel.js?v=3.10.2"></script>
-<script src="marketing.js?v=3.10.2"></script>
-<script src="crm.js?v=3.10.2"></script>
-<script src="plan-status.js?v=3.10.2"></script>
-<script src="shifts.js?v=3.10.2"></script>
-<script src="finstaff.js?v=3.10.2"></script>
-<script src="dictate.js?v=3.10.2"></script>
-<script src="ai.js?v=3.10.2"></script>
-<script src="addon.js?v=3.10.2"></script>
-<script src="dp.js?v=3.10.2"></script>
-<script src="settings-nav.js?v=3.10.2"></script>
-<script src="daily.js?v=3.10.2"></script>
-<script src="platform.js?v=3.10.2"></script>
-<script src="motion.js?v=3.10.2"></script>
-<script src="responsive.js?v=3.10.2"></script>
-<script src="lounge.js?v=3.10.2"></script>
+<script src="app.js?v=3.11.0"></script>
+<script src="booking.js?v=3.11.0"></script>
+<script src="calendar-dnd.js?v=3.11.0"></script>
+<script src="calendar-dp.js?v=3.11.0"></script>
+<script src="waitlist.js?v=3.11.0"></script>
+<script src="steril.js?v=3.11.0"></script>
+<script src="files.js?v=3.11.0"></script>
+<script src="perio.js?v=3.11.0"></script>
+<script src="sign.js?v=3.11.0"></script>
+<script src="taxcert.js?v=3.11.0"></script>
+<script src="lab.js?v=3.11.0"></script>
+<script src="money.js?v=3.11.0"></script>
+<script src="finance.js?v=3.11.0"></script>
+<script src="record.js?v=3.11.0"></script>
+<script src="docs.js?v=3.11.0"></script>
+<script src="billing.js?v=3.11.0"></script>
+<script src="plans.js?v=3.11.0"></script>
+<script src="journal.js?v=3.11.0"></script>
+<script src="refs.js?v=3.11.0"></script>
+<script src="tpl-editor.js?v=3.11.0"></script>
+<script src="staff.js?v=3.11.0"></script>
+<script src="stock.js?v=3.11.0"></script>
+<script src="stock-lots.js?v=3.11.0"></script>
+<script src="stock-auto.js?v=3.11.0"></script>
+<script src="stock-nurse.js?v=3.11.0"></script>
+<script src="fiscal.js?v=3.11.0"></script>
+<script src="backup.js?v=3.11.0"></script>
+<script src="reports.js?v=3.11.0"></script>
+<script src="director.js?v=3.11.0"></script>
+<script src="accounting.js?v=3.11.0"></script>
+<script src="finmodel.js?v=3.11.0"></script>
+<script src="marketing.js?v=3.11.0"></script>
+<script src="crm.js?v=3.11.0"></script>
+<script src="plan-status.js?v=3.11.0"></script>
+<script src="shifts.js?v=3.11.0"></script>
+<script src="finstaff.js?v=3.11.0"></script>
+<script src="dictate.js?v=3.11.0"></script>
+<script src="ai.js?v=3.11.0"></script>
+<script src="addon.js?v=3.11.0"></script>
+<script src="dp.js?v=3.11.0"></script>
+<script src="settings-nav.js?v=3.11.0"></script>
+<script src="daily.js?v=3.11.0"></script>
+<script src="platform.js?v=3.11.0"></script>
+<script src="motion.js?v=3.11.0"></script>
+<script src="responsive.js?v=3.11.0"></script>
+<script src="lounge.js?v=3.11.0"></script>
 </body>
 </html>
