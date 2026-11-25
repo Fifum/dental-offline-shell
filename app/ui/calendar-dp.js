@@ -163,11 +163,12 @@ async function calDoctorMonth(band) {
 /* ------------------------------------------------------- «Настройки календаря» */
 function calSettings() {
   const scale = CAL.get("scale", "normal");
-  const chk = (id, key, label, hint) => `<label class="cs-row"><input type="checkbox" id="${id}" ${CAL.get(key, "1") === "1" ? "checked" : ""}><span><b>${label}</b><small>${hint}</small></span></label>`;
+  const chk = (id, key, label, hint, def = "1") => `<label class="cs-row"><input type="checkbox" id="${id}" ${CAL.get(key, def) === "1" ? "checked" : ""}><span><b>${label}</b><small>${hint}</small></span></label>`;
   const box = modal(`<div class="m-h"><h3>Настройки календаря</h3><button class="x" data-close>×</button></div><div class="m-b cal-set">
       ${chk("csDoc", "docColors", "Использовать цвета врачей", "Полоса с именем врача над колонкой и линия слева от неё — в цвет врача")}
       ${chk("csSt", "stColors", "Использовать цвета статусов визита", "Запись окрашена по статусу: записан, подтвердил, в клинике, завершён, отменён")}
       ${chk("csLeg", "legend", "Показывать легенду статусов", "Подписи цветов над расписанием")}
+      ${chk("csCan", "cancelled", "Показывать отменённые записи", "Отменённые и «не пришёл» — зачёркнутые, с красным крестиком. В Дентист+ их в календаре не видно", "0")}
       <div class="cs-scale"><b>Масштаб сетки</b><div class="seg" id="csScale">${[["compact", "Компактный"], ["normal", "Обычный"], ["large", "Крупный"]].map(([k, t]) => `<button type="button" data-s="${k}" class="${k === scale ? "on" : ""}">${t}</button>`).join("")}</div></div>
       <p class="hint">Действует на этом компьютере. Часы работы клиники и шаг записи — в Настройках программы («Расписание»).</p></div>
     <div class="m-f"><span class="muted"></span><button class="btn" data-close>Закрыть</button></div>`);
@@ -176,6 +177,7 @@ function calSettings() {
   $("#csDoc", box).onchange = e => { CAL.set("docColors", e.target.checked ? "1" : "0"); apply(); };
   $("#csSt", box).onchange = e => { CAL.set("stColors", e.target.checked ? "1" : "0"); apply(); };
   $("#csLeg", box).onchange = e => { CAL.set("legend", e.target.checked ? "1" : "0"); apply(); };
+  $("#csCan", box).onchange = e => { CAL.set("cancelled", e.target.checked ? "1" : "0"); apply(); };
   $$("#csScale button", box).forEach(b => b.onclick = () => {
     CAL.set("scale", b.dataset.s); $$("#csScale button", box).forEach(x => x.classList.toggle("on", x === b)); $("#grid").dataset.scrolled = ""; apply();
   });

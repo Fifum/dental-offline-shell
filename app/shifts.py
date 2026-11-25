@@ -10,7 +10,7 @@ from __future__ import annotations
 import calendar
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import staffref
 
@@ -170,16 +170,41 @@ class Shifts:
             return cur.rowcount
 
     def day(self, day):
-        """{doctor_id: {start, end}} for the calendar; None when nobody has a shift that day (schedules not used)."""
-        rows = self.db.q('SELECT person, start, "end" FROM work_shifts WHERE date=? AND person LIKE \'d:%\'', (str(day)[:10],))
+        """{doctor_id: {start, end}} for the calendar; None when nobody has a shift that day (schedules not used).
+        3.12.2: {off: True} for a doctor who keeps a schedule around the day (a shift before it and after it within
+        OFF_SPAN days) but has none on it. A doctor with no schedule at all is left out — the calendar shows his first
+        and last visit then, as Dentist Plus shows a doctor without a schedule (before, he was «выходной по графику»
+        as soon as any other doctor had a shift that day)."""
+        d = str(day)[:10]
+        rows = self.db.q('SELECT person, start, "end" FROM work_shifts WHERE date=? AND person LIKE \'d:%\'', (d,))
         out = {r["person"][2:]: {"start": r["start"], "end": r["end"]} for r in rows}
         # 3.7: the doctor's schedule in Dentist Plus (GET /schedule) where no shift was set here — one span per day
         # over all chairs. A shift set in this program wins.
         try:
             dp = self.db.q("""SELECT doctor_id, MIN(time_from) AS a, MAX(time_to) AS b FROM dp_schedule
-                              WHERE day=? GROUP BY doctor_id""", (str(day)[:10],))
+                              WHERE day=? GROUP BY doctor_id""", (d,))
         except sqlite3.OperationalError:
             dp = []
         for r in dp:
             out.setdefault(str(r["doctor_id"]), {"start": r["a"], "end": r["b"], "source": "dp"})
+        for doc, source in self._kept_around(d):
+            out.setdefault(doc, {"off": True, **({"source": source} if source else {})})
         return out or None
+
+    OFF_SPAN = 31
+
+    def _kept_around(self, d):
+        """(doctor id, source) of the doctors with a shift both before and after day d within OFF_SPAN days."""
+        try:
+            x = date.fromisoformat(d)
+        except ValueError:
+            return []
+        lo, hi = (x - timedelta(days=self.OFF_SPAN)).isoformat(), (x + timedelta(days=self.OFF_SPAN)).isoformat()
+        own = self.db.q("""SELECT substr(person, 3) AS doc FROM work_shifts WHERE person LIKE 'd:%' AND date BETWEEN ? AND ?
+                           GROUP BY person HAVING MIN(date) < ? AND MAX(date) > ?""", (lo, hi, d, d))
+        try:
+            dp = self.db.q("""SELECT doctor_id AS doc FROM dp_schedule WHERE day BETWEEN ? AND ?
+                              GROUP BY doctor_id HAVING MIN(day) < ? AND MAX(day) > ?""", (lo, hi, d, d))
+        except sqlite3.OperationalError:
+            dp = []
+        return [(str(r["doc"]), "") for r in own] + [(str(r["doc"]), "dp") for r in dp]

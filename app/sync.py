@@ -506,10 +506,15 @@ class SyncWorker(threading.Thread):
             self._set(phase="Расписание врачей…")
             far = self._due("dp_schedule_far_at", SCHEDULE_FAR_EVERY)
             s_end = end if far else min(end, today + timedelta(days=NEAR_DAYS))
+            # 3.12.2: the past days of the visits too (the hours over a doctor's column on a past day), once a day
+            past = self._due("dp_schedule_past_at", SCHEDULE_FAR_EVERY)
+            s_start = start if past else today - timedelta(days=7)
             try:
-                n = self._pull_schedule(c, today - timedelta(days=7), s_end)
+                n = self._pull_schedule(c, min(s_start, today - timedelta(days=7)), s_end)
                 if far:
                     self.db.meta_set("dp_schedule_far_at", str(int(time.time())))
+                if past:
+                    self.db.meta_set("dp_schedule_past_at", str(int(time.time())))
                 counts["dp_schedule"] = n["received"]
                 counts["dp_schedule_saved"] = n["saved"]
                 if n["skipped"]:

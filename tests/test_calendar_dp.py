@@ -80,7 +80,7 @@ rg = body(app, "function renderGrid(res)")
 check("day bar «25 ноября, 2026 (среда)»", "${dayLong(d)} <span>(${WD[d.getDay()]})</span>" in rg
       and "const dayLong = d => `${d.getDate()} ${MONTHS[d.getMonth()]}, ${d.getFullYear()}`;" in app)
 check("a band in the doctor's colour with the working hours", 'class="gh-band"' in rg and "--dc:${c.color}" in rg and '<small>${esc(hours)}</small>' in rg
-      and "`${shift.start} - ${shift.end}`" in rg)
+      and "colHours(c.items, shift)" in rg and "`${shift.start} - ${shift.end}`" in body(app, "function colHours(items, shift)"))  # 3.12.2
 check("chair columns: «Кресло N» above the band of the doctor working there", '<div class="gh-chair">${esc(c.name)}</div>' in rg and "colDoctor(c)" in rg)
 check("time scale every half hour", "${pad(h)}:30" in rg and "${pad(h)}:00" in rg)
 check("hatched hours off the shift / clinic day", rg.count('class="off-hours"') == 2)

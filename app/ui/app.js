@@ -193,6 +193,7 @@ function stClass(s) {
   if (/отмен|cancel|не приш|неявк|no.?show|удал/.test(s)) return "st-cancel";
   if (/заверш|done|finish|complet|оплач|закрыт/.test(s)) return "st-done";
   if (/пришел|пришёл|в кресле|при[её]м|arriv|в клиник/.test(s)) return "st-come";
+  if (/не\s*подтв|not.?confirm|unconfirm/.test(s)) return "";  // 3.12.2: «Не подтверждён» is not «Подтвердил»
   if (/подтв|confirm/.test(s)) return "st-ok";
   return "";
 }
@@ -336,20 +337,30 @@ async function loadDay() {
   fillBranches(res.branches);
   fillDocsMenu(res.doctors);
   const v = res.visits.filter(x => S.by === "chair" || !S.hiddenDocs.has(x.doctor_id || "_"));
-  const active = v.filter(x => stClass(x.status) !== "st-cancel").length;
-  $("#daySub").textContent = v.length ? `${S.days === 1 ? WD[d.getDay()][0].toUpperCase() + WD[d.getDay()].slice(1) + ": " : ""}${v.length} ${plural(v.length, "запись", "записи", "записей")}${active !== v.length ? `, из них ${v.length - active} отменено` : ""}` : "";
+  // 3.12.2: cancelled visits and no-shows are hidden like in Dentist Plus; the link by the count (or the gear) shows them
+  const live = x => stClass(x.status) !== "st-cancel";
+  const showCancel = CAL.get("cancelled", "0") === "1";
+  const shown = showCancel ? v : v.filter(live);
+  const active = v.filter(live).length, nc = v.length - active;
+  const sub = $("#daySub");
+  sub.innerHTML = v.length ? `${S.days === 1 ? WD[d.getDay()][0].toUpperCase() + WD[d.getDay()].slice(1) + ": " : ""}${active} ${plural(active, "запись", "записи", "записей")}${nc
+    ? (showCancel ? `, отменено ${nc} · ` : " · ") + `<button type="button" class="linkbtn day-cancel" title="Отменённые записи и «не пришёл»">${showCancel ? "скрыть отменённые" : `показать отменённые (${nc})`}</button>` : ""}` : "";
+  const dc = $(".day-cancel", sub);
+  if (dc) dc.onclick = () => { CAL.set("cancelled", showCancel ? "0" : "1"); loadDay(); };
   const visibleDocs = res.doctors.filter(d => (!S.branch || !d.branch_id || d.branch_id === S.branch) && !S.hiddenDocs.has(d.id));
   const allHidden = S.by === "doctor" && res.doctors.length > 0 && !visibleDocs.length;
   const gridAnyway = S.mode === "grid" && visibleDocs.length && S.settings.show_empty_doctors !== false;
-  const empty = (!v.length && !gridAnyway) || allHidden;
+  const empty = (!shown.length && !gridAnyway) || allHidden;
   $("#dayEmpty").hidden = !empty;
   const st = S.status;
-  $("#dayEmpty b").textContent = allHidden ? "Не выбрано ни одного доктора" : "На этот день записей нет";
-  $("#dayEmptySub").textContent = allHidden ? "Отметьте врачей в списке «Выбрано докторов»" : st.counts && st.counts.range && st.counts.range[0]
+  $("#dayEmpty b").textContent = allHidden ? "Не выбрано ни одного доктора" : v.length ? "На этот день только отменённые записи" : "На этот день записей нет";
+  $("#dayEmptySub").textContent = allHidden ? "Отметьте врачей в списке «Выбрано докторов»" : v.length ? "Их можно показать: «показать отменённые» над расписанием"
+    : st.counts && st.counts.range && st.counts.range[0]
     ? `В локальной базе — записи с ${fmtDate(st.counts.range[0])} по ${fmtDate(st.counts.range[1])}` : "Локальная база пока пуста — дождитесь первой синхронизации";
   $("#grid").hidden = empty || S.mode !== "grid";
   $("#list").hidden = empty || S.mode !== "list";
-  if (!empty) S.mode === "grid" ? renderGrid(res) : renderList(v);
+  const drawn = showCancel ? res : {...res, visits: res.visits.filter(live), perDay: res.perDay.map(p => ({...p, visits: p.visits.filter(live)}))};
+  if (!empty) S.mode === "grid" ? renderGrid(drawn) : renderList(shown);
   if (typeof refreshWaitBadge === "function") refreshWaitBadge();
 }
 function fillBranches(branches) {
@@ -396,6 +407,15 @@ function colDoctor(c) {
   c.items.forEach(x => { if (x.doctor_id && stClass(x.status) !== "st-cancel") n[x.doctor_id] = (n[x.doctor_id] || 0) + 1; });
   return Object.keys(n).sort((a, b) => n[b] - n[a])[0] || (c.items.find(x => x.doctor_id) || {}).doctor_id || "";
 }
+/** 3.12.2: the hours under a doctor's name — his shift by the schedule, «выходной по графику» when his schedule around
+    the day has nothing on it, else the first and the last visit of the day that is not cancelled. */
+function colHours(items, shift) {
+  if (shift && !shift.off) return {hours: `${shift.start} - ${shift.end}`, why: shift.source === "dp" ? "график из Dentist Plus" : "смена по графику работы"};
+  if (shift) return {hours: "выходной по графику", why: shift.source === "dp" ? "по графику Dentist Plus выходной" : "по графику работы выходной"};
+  const act = items.filter(x => stClass(x.status) !== "st-cancel");
+  const first = act.map(x => x.start).sort()[0], lastE = act.map(x => x.end || x.start).sort().slice(-1)[0];
+  return {hours: first ? `${hm(first)} - ${hm(lastE)}` : "нет записей", why: "первая и последняя запись дня"};
+}
 function renderGrid(res) {
   PX = calPx();
   const doctors = res.doctors, byId = Object.fromEntries(doctors.map(d => [d.id, d]));
@@ -426,10 +446,8 @@ function renderGrid(res) {
       const name = c.chair ? (doc.name || (c.items.find(x => x.doctor_id === docId) || {}).doctor_name || "Врач не указан") : c.name;
       const more = c.chair ? new Set(c.items.map(x => x.doctor_id).filter(x => x && x !== docId)).size : 0;
       const shift = docId && p.shifts ? p.shifts[docId] : undefined;  // work schedule, when the clinic keeps one
-      const first = c.items.map(x => x.start).sort()[0], lastE = c.items.map(x => x.end || x.start).sort().slice(-1)[0];
-      const hours = p.shifts && docId ? (shift ? `${shift.start} - ${shift.end}` : "выходной по графику") : first ? `${hm(first)} - ${hm(lastE)}` : "нет записей";
-      const why = shift ? (shift.source === "dp" ? "график из Dentist Plus" : "смена по графику работы") : p.shifts && docId ? "по графику работы выходной" : "первая и последняя запись дня";
-      const n = c.items.filter(x => stClass(x.status) !== "st-cancel").length;
+      const {hours, why} = colHours(c.items, shift);
+      const n =c.items.filter(x => stClass(x.status) !== "st-cancel").length;
       html += `<div class="g-head" style="--dc:${c.color}">${c.chair ? `<div class="gh-chair">${esc(c.name)}</div>` : ""}
         <button type="button" class="gh-band" data-doc="${esc(docId)}" data-day="${p.day}" title="${esc(name)}${doc.position ? " · " + esc(doc.position) : ""} — ${why}. Нажмите: рабочие дни врача за месяц">
           <span class="gh-av">${esc(initials(name))}</span><span class="gh-n"><span class="gh-nm">${esc(name)}${more ? ` <i title="ещё врачи в этом кресле">+${more}</i>` : ""}</span><small>${esc(hours)}</small></span>
@@ -448,7 +466,8 @@ function renderGrid(res) {
       for (let m = top; m < h1 * 60; m += 30) lines += `<div class="hl ${m % 60 ? "half" : ""}" style="top:${(m - top) * PX}px"></div>`;
       // hatched time outside working hours: the doctor's shift when there is a work schedule for the day, else the clinic's day
       const docId = c.chair ? colDoctor(c) : (c.id === "_" ? "" : c.id);
-      const sh = p.shifts && docId ? (p.shifts[docId] || {start: "00:00", end: "00:00"}) : null;
+      const sd = p.shifts && docId ? p.shifts[docId] : null;  // 3.12.2: a doctor without any schedule — the clinic's day
+      const sh = sd ? (sd.off ? {start: "00:00", end: "00:00"} : sd) : null;
       const cs = sh ? Math.max(top, mins("0000-00-00 " + sh.start)) : ws * 60, ce = sh ? Math.min(h1 * 60, Math.max(cs, mins("0000-00-00 " + sh.end))) : we * 60;
       if (cs > top) lines += `<div class="off-hours" style="top:0;height:${(cs - top) * PX}px"></div>`;
       if (ce < h1 * 60) lines += `<div class="off-hours" style="top:${(ce - top) * PX}px;height:${(h1 * 60 - ce) * PX}px"></div>`;
@@ -528,7 +547,7 @@ $("#dayLabel").onclick = () => { const i = $("#dayPick"); try { i.showPicker(); 
 $("#branchSel").onchange = e => { S.branch = e.target.value; loadDay(); };
 $("#newVisitBtn").onclick = () => openBooking({start: `${S.day} ${pad(Math.max(+S.settings.day_start || 8, Math.min(20, new Date().getHours() + 1)))}:00`});
 $("#printBtn").onclick = () => {
-  const v = (S.dayData || {}).visits || [];
+  const v = ((S.dayData || {}).visits || []).filter(x => CAL.get("cancelled", "0") === "1" || stClass(x.status) !== "st-cancel");  // as on the screen
   const byDoc = {};
   v.forEach(x => (byDoc[(S.days > 1 ? x.start.slice(0, 10) + " · " : "") + (x.doctor_name || "Без врача")] ||= []).push(x));
   $("#printArea").innerHTML = `<h2>Расписание: ${esc(S.dayLabel || "")}</h2><div>Данные на ${esc(fmtDT(S.status.last_ok))}</div>` +

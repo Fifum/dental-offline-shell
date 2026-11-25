@@ -365,6 +365,7 @@ class DB:
         border = (date.today() - timedelta(days=days_back)).isoformat()
         with self.tx() as c:
             c.execute("DELETE FROM visits WHERE start < ?", (border,))
+            c.execute("DELETE FROM dp_schedule WHERE day < ?", (border,))  # 3.12.2: past days are loaded now
             # keep patients that still have visits or local notes
             c.execute("""DELETE FROM patient_extras WHERE patient_id NOT IN (SELECT patient_id FROM visits WHERE patient_id IS NOT NULL)
                          AND patient_id NOT IN (SELECT patient_id FROM notes)""")
