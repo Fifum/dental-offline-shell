@@ -25,6 +25,8 @@
 .upd-banner .x{background:none;border:0;font-size:18px;color:var(--muted);cursor:pointer;padding:0 2px}
 .upd-banner .upd-dl{min-width:260px}
 .upd-banner .upd-dl .pl-prog{margin:6px 0 0}
+.upd-banner .upd-note{margin-top:5px;font-size:12px;max-width:340px;overflow-wrap:anywhere}  /* 3.12: «только изменения», «по сети клиники» */
+.upd-banner .upd-note:empty{display:none}
 
 .pin-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px;margin:4px 0 10px;max-height:46vh;overflow:auto}
 .pin-tile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px 12px;border:1px solid var(--line);border-radius:8px;

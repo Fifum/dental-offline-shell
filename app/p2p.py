@@ -15,6 +15,13 @@ new computer collects it and from then on is a trusted computer of the clinic.
     POST /p2p/pair_request   {node, name, pub}       open: a new computer asks to join
     POST /p2p/pair_poll      {node}                  open: … and waits for the answer
     POST /p2p/hello|pull|notify|blob|dp_mirror       sealed with the clinic key (dp_mirror: dp_main.py, 3.7.2)
+    POST /p2p/upd_have  {sha}                        sealed: «есть ли у тебя этот файл обновления?» (3.12)
+    GET  /p2p/upd/<sha>  X-DD-Seal: <sealed request>  the update file itself, with Range (3.12, updates.py)
+
+3.12: a computer that has downloaded an update and checked it against the signed latest.json gives the file to the
+others (one download from the internet for the whole clinic). The file is the published one — encrypted with the
+build's update key, the same bytes as on GitHub — and the receiver checks its SHA-256 against its own signed
+latest.json, so a damaged or foreign file is never installed. Only a computer with the clinic key may ask.
 """
 from __future__ import annotations
 
@@ -24,7 +31,9 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
+import shutil
 import socket
 import threading
 import time
@@ -256,11 +265,53 @@ def handle(method, body: dict, ip: str) -> dict:
         raise P2PError("Компьютер ещё не в сети клиники", 409)
     node, ts, payload = open_request(k, method, body)
     fn = {"hello": NODE.on_hello, "pull": NODE.on_pull, "notify": NODE.on_notify, "blob": NODE.on_blob,
-          "dp_mirror": NODE.on_dp_mirror}.get(method)
+          "dp_mirror": NODE.on_dp_mirror, "upd_have": NODE.on_upd_have}.get(method)
     if not fn:
         raise P2PError("Не найдено", 404)
     ans = fn(node, payload, ip)
     return {"d": _b64(k.seal(json.dumps(ans, ensure_ascii=False).encode("utf-8"), f"re|{method}|{ts}|{node}"))}
+
+
+# --------------------------------------------------------- 3.12: update files --
+def serve_update(h, sha):
+    """GET /p2p/upd/<sha> (server.py): the checked update file to a computer of this clinic, from byte N with Range."""
+    import updates
+    k = keys()
+    if not k or not NODE:
+        return h._json(409, {"error": "Компьютер ещё не в сети клиники"})
+    try:
+        body = json.loads(base64.b64decode(h.headers.get("X-DD-Seal") or ""))
+        if not isinstance(body, dict):
+            raise ValueError
+        _node, _ts, payload = open_request(k, "upd_get", body)
+    except P2PError as e:
+        return h._json(e.code, {"error": str(e)})
+    except (ValueError, TypeError):
+        return h._json(403, {"error": "Запрос не расшифрован"})
+    if not re.fullmatch(r"[0-9a-f]{64}", sha or "") or not isinstance(payload, dict) or payload.get("sha") != sha:
+        return h._json(403, {"error": "Неверный запрос"})
+    p = updates.shared(sha)
+    if not p:
+        return h._json(404, {"error": "Файла нет"})
+    size = p.stat().st_size
+    m = re.fullmatch(r"bytes=(\d+)-", (h.headers.get("Range") or "").strip())
+    start = int(m[1]) if m else 0
+    if start >= size and start:
+        return h._json(416, {"error": "Неверный диапазон"})
+    h.send_response(206 if start else 200)
+    h.send_header("Content-Type", "application/octet-stream")
+    h.send_header("Content-Length", str(size - start))
+    h.send_header("Accept-Ranges", "bytes")
+    if start:
+        h.send_header("Content-Range", f"bytes {start}-{size - 1}/{size}")
+    h.end_headers()
+    try:
+        with open(p, "rb") as f:
+            f.seek(start)
+            shutil.copyfileobj(f, h.wfile, 256 * 1024)
+    except OSError:  # the other computer went away: it continues from where it stopped next time
+        pass
+    return None
 
 
 # ---------------------------------------------------------------- pairing --
@@ -549,6 +600,11 @@ class Node(threading.Thread):
         if not file_whole(p, r):  # В15: a damaged file is never given to another computer
             raise P2PError("Файл не найден", 404)
         return {"data": _b64(p.read_bytes())}
+
+    def on_upd_have(self, node, f, ip):
+        """3.12: does this computer have the checked update file `sha` (or is it downloading it right now)?"""
+        import updates
+        return updates.lan_have(str(f.get("sha") or ""))
 
     def on_dp_mirror(self, node, f, ip):
         """3.7.2: the copy of Dentist Plus for a computer that does not talk to Dentist Plus itself (dp_main.py)."""

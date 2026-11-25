@@ -2,7 +2,8 @@
 clinic network (including this one) opens the program as a page served from here.
 
 HTTP  :8765  — UI files, /api/<method> (data), /auth/<method> (login, staff), /ping,
-               /p2p/<method> (3.0: the clinic's computers exchange changes, sealed with the clinic key — p2p.py)
+               /p2p/<method> (3.0: the clinic's computers exchange changes, sealed with the clinic key — p2p.py),
+               GET /p2p/upd/<sha256> (3.12: a checked update file for another computer of the clinic)
 UDP   :8766  — answers "who is there?" broadcasts: this computer's node id and the clinic id (no patient data)
 
 3.0: every computer runs this server for itself (its own window, tablets, the other computers of the clinic).
@@ -224,6 +225,9 @@ class ClinicServer:
             def do_GET(self):
                 if self.path.split("?")[0] == "/ping":
                     return self._json(200, server_info(srv.port))
+                if self.path.startswith("/p2p/upd/"):  # 3.12: an update file for a computer of the clinic
+                    import p2p
+                    return p2p.serve_update(self, self.path.split("?")[0][len("/p2p/upd/"):])
                 if self.path.split("?")[0] in ("/t", "/t/"):  # short address for the patient tablet
                     self.send_response(302)
                     self.send_header("Location", "/tablet.html")

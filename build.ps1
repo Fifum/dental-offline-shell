@@ -45,8 +45,30 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 Sign-File "dist\$name\$name.exe"
 
-# 2. The folder in a zip, and a small single-file installer around it: that one exe is what the clinic gets.
-& $py tools\pack_app.py "dist\$name" "build\app.zip"
+$ver = ([regex]::Match((Get-Content app\config.py -Raw -Encoding UTF8), 'VERSION\s*=\s*"([^"]+)"')).Groups[1].Value
+if (-not $ver) { throw "VERSION not found in app\config.py" }
+
+# 1b. 3.12: the small helper that installs an update «только изменения» (app\update_helper.py) goes into the folder.
+#     It is built once per its own source and Python/PyInstaller, so the very same file is in every version and the
+#     updates «только изменения» do not carry it again and again.
+$hsrc = (Get-FileHash app\update_helper.py).Hash + (Get-FileHash app\swap.py).Hash + (& $py -c "import sys,PyInstaller;print(sys.version,PyInstaller.__version__)")
+$hkey = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($hsrc))).Replace("-", "").Substring(0, 16)
+$hdir = "build\helper-$hkey"
+$helper = "$hdir\dist\dd-update-helper.exe"
+if (-not (Test-Path $helper)) {
+  & $py -m PyInstaller --noconfirm --clean --onefile --windowed --noupx `
+    --name dd-update-helper `
+    --specpath $hdir --workpath $hdir --distpath "$hdir\dist" `
+    --paths "$PSScriptRoot\app" `
+    "$PSScriptRoot\app\update_helper.py"
+  if ($LASTEXITCODE -ne 0) { throw "PyInstaller (update helper) failed" }
+  Sign-File $helper
+}
+Copy-Item $helper "dist\$name\_internal\dd-update-helper.exe" -Force
+
+# 2. The folder in a zip (with dd-manifest.json — every file with its SHA-256, for the updates «только изменения»),
+#    and a small single-file installer around it: that one exe is what the clinic gets.
+& $py tools\pack_app.py "dist\$name" "build\app.zip" --version $ver --exe "$name.exe"
 if ($LASTEXITCODE -ne 0) { throw "packing failed" }
 & $py -m PyInstaller --noconfirm --clean --onefile --windowed --noupx `
   --name $name `
@@ -59,8 +81,6 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller (installer) failed" }
 
 # Every release carries its version in the file name (DentalDesk-2.1.0.exe). The newest one stays in
 # release\, earlier releases (exe and zip packages of other versions) move to release\old\.
-$ver = ([regex]::Match((Get-Content app\config.py -Raw -Encoding UTF8), 'VERSION\s*=\s*"([^"]+)"')).Groups[1].Value
-if (-not $ver) { throw "VERSION not found in app\config.py" }
 New-Item -ItemType Directory -Force release, release\old | Out-Null
 Get-ChildItem release -File | Where-Object { $_.Extension -in ".exe", ".zip" -and -not $_.Name.Contains($ver) } |
   ForEach-Object { Move-Item $_.FullName (Join-Path "release\old" $_.Name) -Force; Write-Host "old: release\old\$($_.Name)" }

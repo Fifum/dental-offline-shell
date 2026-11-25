@@ -12,17 +12,16 @@ from __future__ import annotations
 
 import base64
 import os
-import shutil
 import subprocess
 import sys
-import time
 import zipfile
 
 import config
+import swap
 
-DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+DETACHED = swap.DETACHED
 NO_WINDOW = 0x08000000
-CLOSE_WAIT_S = 120  # М17: how long the installer waits for the open program to save, back up and exit
+CLOSE_WAIT_S = swap.CLOSE_WAIT_S  # М17: how long the installer waits for the open program to save, back up and exit
 
 
 def install_dir() -> str:
@@ -53,84 +52,42 @@ foreach ($d in @({desk_expr}, {progs_expr})) {{
 
 
 def message(text):
-    try:
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(None, text, config.APP_TITLE, 0x40)
-    except Exception:  # noqa: BLE001
-        print(text)
+    swap.message(text, config.APP_TITLE)
 
 
 def _locked(path) -> bool:
     """True while the program runs from this exe (Windows keeps a running exe open)."""
-    if not os.path.exists(path):
-        return False
-    try:
-        with open(path, "r+b"):
-            return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
+    return swap.locked(path)
 
 
 def _ask_close():
-    try:
-        import ctypes
-        hwnd = ctypes.windll.user32.FindWindowW(None, config.APP_TITLE)
-        if hwnd:
-            ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
-    except Exception:  # noqa: BLE001
-        pass
+    swap.ask_close(config.APP_TITLE)
 
 
 def close_running(target, seconds=CLOSE_WAIT_S) -> bool:
     """Ask an open copy of the program to close (it saves everything and makes a backup on close) and wait until it
-    is gone. М17: the backup of a big database takes a while — wait long, and ask again every few seconds (a window
-    that was minimized or still starting may have missed the first request)."""
-    if not _locked(target):
-        return True
-    _ask_close()
-    end, again = time.time() + seconds, time.time() + 10
-    while time.time() < end:
-        time.sleep(0.25)
-        if not _locked(target):
-            time.sleep(0.5)  # let the old process finish writing its last backup and exit
-            return True
-        if time.time() >= again:
-            _ask_close()
-            again = time.time() + 10
-    return False
+    is gone (swap.close_running: М17, wait long and ask again every few seconds)."""
+    return swap.close_running(target, config.APP_TITLE, seconds)
 
 
 def ask_retry(text) -> bool:
     """«Повторить» / «Отмена» (no console, no Tk: the installer stays small). False where there is no window."""
-    try:
-        import ctypes
-        return ctypes.windll.user32.MessageBoxW(None, text, config.APP_TITLE, 0x5 | 0x30) == 4  # MB_RETRYCANCEL, IDRETRY
-    except Exception:  # noqa: BLE001
-        return False
+    return swap.ask_retry(text, config.APP_TITLE)
 
 
 def _rmtree_quiet(path):
-    shutil.rmtree(path, ignore_errors=True)
+    swap.rmtree_quiet(path)
 
 
 def _fsync_tree(path):
-    """Unpacked files reach the disk before the switch: a power cut right after it must not leave empty files."""
-    for root, _dirs, files in os.walk(path):
-        for f in files:
-            try:
-                with open(os.path.join(root, f), "r+b") as fh:
-                    os.fsync(fh.fileno())
-            except OSError:
-                pass
+    swap.fsync_tree(path)
 
 
 def install_zip(zip_path, target_dir) -> str:
     """Unpack the program folder from `zip_path` into `target_dir`, replacing an older version. Returns the exe path.
 
     New files go to a side folder first; then each old item is moved away and the new one moved in. If any move
-    fails, the items already switched are put back, so the folder keeps the old version, never a mix."""
+    fails, the items already switched are put back, so the folder keeps the old version, never a mix (swap.swap_in)."""
     os.makedirs(target_dir, exist_ok=True)
     stage = os.path.join(target_dir, f".new-{os.getpid()}")
     _rmtree_quiet(stage)
@@ -141,44 +98,7 @@ def install_zip(zip_path, target_dir) -> str:
     except Exception:
         _rmtree_quiet(stage)
         raise
-    exe_name = config.BRAND["exe"] + ".exe"
-    if not os.path.exists(os.path.join(stage, exe_name)):
-        _rmtree_quiet(stage)
-        raise RuntimeError("В установщике нет программы")
-    for old in os.listdir(target_dir):  # leftovers of an earlier interrupted update
-        if old.startswith((".old-", ".new-")) and old != os.path.basename(stage):
-            _rmtree_quiet(os.path.join(target_dir, old))
-    trash = os.path.join(target_dir, f".old-{os.getpid()}")
-    os.makedirs(trash, exist_ok=True)
-    done = []  # (name, old item moved to trash, new item moved in)
-    try:
-        for name in sorted(os.listdir(stage), key=lambda n: n == exe_name):  # the exe last: it starts the rest
-            dst = os.path.join(target_dir, name)
-            step = [name, False, False]
-            done.append(step)
-            if os.path.lexists(dst):
-                os.replace(dst, os.path.join(trash, name))
-                step[1] = True
-            os.replace(os.path.join(stage, name), dst)
-            step[2] = True
-    except Exception:
-        restored = True
-        for name, moved_old, moved_new in reversed(done):
-            dst = os.path.join(target_dir, name)
-            try:
-                if moved_new:
-                    os.replace(dst, os.path.join(stage, name))
-                if moved_old:
-                    os.replace(os.path.join(trash, name), dst)
-            except OSError:
-                restored = False
-        _rmtree_quiet(stage)
-        if restored:
-            _rmtree_quiet(trash)
-        raise
-    _rmtree_quiet(stage)
-    _rmtree_quiet(trash)  # an old exe still held by the system is removed on the next update
-    return os.path.join(target_dir, exe_name)
+    return swap.swap_in(stage, target_dir, config.BRAND["exe"] + ".exe")
 
 
 # ------------------------------------------------------------- firewall (3.0) --
@@ -228,7 +148,7 @@ def add_firewall_rule(exe, tcp=TCP_PORT, udp=UDP_PORT, wait=True) -> bool:
 
 
 def launch(exe, args):
-    subprocess.Popen([exe, *args], close_fds=True, creationflags=DETACHED)  # noqa: S603
+    swap.launch(exe, args)
 
 
 def is_onedir() -> bool:

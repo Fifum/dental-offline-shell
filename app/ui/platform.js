@@ -125,6 +125,8 @@ async function openConflicts(all) {
 
 /* ------------------------------------------------------------ updates */
 const PL_MB = n => (n / 1048576).toLocaleString("ru-RU", {maximumFractionDigits: 0}) + " МБ";
+/* 3.12: an update «только изменения» downloads a few megabytes instead of the whole installer */
+const updSize = st => st && st.delta && st.dl_size ? `только изменения, ${PL_MB(Math.max(st.dl_size, 1048576))}` : PL_MB((st && st.size) || 0);
 let updPoll = null;
 async function loadUpdatePanel(check) {
   const box = $("#updateBody"); if (!box) return;
@@ -134,12 +136,12 @@ async function loadUpdatePanel(check) {
   const pw = window.pywebview && window.pywebview.api;
   if (pw && pw.is_client) { try { client = await pw.is_client(); } catch (e) {} }
   const head = !st.configured ? `<div class="bk-state">Сейчас установлена версия <b>${esc(st.current)}</b>. Адрес обновлений ещё не настроен — новые версии ставятся файлом-установщиком.</div>`
-    : st.available ? `<div class="pl-sub ok"><div><b>Доступна версия ${esc(st.latest)}</b>${st.date ? " от " + esc(fmtDate(st.date)) : ""} · ${esc(PL_MB(st.size))}</div><div class="muted">Сейчас установлена ${esc(st.current)}</div></div>`
+    : st.available ? `<div class="pl-sub ok"><div><b>Доступна версия ${esc(st.latest)}</b>${st.date ? " от " + esc(fmtDate(st.date)) : ""} · ${esc(updSize(st))}</div><div class="muted">Сейчас установлена ${esc(st.current)}</div></div>`
     : st.unpublished ? `<div class="bk-state">Сейчас установлена версия <b>${esc(st.current)}</b>. Обновления ещё не опубликованы — когда выйдет новая версия, программа найдёт её сама${st.checked_at ? ` · проверено ${esc(fmtDT(st.checked_at))}` : ""}</div>`
     : `<div class="bk-state">Установлена последняя версия <b>${esc(st.current)}</b>${st.checked_at ? ` · проверено ${esc(fmtDT(st.checked_at))}` : ""}</div>`;
   const notes = st.available && st.notes ? `<details class="pl-notes"><summary>Что нового</summary><div class="pl-notes-b">${notesHtml(st.notes)}</div></details>` : "";
   const err = st.error ? `<div class="warn-line">${esc(st.error)}</div>` : "";
-  const prog = st.downloading ? `<div class="pl-prog"><i style="width:${st.progress}%"></i></div><div class="muted">Скачиваем… ${st.progress}%</div>` : "";
+  const prog = st.downloading ? `<div class="pl-prog"><i style="width:${st.progress}%"></i></div><div class="muted">${esc(st.note || "Скачиваем…")} ${st.progress}%</div>` : "";
   const may = !client && updMay();  // М20: «Настройки» and the program's own window on this computer
   const btn = !st.available ? "" : st.ready ? `<button class="btn" id="upInstall" ${may ? "" : "disabled"}>Обновить сейчас</button>`
     : `<button class="btn" id="upGet" ${may && !st.downloading ? "" : "disabled"}>Скачать обновление</button>`;
@@ -237,14 +239,14 @@ function updateBanner(u) {
   if (UPD.drawn !== state + u.latest) {
     UPD.drawn = state + u.latest;
     el.innerHTML = state === "new" ? `<span>Вышла новая версия <b>${esc(u.latest)}</b>${updMay() ? "" : " — обновит директор в окне программы на этом компьютере"}</span>${updMay() ? `<button class="btn small" id="updGo">Обновить</button>` : ""}<button class="x" id="updClose" title="Скрыть" aria-label="Скрыть">×</button>`
-      : state === "dl" ? `<div class="upd-dl"><span>Скачиваем версию <b>${esc(u.latest)}</b>… <b id="updPct">${pct}%</b></span><div class="pl-prog"><i id="updBar" style="width:${pct}%"></i></div></div>`
+      : state === "dl" ? `<div class="upd-dl"><span>Скачиваем версию <b>${esc(u.latest)}</b>… <b id="updPct">${pct}%</b></span><div class="pl-prog"><i id="updBar" style="width:${pct}%"></i></div><div class="upd-note muted" id="updNote">${esc(u.note || "")}</div></div>`
       : state === "go" ? `<span>Устанавливаем версию <b>${esc(u.latest)}</b> — программа сейчас закроется и откроется снова</span>`
       : `<span class="bad-t">${esc(u.error)}</span><button class="btn small" id="updGo">Повторить</button><button class="x" id="updClose" title="Скрыть" aria-label="Скрыть">×</button>`;
     const go = $("#updGo", el); if (go) go.onclick = () => updateStart(u.latest);
     const x = $("#updClose", el); if (x) x.onclick = () => { UPD.hidden = u.latest; UPD.want = false; UPD.drawn = ""; el.hidden = true; };
   } else if (state === "dl") {
-    const b = $("#updBar", el), t = $("#updPct", el);
-    if (b) b.style.width = pct + "%"; if (t) t.textContent = pct + "%";
+    const b = $("#updBar", el), t = $("#updPct", el), n = $("#updNote", el);
+    if (b) b.style.width = pct + "%"; if (t) t.textContent = pct + "%"; if (n) n.textContent = u.note || "";
   }
   el.hidden = false;
   if (state === "go" && !UPD.busy) {
@@ -259,7 +261,7 @@ async function updateStart(ver) {
   try { st = await api.update_status(); } catch (e) {}
   // 3.11: «Что нового» goes whole into its own scrolling block of the dialog (it was cut at 900 letters and stretched the window)
   if (!(await ask(`Обновить программу до версии ${ver}?`, {ok: "Обновить", notes: (st && st.notes) || "",
-    text: "Программа скачает обновление (" + (st && st.size ? PL_MB(st.size) : "около 120 МБ") + "), проверит подпись разработчика, закроется, сохранит резервную копию и откроется уже новой версией. Это займёт несколько минут. Предупредите коллег, если они работают с этим компьютером."}))) return;
+    text: "Программа скачает обновление (" + (st && (st.size || st.dl_size) ? updSize(st) : "около 120 МБ") + (st && st.delta ? "" : "; если его уже скачал другой компьютер клиники — возьмёт у него по сети") + "), проверит подпись разработчика, закроется, сохранит резервную копию и откроется уже новой версией. Это займёт несколько минут. Предупредите коллег, если они работают с этим компьютером."}))) return;
   UPD.want = true; UPD.busy = false; UPD.drawn = "";
   try { await api.update_download(); } catch (e) { UPD.want = false; return toast(errText(e), true); }
   try { const s = await api.status(); if (s && s.update) updateBanner(s.update); } catch (e) {}

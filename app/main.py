@@ -1935,7 +1935,9 @@ class Api:
             import updates
             us = updates.UPDATER.state
             st["update"] = {"available": us["available"], "latest": us["latest"], "downloading": us["downloading"],
-                            "progress": us["progress"], "ready": bool(us["ready"]), "error": us["error"] if us["available"] else ""}
+                            "progress": us["progress"], "ready": bool(us["ready"]), "error": us["error"] if us["available"] else "",
+                            "note": us.get("note") or "", "delta": bool(us.get("delta")),  # 3.12: what and from where
+                            "dl_size": us.get("dl_size") or 0}
         except Exception:  # noqa: BLE001
             pass
         try:  # 2.14: the employee's rights now (the director may change a position while the employee works)

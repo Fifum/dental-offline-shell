@@ -215,7 +215,13 @@ bad.mkdir()
 RELEASES["dir"] = bad
 Path(u.state["ready"]).unlink()
 u.state["ready"] = ""
+check("3.12: the checked encrypted file is kept for the clinic's other computers",
+      updates.shared(doc["sha256"]) and updates.shared(doc["sha256"]).read_bytes() == data)
+for f in updates.share_dir().iterdir():  # without that copy the file is downloaded again — and this one is damaged
+    f.unlink()
 raises("damaged download refused", u._download, "контрольная")
+check("3.12: a damaged download is not kept and not given to others", not updates.shared(doc["sha256"])
+      and not list(updates.share_dir().glob("*.part")))
 
 # a build with another key, or none, refuses — never starts a file it could not read
 RELEASES["dir"] = feed_dir

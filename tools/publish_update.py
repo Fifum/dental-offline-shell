@@ -4,6 +4,7 @@
     python tools\\publish_update.py <folder> --bucket <name> [--prefix updates/]  # Yandex Object Storage (S3)
     python tools\\publish_update.py --save-keys                                   # store the S3 keys (DPAPI)
     python tools\\publish_update.py <folder> --github Fifum/dental-desk-updates   # a GitHub release (3.1, gh CLI)
+    python tools\\publish_update.py --prev-manifest --github <repo> --manifests release\\manifests --out <file.json>
 
 The exe goes first and latest.json last, so a program never sees a latest.json pointing to a missing file.
 S3 keys: environment YC_ACCESS_KEY_ID / YC_SECRET_ACCESS_KEY, or saved once with --save-keys into
@@ -15,6 +16,11 @@ encrypted installer and then latest.json, and only then becomes «latest» — t
 (update_sign.py feed --github <repo> puts it into brand.json) is .../releases/latest/download/latest.json.
 The repository is created on first use (gh repo create --public). Only an encrypted installer is uploaded there:
 the clinic's build carries the clinic's name (update_sign.py feed makes the key).
+
+3.12: the release also carries the delta «только изменения» (delta-<from>-<to>.bin) and the encrypted list of files
+of this version (manifest-<version>.bin), both before latest.json. --prev-manifest finds the list of files of the
+version the clinic has now (the feed's current latest.json, signature checked): release\\manifests\\manifest-<v>.json,
+or manifest-<v>.bin from that release — the next delta is built from it (publish-update.ps1).
 """
 from __future__ import annotations
 
@@ -88,6 +94,86 @@ def _gh(*args, check=True):
     return r
 
 
+def assets(src: Path, doc: dict) -> list:
+    """The files of a release next to latest.json: the whole installer, the delta, the list of files (3.12)."""
+    out = [src / doc["file"]]
+    d = doc.get("delta")
+    if isinstance(d, dict) and d.get("file"):
+        out.append(src / d["file"])
+    m = src / f"manifest-{doc['version']}.bin"
+    if m.exists():
+        out.append(m)
+    return out
+
+
+def check_files(src: Path, doc: dict):
+    exe = src / doc["file"]
+    if not exe.exists() or exe.stat().st_size != doc["size"]:
+        sys.exit("Установщик не совпадает с latest.json — подпишите заново (update_sign.py release)")
+    d = doc.get("delta")
+    if isinstance(d, dict):
+        f = src / str(d.get("file") or "")
+        if not f.exists() or f.stat().st_size != d.get("size"):
+            sys.exit("Файл «только изменения» не совпадает с latest.json — подпишите заново (update_sign.py release)")
+
+
+def prev_manifest(repo: str, keep_dir: Path, out: Path) -> int:
+    """The list of files of the version the clinic has now — the delta of the new release is built from it.
+    0 and `out` written, or 1: there is none (a release before 3.12, a new feed) — the update goes whole only."""
+    import manifest
+    import updates
+    r = _gh("release", "view", "--repo", repo, "--json", "tagName", check=False)
+    if r.returncode != 0:
+        print(f"В {repo} ещё нет выпусков: обновление пойдёт только целиком")
+        return 1
+    tag = json.loads(r.stdout or "{}").get("tagName") or ""
+    tmp = Path(out).parent / "prev-release"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    if _gh("release", "download", tag, "--repo", repo, "--pattern", "latest.json", "--dir", str(tmp), "--clobber",
+           check=False).returncode != 0 or not (tmp / "latest.json").exists():
+        print(f"Не удалось скачать latest.json выпуска {tag}: обновление пойдёт только целиком")
+        return 1
+    doc = json.loads((tmp / "latest.json").read_text(encoding="utf-8-sig"))
+    if not updates.verify(doc):
+        print(f"latest.json выпуска {tag} не подписан разработчиком: обновление пойдёт только целиком")
+        return 1
+    ver, want = doc.get("version"), doc.get("manifest")
+    if not want:
+        print(f"У версии {ver} в ленте нет списка файлов (выпуск до 3.12): обновление пойдёт только целиком")
+        return 1
+    m = None
+    local = Path(keep_dir) / f"manifest-{ver}.json"
+    if local.exists():
+        try:
+            m = json.loads(local.read_text(encoding="utf-8"))
+        except ValueError:
+            m = None
+        if not manifest.valid(m) or manifest.digest(m) != want:
+            print(f"{local} не совпадает с подписанным списком версии {ver} — берём его из ленты")
+            m = None
+    if m is None:
+        name = f"manifest-{ver}.bin"
+        if _gh("release", "download", tag, "--repo", repo, "--pattern", name, "--dir", str(tmp), "--clobber",
+               check=False).returncode != 0 or not (tmp / name).exists():
+            print(f"В выпуске {tag} нет {name}: обновление пойдёт только целиком")
+            return 1
+        key = updates.enc_key()
+        try:
+            m = json.loads(updates.open_text((tmp / name).read_text(encoding="ascii").strip(), key, updates.MANIFEST_AAD))
+        except Exception:  # noqa: BLE001 — another build's key, a damaged file
+            print(f"{name} не расшифровался ключом этой сборки: обновление пойдёт только целиком")
+            return 1
+        if not manifest.valid(m) or manifest.digest(m) != want:
+            print(f"{name} не совпадает с подписанным списком файлов версии {ver}: обновление пойдёт только целиком")
+            return 1
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+    Path(out).write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+    print(f"Список файлов версии {ver}: {len(m['files'])} файлов — обновление будет и «только изменения»")
+    return 0
+
+
 def github_publish(src: Path, doc: dict, repo: str, allow_plain=False):
     import updates
     if not doc.get("enc") and not allow_plain:
@@ -99,7 +185,7 @@ def github_publish(src: Path, doc: dict, repo: str, allow_plain=False):
         print(f"Создан публичный репозиторий {repo}")
     if _gh("release", "view", tag, "--repo", repo, check=False).returncode == 0:
         sys.exit(f"Релиз {tag} уже есть в {repo}. Новая сборка — новая версия (app/config.py → VERSION)")
-    _gh("release", "create", tag, str(src / doc["file"]), "--repo", repo, "--draft", "--title", f"Dental Desk {ver}",
+    _gh("release", "create", tag, *[str(f) for f in assets(src, doc)], "--repo", repo, "--draft", "--title", f"Dental Desk {ver}",
         "--notes", f"Обновление Dental Desk {ver}. Программа скачивает его сама и проверяет подпись разработчика.")
     _gh("release", "upload", tag, str(src / "latest.json"), "--repo", repo)
     _gh("release", "edit", tag, "--repo", repo, "--draft=false", "--latest")
@@ -132,7 +218,14 @@ def main():
     ap.add_argument("--save-keys", action="store_true")
     ap.add_argument("--github", help="owner/repo: publish as a GitHub release")
     ap.add_argument("--allow-plain", action="store_true", help="with --github: allow an unencrypted installer")
+    ap.add_argument("--prev-manifest", action="store_true", help="3.12: the list of files of the feed's current version")
+    ap.add_argument("--manifests", default="release/manifests")
+    ap.add_argument("--out", default="build/prev-manifest.json")
     a = ap.parse_args()
+    if a.prev_manifest:
+        if not a.github:
+            ap.error("укажите --github <owner/repo>")
+        return prev_manifest(a.github, Path(a.manifests), Path(a.out))
     if a.save_keys:
         kid = input("Идентификатор ключа: ").strip()
         secret = getpass.getpass("Секретный ключ: ").strip()
@@ -145,14 +238,14 @@ def main():
     src = Path(a.folder)
     doc = json.loads((src / "latest.json").read_text(encoding="utf-8-sig"))
     exe = src / doc["file"]
-    if not exe.exists() or exe.stat().st_size != doc["size"]:
-        sys.exit("Установщик не совпадает с latest.json — подпишите заново (update_sign.py release)")
+    check_files(src, doc)
     if a.github:
         return github_publish(src, doc, a.github, a.allow_plain)
     if a.dest:
         dest = Path(a.dest)
         dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(exe, dest / exe.name)
+        for f in assets(src, doc):
+            shutil.copy2(f, dest / f.name)
         tmp = dest / "latest.json.tmp"
         shutil.copy2(src / "latest.json", tmp)
         os.replace(tmp, dest / "latest.json")
@@ -162,7 +255,8 @@ def main():
         ap.error("укажите --github, --dest или --bucket")
     kid, secret = _keys()
     prefix = a.prefix.strip("/") + "/" if a.prefix.strip("/") else ""
-    s3_put(a.bucket, prefix + exe.name, exe.read_bytes(), "application/octet-stream", kid, secret)
+    for f in assets(src, doc):
+        s3_put(a.bucket, prefix + f.name, f.read_bytes(), "application/octet-stream", kid, secret)
     s3_put(a.bucket, prefix + "latest.json", (src / "latest.json").read_bytes(), "application/json", kid, secret)
     print(f"Готово: https://{ENDPOINT}/{a.bucket}/{prefix}latest.json")
     return 0
