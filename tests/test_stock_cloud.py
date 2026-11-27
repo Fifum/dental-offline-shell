@@ -352,7 +352,20 @@ def live():
     check("live: the director changes the equipment", code_ == 200 and udir["can"]["money"], es)
     code_, bc = post("/p/op", {"op": f"lt{run}-bar-0001", "kind": "barcode", "id": m0, "barcode": "4600000000017"}, hdir)
     check("live: a barcode is linked", code_ == 200, bc)
+    code_, wo = post("/p/op", {"op": f"lt{run}-wro-0001", "kind": "use", "what": "writeoff", "reason": "Брак упаковки",
+                               "lines": [{"material_id": m0, "qty": 1}]}, hb)
+    check("live: the manager writes off with a reason at once", code_ == 200 and wo.get("status") == "done", wo)
+    code_, ev = post("/p/op", {"op": f"lt{run}-eve-0001", "kind": "equipment_event", "id": eq, "event": "service",
+                               "text": "ТО живой тест", "next_service": "30.06.2027"}, hdir)
+    check("live: a service of the equipment", code_ == 200, ev)
     c1.sync()
+    wa = L1.one("SELECT kind, status, doc_id FROM stock_approvals WHERE id=?", (wo.get("id"),)) or {}
+    wd = L1.one("SELECT kind, reason FROM stock_docs WHERE id=?", (wa.get("doc_id") or "-",)) or {}
+    check("live: the write-off is a write-off with its reason", wa.get("kind") == "writeoff" and wa.get("status") == "done"
+          and wd.get("kind") == "writeoff" and wd.get("reason") == "Брак упаковки", (wa, wd))
+    evr = L1.one("SELECT kind FROM equipment_events WHERE equipment_id=? AND text='ТО живой тест'", (eq,)) or {}
+    check("live: the event is a service and the next service is set", evr.get("kind") == "service"
+          and L1.one("SELECT next_service FROM equipment WHERE id=?", (eq,))["next_service"] == "2027-06-30", evr)
     got_in = L1.one("SELECT SUM(qty) AS q FROM stock_moves WHERE doc_id=? AND material_id=?", (rc.get("doc_id"), m0))["q"]
     got_out = L1.one("SELECT SUM(qty) AS q FROM stock_moves WHERE doc_id=? AND material_id=?", ("A-" + str(use.get("id")), m0))["q"]
     check("live: laptop 1 has the delivery and the approved use", got_in == 5 and got_out == -1, (got_in, got_out))
