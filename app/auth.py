@@ -320,6 +320,9 @@ METHOD_PERMS = {
     "equipment_inventory_batch": "equipment", "equipment_inventory_log": ("equipment", "stock_view", "stock_edit"),
     "equipment_service_log": ("equipment", "stock_view"),
     "equipment_doc_add": "equipment", "equipment_doc_delete": "equipment", "equipment_doc_open": ("equipment", "stock_view"),
+    # 3.16: the photo gallery of the card
+    "equipment_photo_upload": "equipment", "equipment_photo_add": "equipment", "equipment_photo_main": "equipment",
+    "equipment_photo_delete": "equipment",
     "equipment_settings_save": "accounting", "equipment_qr": ("equipment", "stock_view"),
     # 3.10: the nurse's stock — requests, consumption waiting for approval, photos, depreciation of equipment.
     # A write-off by someone without «Склад: приход, списание» or «согласование» is only a request (checked in Api)
@@ -473,6 +476,8 @@ AUDITED = {
     "equipment_inventory_batch": "Инвентаризация оборудования списком",
     "equipment_replace_plan": "Замена оборудования запланирована", "equipment_dispose": "Выбытие оборудования",
     "equipment_doc_add": "Документ оборудования", "equipment_doc_delete": "Документ оборудования убран",
+    "equipment_photo_add": "Фото оборудования", "equipment_photo_main": "Главное фото оборудования",
+    "equipment_photo_delete": "Фото оборудования убрано",
     "equipment_settings_save": "Часы работы кресла в месяц",
     "stock_request_save": "Заявка на выдачу материалов", "stock_request_cancel": "Заявка на материалы отменена",
     "stock_request_reject": "Заявка на материалы отклонена", "stock_request_accept": "Заявка на материалы принята", "stock_use": "Расход материалов (медсестра — на согласование)",

@@ -246,11 +246,15 @@ function eqReceiptStep(sups, places, mon) {
   } else if (st === 2) {
     const row = (l, i) => `<tr data-i="${i}"><td><input class="input" data-k="name" value="${esc(l.name || "")}" placeholder="Наименование"></td><td><input class="input" data-k="category" value="${esc(l.category || "")}" list="rcCats"></td>
       <td><input class="input" data-k="manufacturer" value="${esc(l.manufacturer || "")}"></td><td><input class="input" data-k="model" value="${esc(l.model || "")}"></td><td><input class="input" data-k="serial" value="${esc(l.serial || "")}"></td>
-      <td><input class="input num" type="number" min="1" step="1" data-k="qty" value="${l.qty || 1}"></td>${mon ? `<td><input class="input num" type="number" min="0" step="any" data-k="price" value="${l.price || ""}"></td>` : ""}<td><button class="linkbtn danger-t" data-del="${i}">${EQX.x}</button></td></tr>`;
-    el.innerHTML = `<div class="eqs-lines"><table class="tbl compact"><thead><tr><th>Наименование *</th><th>Категория</th><th>Производитель</th><th>Модель</th><th>Серийный №</th><th class="num">Кол-во</th>${mon ? '<th class="num">Цена за ед., ₽</th>' : ""}<th></th></tr></thead><tbody id="rcLines">${(lines.length ? lines : [{}]).map(row).join("")}</tbody></table>
+      <td><input class="input num" type="number" min="1" step="1" data-k="qty" value="${l.qty || 1}"></td>${mon ? `<td><input class="input num" type="number" min="0" step="any" data-k="price" value="${l.price || ""}"></td>` : ""}<td class="eqp-cell"><div data-phl="${i}"></div></td><td><button class="linkbtn danger-t" data-del="${i}">${EQX.x}</button></td></tr>`;
+    el.innerHTML = `<div class="eqs-lines"><table class="tbl compact"><thead><tr><th>Наименование *</th><th>Категория</th><th>Производитель</th><th>Модель</th><th>Серийный №</th><th class="num">Кол-во</th>${mon ? '<th class="num">Цена за ед., ₽</th>' : ""}<th title="Фото уйдут в карточку каждой единицы; первое — главное">Фото</th><th></th></tr></thead><tbody id="rcLines">${(lines.length ? lines : [{}]).map(row).join("")}</tbody></table>
       <datalist id="rcCats">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist><button class="btn ghost small" id="rcAdd">+ Строка</button>
       <div class="muted eqs-hint">Проверьте комплектацию и состояние. Каждая единица получит свою карточку; при количественном учёте — одна карточка на всё количество.</div></div>${nav(true, "Далее: Учёт")}`;
-    const read = () => $$("#rcLines tr").map(tr => ({...(lines[+tr.dataset.i] || {}), ...Object.fromEntries($$("[data-k]", tr).map(i => [i.dataset.k, i.value]))})).filter(l => (l.name || "").trim());
+    // 3.16: the photos of a line (stored at once; every card of the line gets them when the receipt is put into service)
+    const phs = (lines.length ? lines : [{}]).map(l => [...(l.photos || [])]);
+    $$("[data-phl]", el).forEach(x => eqPhStrip(x, phs[+x.dataset.phl], v => { phs[+x.dataset.phl] = v; }, {small: true, ask: true}));
+    const read = () => $$("#rcLines tr").map(tr => ({...(lines[+tr.dataset.i] || {}), ...Object.fromEntries($$("[data-k]", tr).map(i => [i.dataset.k, i.value])),
+      photos: phs[+tr.dataset.i] || []})).filter(l => (l.name || "").trim());
     $("#rcAdd").onclick = () => { EQS.rc.lines = [...read(), {}]; eqReceiptStep(sups, places, mon); };
     $$("[data-del]", el).forEach(b => b.onclick = () => { const all = read(); all.splice(+b.dataset.del, 1); EQS.rc.lines = all; eqReceiptStep(sups, places, mon); });
     $("#rcBack").onclick = () => { EQS.rc.lines = read(); EQS.rc._step = 1; eqReceiptStep(sups, places, mon); };

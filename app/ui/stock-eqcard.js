@@ -77,8 +77,7 @@ async function eqCard() {
     ${off ? `<div class="warn-line">${esc(e.status_title)} ${fmtDate(e.writeoff_date)}${e.writeoff_act ? ` по акту № ${esc(e.writeoff_act)}` : ""}: ${esc(e.writeoff_reason || "")}. Карточка только для просмотра.</div>` : ""}
     <div class="eqc-grid"><div class="eqc-main">
       <section class="eqc-card eqc-top ${money ? "" : "no-money"}">
-        <div class="eqc-gal"><div class="eqc-photo" id="eqPhoto" ${photos.length ? `data-big="${esc(photos[EQ.gal] || photos[0])}"` : ""}>${EQI.ph}${photos.length ? `<button class="eqc-exp" id="eqExp" title="Открыть фото">${EQI.expand}</button>` : ""}</div>
-          <div class="eqc-dots">${photos.length > 1 ? photos.map((p, i) => `<button data-gal="${i}" class="${i === EQ.gal ? "on" : ""}" title="Фото ${i + 1}"></button>`).join("") : c.edit && !photos.length ? `<button class="linkbtn" id="eqPh0">${EQI.camera}Добавить фото</button>` : ""}</div></div>
+        ${eqGalleryHtml(e, c)}
         <div class="eqc-id"><span class="eqc-badge ${off ? "off" : eqCondCls(e.condition)}">${off ? EQI.info : e.condition === "ok" ? EQI.okc : EQI.warn}${esc(off ? e.status_title : e.condition_title)}</span>${e.status === "repair" && !off ? `<span class="eqc-badge bad">${EQI.wrench}В ремонте</span>` : ""}
           <h3>${esc(e.name)}</h3><div class="eqc-inv">Инвентарный номер: ${esc(e.inv_number || "—")}</div>
           <ul><li>${EQI.pin}${esc(e.location_name || "Место не указано")}</li><li>${EQI.layers}${esc(e.category || "Категория не указана")}</li><li>${EQI.bank}${esc(e.ownership_title)}${e.contractor ? ` · ${esc(e.contractor)}` : ""}</li>${e.accounting === "qty" || (e.qty || 1) > 1 ? `<li>${EQI.sigma}${e.accounting === "qty" ? "Количественный учёт" : "Количество"}${(e.qty || 1) > 1 ? `: ${e.qty} шт.` : ""}</li>` : ""}${e.use_end ? `<li>${EQI.cal}До ${fmtDate(e.use_end)}${e.contract_no ? `, договор № ${esc(e.contract_no)}` : ""}</li>` : ""}</ul></div>
@@ -101,19 +100,13 @@ async function eqCard() {
   on("#eqBack", eqClose); on("#eqBack2", eqClose);
   on("#eqPrintQr", () => eqPrintLabel(e)); on("#eqEdit", () => editEquipment(e));
   on("#eqMore", ev => eqMoreMenu(ev.currentTarget, e, r));
-  on("#eqNext", () => eqTab("service")); on("#eqUp", () => eqUpload("")); on("#eqPh0", () => eqUpload("photo"));
+  on("#eqNext", () => eqTab("service")); on("#eqUp", () => eqUpload(""));
   on("#eqAll", () => { EQ.allDocs = !EQ.allDocs; eqCard(); });
-  $$("[data-gal]", body).forEach(b => b.onclick = () => { EQ.gal = +b.dataset.gal; eqCard(); });
   $$("[data-dk]", body).forEach(b => b.onclick = () => { EQ.docKind = b.dataset.dk; eqTab("docs"); });
   $$("#eqTabs button", body).forEach(b => b.onclick = () => eqTab(b.dataset.t));
   $$("[data-act]", body).forEach(b => b.onclick = () => eqAction(b.dataset.act));
   eqPane();
-  const big = $("#eqPhoto", body);
-  if (big && big.dataset.big) {
-    try { const ph = await api.stock_photo(big.dataset.big); big.insertAdjacentHTML("afterbegin", `<img src="${ph.url}" alt="">`); big.classList.add("has");
-      const ex = $("#eqExp", body); if (ex) ex.onclick = () => eqViewer(ph.url, e.name); big.onclick = ev => { if (ev.target === big || ev.target.tagName === "IMG") eqViewer(ph.url, e.name); };
-    } catch (x) { /* the photo did not come from the other computer yet */ }
-  }
+  await eqGalleryWire(body, e, c, $(".eqc-top", body));  // 3.16: several photos, the main one, dropping files on the card
 }
 const eqMoney0 = v => money(Math.round(+v || 0));
 const eqPct = v => `${(+v || 0).toLocaleString("ru-RU", {minimumFractionDigits: 1, maximumFractionDigits: 1})} %`;
@@ -274,7 +267,7 @@ function eqAction(k) {
   const r = EQ.data; if (!r) return;
   const e = r.e;
   const placeOpts = cur => `<option value="">— другое место (впишите) —</option>${r.places.map(p => `<option value="${esc(p.id)}" ${p.id === cur ? "selected" : ""}>${esc(p.name)}</option>`).join("")}`;
-  if (k === "photo") return eqUpload("photo");
+  if (k === "photo") return eqPhPick(files => eqPhAddFiles(e, files));
   if (k === "report" || k === "request") { EQS.rqPreset = e.id; S.eqOpen = null; return stockGo("equipment", "service"); }  // 3.15
   if (k === "confirm") return api.equipment_confirm(e.id).then(() => { toast("Наличие подтверждено"); eqCard(); }).catch(x => toast(errText(x), true));
   if (k === "inventory") return eqTab("inventory");
@@ -419,10 +412,13 @@ async function editEquipment(e) {
       <datalist id="eLifes">${[12, 24, 36, 60, 84, 120, 180].map(x => `<option value="${x}">${x / 12} ${plural(x / 12, "год", "года", "лет")}</option>`).join("")}</datalist>
       <div class="muted" id="eLifeT" style="margin-top:-4px"></div>
       ${isNew ? `<div class="grid3"><label class="fl" style="grid-column:span 2" title="Расход запишется датой покупки в статью «Покупка оборудования»: в движении денег он есть, а в прибыль оборудование идёт амортизацией">Записать оплату в расходы<select class="input" id="ePay"><option value="">— не записывать (оплата уже внесена или будет позже) —</option>${["Безналичный перевод", "Наличные", "Карта"].map(m => `<option>${m}</option>`).join("")}</select></label></div>` : ""}` : `<div class="muted">Стоимость и амортизацию вносит директор (право «Бухгалтерия»).</div>`}
+      ${isNew ? `<div class="fl eqp-fl"><span>Фото</span><div id="ePh"></div></div>` : ""}
       <label class="fl">Комментарий<input class="input" id="eCom" value="${esc(e.comment || "")}"></label><div class="auth-err" id="eErr"></div></div>
-    <div class="m-f"><span class="muted">${isNew ? "После сохранения откроется карточка: фото, документы, QR-этикетка" : ""}</span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="eOk">${isNew ? "Создать карточку" : "Сохранить"}</button></div>`, {wide: true});
+    <div class="m-f"><span class="muted">${isNew ? "После сохранения откроется карточка: документы и QR-этикетка" : ""}</span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="eOk">${isNew ? "Создать карточку" : "Сохранить"}</button></div>`, {wide: true});
   const syncLoc = () => { $("#eLW", box).style.visibility = $("#eLoc", box).value ? "hidden" : ""; }; $("#eLoc", box).onchange = syncLoc; syncLoc();
   const syncOwn = () => { $("#eThird", box).hidden = ($("#eOwn", box).value || "own") === "own"; }; $("#eOwn", box).onchange = syncOwn; syncOwn();
+  let newPh = [];  // 3.16: the photos of a new piece are stored at once; the card gets them when it is created
+  if (isNew) eqPhStrip($("#ePh", box), newPh, v => { newPh = v; box._dirty = true; });
   $("#eOk", box).onclick = async () => {
     const f = {id: e.id, name: $("#eN").value, inv_number: $("#eInv").value, model: $("#eM").value, serial: $("#eS").value, category: $("#eC").value,
       manufacturer: $("#eMf").value, responsible: $("#eR").value, status: $("#eSt").value, purchase_date: $("#eP").value, warranty_until: $("#eW").value,
@@ -432,6 +428,7 @@ async function editEquipment(e) {
     if ($("#eLoc").value) f.location_id = $("#eLoc").value; else { f.location_id = ""; f.location = $("#eL").value; }
     if (money) Object.assign(f, {price: $("#ePr").value, useful_months: $("#eLife").value, salvage: $("#eSalv").value});
     const pay = $("#ePay"); if (pay && pay.value) f.pay = pay.value;  // 3.14: «Покупка оборудования»
+    if (isNew && newPh.length) f.photos = newPh;
     try { const id = await api.save_equipment(f); closeModal(); toast(isNew ? "Карточка создана" : "Сохранено"); openEquipment(id); }
     catch (err) { $("#eErr").textContent = errText(err); }
   };

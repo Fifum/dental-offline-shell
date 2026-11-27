@@ -1,0 +1,96 @@
+/* ===== 3.16 «Фото оборудования»: the gallery of the card (several photos, one main), the strip of photos of a new piece and
+   of a line of a receipt, dropping files. Colors are the theme's tokens, so the light and the dark theme come from there; the
+   tools over a photo get their dark variant below. */
+.eqp-gal svg,.eqp-strip svg,.eqp-view svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* the big photo */
+.eqp-gal .eqc-photo{transition:box-shadow .15s,background .15s}
+.eqp-gal .eqc-photo.empty{cursor:default}
+.eqp-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:12px;
+  border:1.5px dashed var(--line);border-radius:12px;background:none;color:var(--ink2);cursor:pointer;font:inherit;text-align:center}
+.eqp-empty:hover{border-color:var(--accent);color:var(--accent-ink,var(--accent));background:var(--accent-soft)}
+.eqp-empty svg{width:34px;height:34px;stroke-width:1.4}
+.eqp-empty b{font-size:13.5px;font-weight:600}
+.eqp-empty small{font-size:11.5px;color:var(--muted);line-height:1.3}
+.eqp-main{position:absolute;left:8px;top:8px;display:inline-flex;align-items:center;gap:4px;padding:3px 8px 3px 6px;border-radius:999px;
+  background:rgba(255,255,255,.92);color:#5B4300;font-size:11.5px;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.eqp-main svg{width:13px;height:13px;fill:#E2A93B;stroke:#C58E1F}
+.eqp-tools{position:absolute;right:8px;bottom:8px;display:flex;gap:6px;opacity:0;transition:opacity .15s}
+.eqc-photo:hover .eqp-tools,.eqc-photo:focus-within .eqp-tools{opacity:1}
+.eqp-tools button{width:30px;height:30px;border-radius:8px;border:0;background:rgba(255,255,255,.92);display:grid;place-items:center;
+  color:#203538;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.14)}
+.eqp-tools button svg{width:16px;height:16px}
+.eqp-tools button:hover{color:#8A6400}
+.eqp-tools button.del:hover{color:var(--danger-strong,#B3261E)}
+@media (hover:none){.eqp-tools{opacity:1}}
+
+/* dropping files on the card */
+.eqp-hint{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px;
+  border-radius:12px;border:2px dashed var(--accent);background:color-mix(in srgb,var(--accent-soft) 88%,transparent);color:var(--accent-ink,var(--accent));
+  text-align:center;font-size:12.5px;pointer-events:none;z-index:2}
+.eqp-hint svg{width:28px;height:28px}
+.eqp-zone.eqp-over .eqp-hint{display:flex}
+.eqp-zone.eqp-over{box-shadow:inset 0 0 0 2px var(--accent-line)}
+.eqp-busy{opacity:.6;pointer-events:none;cursor:progress}
+
+/* the thumbnails under it */
+.eqp-thumbs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.eqp-th{position:relative;aspect-ratio:1/1;padding:0;border:1.5px solid transparent;border-radius:8px;background:none;cursor:pointer;overflow:visible}
+.eqp-th .sn-ph{width:100%;height:100%;border-radius:7px}
+.eqp-th .sn-ph svg{width:18px;height:18px}
+.eqp-th.on{border-color:var(--accent)}
+.eqp-th:hover:not(.on){border-color:var(--line)}
+.eqp-th>i{position:absolute;top:-5px;right:-5px;width:17px;height:17px;border-radius:50%;background:var(--panel);display:grid;place-items:center;
+  box-shadow:0 0 0 1px var(--line)}
+.eqp-th>i svg{width:11px;height:11px;fill:#E2A93B;stroke:#C58E1F;stroke-width:1.4}
+.eqp-th.add{display:grid;place-items:center;border:1.5px dashed var(--line);color:var(--muted)}
+.eqp-th.add:hover{border-color:var(--accent);color:var(--accent-ink,var(--accent));background:var(--accent-soft)}
+.eqp-th.add svg{width:18px;height:18px}
+
+/* the viewer */
+.eqp-view{position:relative;min-height:240px}
+.eqp-nav{position:absolute;top:50%;transform:translateY(-50%);width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);display:grid;place-items:center;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.12);z-index:1}
+.eqp-nav.prev{left:8px}
+.eqp-nav.next{right:8px}
+.eqp-nav:hover{border-color:var(--accent);color:var(--accent-ink,var(--accent))}
+.eqp-nav svg{width:20px;height:20px}
+.m-h #pvN{margin-left:10px;font-size:13px}
+
+/* a strip of photos: the form of a new piece, a line of a receipt */
+.eqp-fl>span{display:block;margin-bottom:6px}
+.eqp-strip{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-height:56px;padding:6px;border-radius:10px;border:1.5px dashed transparent;transition:border-color .15s,background .15s}
+.eqp-strip.eqp-over{border-color:var(--accent);background:var(--accent-soft)}
+.eqp-strip>small{flex:1 1 220px;font-size:12px;line-height:1.35}
+.eqp-sp{position:relative;flex:none;width:56px;height:56px;padding:0;border-radius:9px;cursor:pointer}
+.eqp-sp .sn-ph{width:100%;height:100%;border-radius:8px}
+.eqp-sp.main .sn-ph{box-shadow:0 0 0 2px var(--accent)}
+.eqp-sp>i{position:absolute;left:-5px;top:-5px;width:18px;height:18px;border-radius:50%;background:var(--panel);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
+.eqp-sp>i svg{width:11px;height:11px;fill:#E2A93B;stroke:#C58E1F;stroke-width:1.4}
+.eqp-x{position:absolute;right:-6px;top:-6px;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--ink2);
+  font-size:14px;line-height:1;display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .12s;padding:0}
+.eqp-sp:hover .eqp-x,.eqp-sp:focus-within .eqp-x{opacity:1}
+.eqp-x:hover{color:var(--danger);border-color:var(--danger-line,var(--danger))}
+@media (hover:none){.eqp-x{opacity:1}}
+.eqp-sp.add{width:auto;min-width:56px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;border:1.5px dashed var(--line);
+  background:none;color:var(--ink2);font:inherit;font-size:13px}
+.eqp-sp.add:hover{border-color:var(--accent);color:var(--accent-ink,var(--accent));background:var(--accent-soft)}
+.eqp-sp.add svg{width:18px;height:18px}
+.eqp-strip.sm{min-height:0;gap:6px;padding:2px;flex-wrap:nowrap}
+.eqp-strip.sm .eqp-sp{width:32px;height:32px;border-radius:6px}
+.eqp-strip.sm .eqp-sp .sn-ph{border-radius:6px}
+.eqp-strip.sm .eqp-sp .sn-ph svg{width:15px;height:15px}
+.eqp-strip.sm .eqp-sp.add{min-width:32px;padding:0}
+.eqp-strip.sm .eqp-sp>i{width:15px;height:15px;left:-4px;top:-4px}
+.eqp-strip.sm .eqp-sp>i svg{width:9px;height:9px}
+.eqp-strip.sm .eqp-x{width:16px;height:16px;font-size:12px;right:-5px;top:-5px}
+.eqp-cell{min-width:84px}
+
+/* dark theme: the tools over a photo */
+@media screen{
+  :root[data-theme="dark"] :is(.eqp-main,.eqp-tools button){background:rgba(20,33,36,.92);color:var(--ink)}
+  :root[data-theme="dark"] .eqp-main{color:#F2C46B}
+  :root[data-theme="dark"] .eqp-tools button:hover{color:#F2C46B}
+  :root[data-theme="dark"] .eqp-tools button.del:hover{color:#F29C90}
+  :root[data-theme="dark"] .eqp-nav{box-shadow:0 2px 8px rgba(0,0,0,.5)}
+}

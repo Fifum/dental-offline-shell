@@ -1686,7 +1686,8 @@ class Stock:
         have = {d["kind"] for d in docs} | ({"photo"} if e.get("photo_id") else set())
         e["doc_kinds"] = [{"kind": k, "title": EQ_DOC_KINDS[k], "count": sum(1 for d in docs if d["kind"] == k)} for k in EQ_DOC_KINDS]
         e["doc_count"], e["doc_total"] = sum(1 for k in EQ_DOC_MAIN if k in have), len(EQ_DOC_MAIN)
-        e["photos"] = list(dict.fromkeys(x for x in [e.get("photo_id")] + [d["file_id"] for d in docs if d["kind"] == "photo"] if x))
+        e["gallery"] = self._eq_gallery(e)
+        e["photos"] = [g["file_id"] for g in e["gallery"]]
         year_ago = (date.today() - timedelta(days=365)).isoformat()
         work = [ev for ev in e["events"] if ev["kind"] in ("service", "repair")]
         e["service_cost_year"] = round(sum(ev["cost"] or 0 for ev in work if (ev["date"] or "") >= year_ago), 2)
@@ -2038,7 +2039,9 @@ class Stock:
             row = {"key": key, **{k: _clean(ln.get(k), n) for k, n in self._RCPT_TEXT.items()},
                    "qty": max(1, int(_num(ln.get("qty"), "Количество") or 1)),
                    "accounting": ln.get("accounting") if ln.get("accounting") in EQ_ACCOUNTING else (o.get("accounting") or "amort"),
-                   "location_id": str(ln.get("location_id") or "")[:60], "in_service": _day(ln.get("in_service"), "Ввод в эксплуатацию")}
+                   "location_id": str(ln.get("location_id") or "")[:60], "in_service": _day(ln.get("in_service"), "Ввод в эксплуатацию"),
+                   # 3.16: photos of what came, the first is the main one of every card made from the line
+                   "photos": self.stock_photo_ids(ln.get("photos") if isinstance(ln.get("photos"), list) else o.get("photos"))}
             if money:
                 row["price"] = max(0, _num(ln.get("price"), "Цена"))
                 n = int(_num(ln.get("useful_months"), "Срок полезного использования") or 0)
@@ -2151,6 +2154,8 @@ class Stock:
                     f["location_id"] = ln["location_id"]
                 eid = self.save_equipment(f, user, money=True)  # the receipt's prices were set by «Бухгалтерия» (or kept)
                 ids.append(eid)
+                for fid in self.stock_photo_ids(ln.get("photos")):  # 3.16: the photos of the line go to each of its cards
+                    self.equipment_photo_add(eid, fid, "", user)
         with self.db.tx() as c:
             for eid in ids:
                 c.execute("UPDATE equipment SET receipt_id=? WHERE id=?", (r["id"], eid))
@@ -3549,6 +3554,77 @@ class Stock:
         if not d:
             raise ValueError("Документ не найден")
         return d
+
+    # ------------------------------------------------ 3.16: the photo gallery of the card --
+    def _eq_gallery(self, e):
+        """The photos of the card, the main one first (it is the picture of the register), then in the order they came (several
+        in one second keep the order they were added in). A main photo from before 3.13 (only `photo_id`, no row in
+        equipment_docs) is in the gallery too."""
+        out, seen, main = [], set(), e.get("photo_id") or ""
+        for d in self.db.q("SELECT id, file_id, title, created_at, created_by FROM equipment_docs WHERE equipment_id=? AND kind='photo' "
+                           "AND deleted=0 ORDER BY created_at, rowid", (e["id"],)):
+            if d["file_id"] and d["file_id"] not in seen:
+                seen.add(d["file_id"])
+                out.append({"file_id": d["file_id"], "doc_id": d["id"], "title": d["title"] or "", "created_at": d["created_at"] or "",
+                            "created_by": d["created_by"] or "", "main": d["file_id"] == main})
+        if main and main not in seen:
+            out.insert(0, {"file_id": main, "doc_id": "", "title": "Главное фото", "created_at": "", "created_by": "", "main": True})
+        out.sort(key=lambda g: not g["main"])
+        return out
+
+    def stock_photo_ids(self, ids, limit=12):
+        """Of the ids given, only the stock's own photos (never a patient's file), in their order, without repeats."""
+        ids = list(dict.fromkeys(str(x) for x in (ids or []) if x and isinstance(x, str)))[:limit]
+        if not ids:
+            return []
+        own = {r["id"] for r in self.db.q(f"SELECT id FROM patient_files WHERE patient_id='_stock' AND kind='photo' AND deleted=0 "
+                                          f"AND id IN ({','.join('?' * len(ids))})", tuple(ids))}
+        return [i for i in ids if i in own]
+
+    def equipment_photo_add(self, eid, file_id, title="", user="", main=False):
+        """A photo into the gallery (a row of equipment_docs of the kind «photo»): the first one becomes the main one; the same
+        picture twice stays one photo."""
+        e = self._eq_live(eid)
+        if not self.stock_photo_ids([file_id]):
+            raise ValueError("Фото не найдено")
+        have = self.db.one("SELECT id FROM equipment_docs WHERE equipment_id=? AND kind='photo' AND file_id=? AND deleted=0", (e["id"], file_id))
+        if not have:
+            title = title or (self.db.one("SELECT title FROM patient_files WHERE id=?", (file_id,)) or {}).get("title") or "Фото"
+            self.equipment_doc_add(e["id"], "photo", title, file_id, user)
+        if main and e["photo_id"] != file_id:
+            self.equipment_photo_main(e["id"], file_id, user)
+        return e["id"]
+
+    def equipment_photo_main(self, eid, file_id, user=""):
+        """«Сделать главным»: this photo is the picture of the card in the register, the lists and the cards view."""
+        e = self._eq_live(eid)
+        g = next((x for x in self._eq_gallery(e) if x["file_id"] == str(file_id or "")), None)
+        if not g:
+            raise ValueError("Фото не найдено в карточке")
+        if g["main"]:
+            return e["id"]
+        with self.db.tx() as c:
+            c.execute("UPDATE equipment SET photo_id=? WHERE id=?", (g["file_id"], e["id"]))
+            self._ev(c, e["id"], "doc", f"Главное фото: {g['title'] or 'Фото'}", user)
+        return e["id"]
+
+    def equipment_photo_delete(self, eid, file_id, user=""):
+        """A photo leaves the gallery (the file stays: it may be in a receipt or another card); when it was the main one the
+        next photo becomes the main one."""
+        e = self._eq_live(eid)
+        fid = str(file_id or "")
+        rows = self.db.q("SELECT * FROM equipment_docs WHERE equipment_id=? AND kind='photo' AND file_id=? AND deleted=0", (e["id"], fid))
+        if not rows and e["photo_id"] != fid:
+            raise ValueError("Фото не найдено в карточке")
+        with self.db.tx() as c:
+            for d in rows:
+                c.execute("UPDATE equipment_docs SET deleted=1 WHERE id=?", (d["id"],))
+            if e["photo_id"] == fid:
+                nxt = c.execute("SELECT file_id FROM equipment_docs WHERE equipment_id=? AND kind='photo' AND deleted=0 AND file_id<>? "
+                                "ORDER BY created_at, rowid LIMIT 1", (e["id"], fid)).fetchone()
+                c.execute("UPDATE equipment SET photo_id=? WHERE id=?", (nxt[0] if nxt else None, e["id"]))
+            self._ev(c, e["id"], "doc", f"Убрано фото: {(rows[0]['title'] if rows else '') or 'Фото'}", user)
+        return e["id"]
 
     # ------------------------------------------------- 3.13: QR of the inventory label --
     def phone_url(self):

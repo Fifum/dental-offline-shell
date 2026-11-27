@@ -395,6 +395,9 @@ class Api:
         if pay and not self._eq_money():
             raise ValueError("Записать оплату оборудования может только сотрудник с правом «Бухгалтерия»")
         eid = self._stock.save_equipment(f, self._who(), money=self._eq_money())
+        if not f.get("id") and isinstance(f.get("photos"), list):  # 3.16: the photos chosen in the form of a new piece
+            for fid in self._stock.stock_photo_ids(f["photos"]):
+                self._stock.equipment_photo_add(eid, fid, "", self._who())
         if pay and not f.get("id"):
             e = self._stock.equipment(eid)
             if e and (e["price"] or 0) > 0:
@@ -445,6 +448,27 @@ class Api:
     def equipment_doc_open(self, did):
         d = self._stock.equipment_doc_file(did)
         return {**self._files.stock_photo(d["file_id"]), "title": d["title"]}
+
+    # 3.16: the photo gallery of the card — several photos from the computer, one main (the picture of the register). A photo is
+    # made smaller and kept like the stock photos, so it goes to the other computers of the clinic.
+    def equipment_photo_upload(self, name, data_b64):
+        """A photo stored before its card exists (a new piece, a line of a receipt): its id and its preview."""
+        import files
+        ph = self._files.add_stock_photo(name, files.b64_bytes(data_b64), self._who())
+        return {"file_id": ph["id"], "thumb": self._files.stock_thumbs([ph["id"]]).get(ph["id"])}
+
+    def equipment_photo_add(self, eid, name, data_b64, main=False):
+        import files
+        self._stock._eq_live(eid)  # nothing is stored for a piece that is gone
+        ph = self._files.add_stock_photo(name, files.b64_bytes(data_b64), self._who())
+        self._stock.equipment_photo_add(eid, ph["id"], "", self._who(), bool(main))
+        return self.equipment(eid)
+
+    def equipment_photo_main(self, eid, file_id):
+        return self.equipment(self._stock.equipment_photo_main(eid, file_id, self._who()))
+
+    def equipment_photo_delete(self, eid, file_id):
+        return self.equipment(self._stock.equipment_photo_delete(eid, file_id, self._who()))
 
     def equipment_qr(self, eid):
         """3.13: the QR of the inventory label (PNG) and what it holds."""
@@ -770,12 +794,19 @@ class Api:
         import files
         table, row = self._photo_target(kind, oid)
         ph = self._files.add_stock_photo(name, files.b64_bytes(data_b64), self._who())
-        with self._db.tx() as c:
-            c.execute(f"UPDATE {table} SET photo_id=? WHERE id=?", (ph["id"], row["id"]))
+        if table == "equipment":  # 3.16: into the gallery of the card, as its main photo
+            self._stock.equipment_photo_add(row["id"], ph["id"], "", self._who(), main=True)
+        else:
+            with self._db.tx() as c:
+                c.execute(f"UPDATE {table} SET photo_id=? WHERE id=?", (ph["id"], row["id"]))
         return {"photo_id": ph["id"], "thumb": self._files.stock_thumbs([ph["id"]]).get(ph["id"])}
 
     def stock_photo_clear(self, kind, oid):
         table, row = self._photo_target(kind, oid)
+        if table == "equipment":  # 3.16: the main photo leaves the gallery, the next one becomes the main one
+            if row["photo_id"]:
+                self._stock.equipment_photo_delete(row["id"], row["photo_id"], self._who())
+            return True
         with self._db.tx() as c:
             c.execute(f"UPDATE {table} SET photo_id=NULL WHERE id=?", (row["id"],))
         return True
