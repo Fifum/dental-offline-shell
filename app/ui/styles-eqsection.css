@@ -413,3 +413,60 @@
 @media screen{:root[data-theme="dark"] .eqbell-menu button.late em{background:#3A1B18;color:#F29C90}}
 @media (max-width:1250px){.eqs-g3b{grid-template-columns:1fr 1fr}.eqs-rtiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:1000px){.eqs-g2q,.eqs-g3b{grid-template-columns:1fr}}
+
+/* ===== 3.16 «Журнал действий» (mockup 11) */
+.eqs-perw{position:relative}
+.eqs-perb{cursor:pointer;gap:8px;padding:0 10px 0 12px}
+.eqs-perb b{color:var(--ink)}
+.eqs-perpop{position:absolute;right:0;top:48px;z-index:40;width:300px;padding:8px;border-radius:12px;background:var(--panel);border:1px solid var(--line);box-shadow:0 12px 30px rgba(16,40,44,.16);display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.eqs-perpop[hidden]{display:none}
+.eqs-perpop>button[data-pp]{all:unset;cursor:pointer;padding:7px 10px;border-radius:8px;font-size:13.5px}
+.eqs-perpop>button[data-pp]:hover{background:var(--hover)}
+.eqs-perdd{grid-column:1/-1;display:flex;align-items:center;gap:6px}
+.eqs-perdd .input{height:34px;flex:1;min-width:0}
+.eqs-perpop .btn{grid-column:1/-1}
+.eqs-tbtn{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:14px;align-items:center;padding:14px 16px;border-radius:14px;background:var(--panel);border:1px solid var(--line)}
+.eqs-tbtn.on{border-color:#D9534F;box-shadow:0 0 0 2px rgba(217,83,79,.2)}
+.eqs-lgrid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start}
+.eqs-lgrid.with{grid-template-columns:minmax(0,1fr) 340px}
+.eqs-logt tr[data-l]{cursor:pointer}
+.eqs-nw{white-space:nowrap}
+.eqs-who{display:flex;align-items:center;gap:8px}
+.eqs-who svg{color:var(--accent);width:18px;height:18px}
+.eqs-who span{display:flex;flex-direction:column;line-height:1.25}
+.eqs-who small{font-size:12px;color:var(--ink2)}
+.eqs-who b{font-weight:500;font-size:13.5px}
+.eqs-act{display:inline-flex;align-items:center;gap:7px;font-size:13.5px}
+.eqs-act svg{width:18px;height:18px;color:var(--accent)}
+.eqs-act.g svg{color:var(--ok)} .eqs-act.b svg{color:#3B82C4} .eqs-act.r svg{color:#D9534F} .eqs-act.o svg{color:#E09A2D} .eqs-act.v svg{color:#7B5FC0} .eqs-act.n svg{color:var(--ink2)}
+.eqs-obj{font-weight:500}
+.eqs-susd{display:inline-grid;color:#D9534F;vertical-align:middle}
+.eqs-susd svg{width:14px;height:14px}
+.eqs-more3{width:30px;height:30px}
+.eqs-pager{display:flex;align-items:center;gap:6px;padding:10px 14px;border-top:1px solid var(--line2);font-size:13px}
+.eqs-pager button{all:unset;cursor:pointer;min-width:30px;height:30px;border-radius:8px;border:1px solid var(--line);display:grid;place-items:center;font-size:13px}
+.eqs-pager button.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.eqs-pager button:disabled{opacity:.4;cursor:default}
+.eqs-pager button svg{width:15px;height:15px}
+.eqs-pager i{font-style:normal;color:var(--ink2)}
+.eqs-det{position:sticky;top:0;display:flex;flex-direction:column;gap:12px}
+.eqs-deth{display:flex;align-items:center}
+.eqs-deth h3{margin:0;flex:1}
+.eqs-detl{display:grid;grid-template-columns:auto 1fr;gap:9px 10px;margin:0;font-size:13.5px}
+.eqs-detl dt{display:flex;align-items:center;gap:7px;color:var(--ink2)}
+.eqs-detl dt svg{width:16px;height:16px;color:var(--accent)}
+.eqs-detl dd{margin:0;min-width:0}
+.eqs-detobj{display:flex;align-items:center;gap:8px}
+.eqs-detobj span:last-child{display:flex;flex-direction:column}
+.eqs-chg{margin:0;padding:8px 10px 8px 24px;border-radius:10px;background:var(--ok-soft);display:flex;flex-direction:column;gap:4px;font-size:13px}
+.eqs-chg1{font-size:13px}
+.eqs-pv{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.eqs-pv>div{display:flex;flex-direction:column;gap:4px;padding:10px;border-radius:10px;background:var(--panel2);border:1px solid var(--line2);font-size:12.5px}
+.eqs-pv>div.now{background:var(--ok-soft);border-color:var(--ok-line)}
+.eqs-pv i{font-style:normal;font-weight:700}
+.eqs-sus{display:flex;gap:8px;padding:10px;border-radius:10px;background:#FDE8E6;color:#B23A2C;font-size:13px}
+.eqs-sus span{display:flex;flex-direction:column}
+.eqs-hist{display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.eqs-check label svg{width:16px;height:16px;color:var(--accent)}
+@media screen{:root[data-theme="dark"] .eqs-sus{background:#3A1B18;color:#F29C90}}
+@media (max-width:1250px){.eqs-lgrid.with{grid-template-columns:1fr}.eqs-det{position:static}}

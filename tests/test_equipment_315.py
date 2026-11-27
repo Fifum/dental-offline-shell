@@ -426,7 +426,7 @@ check("without «Бухгалтерия» no depreciation", "amort" not in S.eq_
 lg = a.equipment_log()
 check("the log of every piece", lg["rows"] and {"move", "repair", "inventory"} <= {x["kind"] for x in lg["rows"]})
 check("the log by kind", all(x["kind"] == "move" for x in a.equipment_log({"kind": "move"})["rows"]))
-check("the log by date", all(x["date"] >= day(1) for x in a.equipment_log({"from": day(1)})["rows"]))
+check("the log by date", all(x["at"][:10] >= day(1) for x in a.equipment_log({"from": day(1)})["rows"]))  # 3.16: by the time of the action
 for k_ in ("equipment_all_docs", "equipment_analytics", "equipment_log"):
     check(f"{k_} has a right", k_ in auth.METHOD_PERMS)
 sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")

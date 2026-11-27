@@ -575,7 +575,7 @@ class Api:
         return self._stock.eq_analytics(year, money=self._eq_money())
 
     def equipment_log(self, f=None):
-        return self._stock.eq_log(f)
+        return self._stock.eq_log(f, money=self._eq_money())
 
     def equipment_refs(self):
         """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""

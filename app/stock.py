@@ -2636,6 +2636,10 @@ class Stock:
                 c.execute("""INSERT INTO equipment_purchases(name, reason, justification, category, budget, year, quarter, priority, funding, replace_id,
                              offers, id, number, status, created_by, created_name, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                           (*vals, pid, f"ЗК-{n:03d}", "draft", login, user, at, at))
+            num = old["number"] if old else f"ЗК-{n:03d}"
+            self._ev(c, rep or "", "purchase", f"{num}: {name} ({['I', 'II', 'III', 'IV'][q - 1]} квартал {y})" + ("" if old else " — создано"), user,
+                     data={"object": f"План закупок {num} ({['I', 'II', 'III', 'IV'][q - 1]} квартал {y})", "module": "Планирование",
+                           "action": "Изменение" if old else "Создание", "purchase": pid})
         return pid
 
     def eq_purchase_status(self, pid, action, answer="", login="", user=""):
@@ -2661,6 +2665,11 @@ class Stock:
             sets.update(decided_by=login, decided_name=user, decided_at=at, answer=_clean(answer, 300))
         with self.db.tx() as c:
             c.execute(f"UPDATE equipment_purchases SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), r["id"]))
+            act = {"send": "На согласование", "approve": "Согласование", "reject": "Отклонение", "bought": "Куплено", "draft": "В черновик",
+                   "delete": "Удаление"}[action]
+            self._ev(c, r.get("replace_id") or "", "purchase", f"{r['number']}: {r['name']} — {act.lower()}" + (f". {_clean(answer, 200)}" if answer else ""), user,
+                     data={"object": f"План закупок {r['number']}: {r['name']}", "module": "Планирование", "action": act, "purchase": r["id"],
+                           "changes": [{"t": "Статус", "old": PURCHASE_STATUS.get(st, st), "new": PURCHASE_STATUS.get(nxt, "Удалено")}]})
         return r["id"]
 
     def eq_purchase_offer_file(self, pid, file_id, name):
@@ -2781,29 +2790,109 @@ class Stock:
         return out
 
     # ------------------------------------------------------ 3.15: «Журнал действий» --
-    def eq_log(self, f=None):
-        """Every event of every piece (put on the books, moved, serviced, repaired, counted, disposed, documents): who and when."""
+    # what each kind of event is in the log: (the action, its icon, the module)
+    EQ_ACTIONS = {"created": ("Создание", "plus", "Оборудование"), "receipt": ("Поступление", "plus", "Поступление"),
+                  "move": ("Перемещение", "move", "Перемещения"), "edit": ("Редактирование", "pen", "Оборудование"),
+                  "status": ("Изменение статуса", "cycle", "Оборудование"), "condition": ("Изменение состояния", "gear", "Оборудование"),
+                  "owner": ("Изменение принадлежности", "pen", "Оборудование"), "note": ("Заметка", "doc", "Оборудование"),
+                  "request": ("Создание заявки", "wrench", "Обслуживание"), "service": ("Обслуживание", "ok", "Обслуживание"),
+                  "repair": ("Завершение ремонта", "ok", "Обслуживание"), "repair_start": ("Отправлено в ремонт", "wrench", "Обслуживание"),
+                  "diag": ("Диагностика", "ok", "Обслуживание"), "inventory": ("Инвентаризация", "check", "Инвентаризация"),
+                  "replace_plan": ("План замены", "cart", "Планирование"), "writeoff": ("Списание", "trash", "Выбытие"),
+                  "disposal": ("Выбытие", "trash", "Выбытие"), "doc": ("Добавление документа", "doc", "Документы"),
+                  "doc_del": ("Удаление документа", "trash", "Документы"), "settings": ("Изменение параметров", "gear", "Справочники"),
+                  "purchase": ("План закупок", "cart", "Планирование")}
+    NIGHT = (23, 6)  # an action between 23:00 and 6:00 is «подозрительное»
+
+    def _action(self, r, data):
+        k = r["kind"]
+        if k == "created" and (data.get("receipt") or str(r.get("text") or "").startswith("Поступление")):
+            k = "receipt"
+        elif k == "note" and str(r.get("text") or "").startswith("Принадлежность"):
+            k = "owner"
+        elif k == "doc" and str(r.get("text") or "").startswith("Убран"):
+            k = "doc_del"
+        elif k == "repair" and str(r.get("text") or "").startswith("Отправлено на ремонт"):
+            k = "repair_start"
+        title, icon, module = self.EQ_ACTIONS.get(k, (EQ_EVENTS.get(r["kind"], r["kind"]), "doc", "Оборудование"))
+        if data.get("action"):
+            title = data["action"] if k != "purchase" else f"{data['action']}"
+        return k, title, icon, data.get("module") or module
+
+    def _positions(self):
+        """The position of each employee by name (the log keeps the name it was written with)."""
+        try:
+            from auth import roles  # noqa: PLC0415
+            rl = roles(self.db)
+            return {u["name"]: (u.get("position") or (rl.get(u.get("role") or "") or {}).get("title", ""))
+                    for u in self.db.q("SELECT name, position, role FROM users WHERE COALESCE(name,'')<>''")}
+        except Exception:  # noqa: BLE001 — no logins in this clinic
+            return {}
+
+    def eq_log(self, f=None, money=True):
+        """3.16 «Журнал действий» (mockup 11): every operation of the section — who (the position and the name), what, with which
+        piece or reference, in which module and cabinet, «было → стало». The period is by the time of the action; the tiles: all the
+        actions of the period, the active employees, today's actions and the suspicious ones (rules in the plan of 3.16)."""
         f = f if isinstance(f, dict) else {}
-        sql = """SELECT ev.*, e.name, e.inv_number FROM equipment_events ev LEFT JOIN equipment e ON e.id = ev.equipment_id WHERE 1=1"""
+        t = date.today()
+        d_from = _day(f["from"], "С") if f.get("from") else ""
+        d_to = _day(f["to"], "По") if f.get("to") else ""
+        sql = """SELECT ev.*, e.name, e.inv_number, e.photo_id, e.location, e.location_id FROM equipment_events ev
+                 LEFT JOIN equipment e ON e.id = ev.equipment_id WHERE 1=1"""
         args = []
-        if f.get("kind") in EQ_EVENTS:
+        if d_from:
+            sql += " AND substr(COALESCE(ev.created_at, ev.date),1,10) >= ?"
+            args.append(d_from)
+        if d_to:
+            sql += " AND substr(COALESCE(ev.created_at, ev.date),1,10) <= ?"
+            args.append(d_to)
+        if f.get("kind") in EQ_EVENTS:  # 3.15: one kind of event («Журнал изменений» of the references takes 'settings')
             sql += " AND ev.kind=?"
             args.append(f["kind"])
-        if f.get("from"):
-            sql += " AND ev.date >= ?"
-            args.append(_day(f["from"], "С"))
-        if f.get("to"):
-            sql += " AND ev.date <= ?"
-            args.append(_day(f["to"], "По"))
-        if f.get("user"):
-            sql += " AND ev.user_name=?"
-            args.append(_clean(f["user"], 100))
-        rows = self.db.q(sql + " ORDER BY ev.date DESC, ev.id DESC LIMIT 500", args)
+        rows = self.db.q(sql + " ORDER BY COALESCE(ev.created_at, ev.date) DESC, ev.id DESC LIMIT 20000", args)
+        pos, places = self._positions(), self._loc_names()
+        out = []
         for r in rows:
-            r["kind_title"] = EQ_EVENTS.get(r["kind"], r["kind"])
-            r["data"] = _jl(r.get("data"), {}) or None
-        users = [r["u"] for r in self.db.q("SELECT DISTINCT user_name AS u FROM equipment_events WHERE COALESCE(user_name,'')<>'' ORDER BY u")]
-        return {"rows": rows, "kinds": EQ_EVENTS, "users": users}
+            data = _jl(r.get("data"), {})
+            k, title, icon, module = self._action(r, data)
+            at = r.get("created_at") or (r["date"] or "")
+            h = int(at[11:13]) if len(at) >= 13 and at[11:13].isdigit() else 12
+            flag = data.get("flag") or ("Действие ночью (с 23:00 до 6:00)" if (h >= self.NIGHT[0] or h < self.NIGHT[1]) and len(at) >= 13 else "")
+            changes = data.get("changes") or []
+            if not money:  # the sums are seen with «Бухгалтерия» only
+                changes = [{**c, "old": "скрыто", "new": "скрыто"} if c.get("m") else c for c in changes]
+            place = (places.get(r["location_id"]) if r.get("location_id") else r.get("location")) or ""
+            out.append({"id": r["id"], "at": at, "date": r["date"], "user_name": r["user_name"] or "", "position": pos.get(r["user_name"] or "", ""),
+                        "kind": r["kind"], "action": k, "action_title": title, "icon": icon, "module": module,
+                        "equipment_id": r["equipment_id"] or "", "object": r["name"] or data.get("object") or ("удалённое оборудование" if r["equipment_id"] else "—"),
+                        "inv_number": r["inv_number"] or "", "photo_id": r.get("photo_id") or "", "place": place, "text": r["text"] or "",
+                        "cost": (r["cost"] or 0) if money else 0, "changes": changes, "checklist": data.get("checklist") or [],
+                        "suspicious": flag, "kind_title": EQ_EVENTS.get(r["kind"], r["kind"]), "data": data or None, "created_at": r.get("created_at") or ""})
+        today = t.isoformat()
+        tiles = {"total": len(out), "users": len({x["user_name"] for x in out if x["user_name"]}),
+                 "today": self.db.one("SELECT COUNT(*) AS n FROM equipment_events WHERE substr(COALESCE(created_at, date),1,10)=?", (today,))["n"],
+                 "suspicious": sum(1 for x in out if x["suspicious"])}
+        lists = {"users": sorted({(x["user_name"], x["position"]) for x in out if x["user_name"]}, key=lambda u: u[0]),
+                 "actions": sorted({x["action_title"] for x in out}), "modules": sorted({x["module"] for x in out}),
+                 "places": sorted({x["place"] for x in out if x["place"]}),
+                 "objects": sorted({(x["equipment_id"], f"{x['object']}{' · ' + x['inv_number'] if x['inv_number'] else ''}") for x in out if x["equipment_id"]},
+                                   key=lambda o: o[1])}
+        sel = out
+        if f.get("user"):
+            sel = [x for x in sel if x["user_name"] == f["user"]]
+        if f.get("action"):
+            sel = [x for x in sel if x["action_title"] == f["action"]]
+        if f.get("object"):
+            sel = [x for x in sel if x["equipment_id"] == f["object"]]
+        if f.get("module"):
+            sel = [x for x in sel if x["module"] == f["module"]]
+        if f.get("place"):
+            sel = [x for x in sel if x["place"] == f["place"]]
+        if f.get("suspicious"):
+            sel = [x for x in sel if x["suspicious"]]
+        return {"rows": sel, "tiles": tiles, "lists": {**lists, "users": [{"name": n, "position": p_} for n, p_ in lists["users"]],
+                                                           "objects": [{"id": i, "name": n} for i, n in lists["objects"]]},
+                "kinds": EQ_EVENTS, "users": [u[0] for u in lists["users"]], "from": d_from, "to": d_to, "money": money}
 
     # ------------------------------------------- 3.15: «Справочники и настройки» --
     def _setting(self, k, default):

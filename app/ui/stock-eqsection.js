@@ -750,30 +750,6 @@ async function eqAnalyticsTab() {
   $("#anPrint").onclick = () => { $("#printArea").innerHTML = `<h2>Оборудование: стоимость содержания за ${r.year} год</h2><p>Содержание: ${eqMoney(r.keep)} (ТО ${eqMoney(r.service)}, ремонт ${eqMoney(r.repair)}, диагностика ${eqMoney(r.diag)})${mon ? `; амортизация: ${eqMoney(r.amort)}` : ""}</p>${$("#anCat").outerHTML}`; window.print(); };
 }
 
-/* ------------------------------------------------------------ «Журнал действий» */
-async function eqLogTab() {
-  const body = $("#stockBody");
-  const f = EQS.logF = EQS.logF || {};
-  const r = await api.equipment_log(f);
-  body.innerHTML = `<div class="eqs">
-    <div class="eqs-head"><div><h2>Журнал действий</h2><span class="muted">История операций сотрудников с оборудованием</span></div><span class="grow"></span>
-      <button class="btn ghost" data-xls="#logT" data-xls-name="Журнал действий с оборудованием">${EQX.down}Excel</button></div>
-    <section class="eqs-card eqs-filters">
-      <label class="eqs-f"><span>Событие</span><select class="input" id="lgK"><option value="">Все события</option>${Object.entries(r.kinds).map(([k, t]) => `<option value="${k}" ${k === f.kind ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
-      <label class="eqs-f"><span>С</span><input class="input" type="date" id="lgF" value="${esc(f.from || "")}"></label><label class="eqs-f"><span>По</span><input class="input" type="date" id="lgT" value="${esc(f.to || "")}"></label>
-      <label class="eqs-f"><span>Сотрудник</span><select class="input" id="lgU"><option value="">Все</option>${r.users.map(u => `<option ${u === f.user ? "selected" : ""}>${esc(u)}</option>`).join("")}</select></label>
-      <button class="linkbtn eqs-reset" id="lgX" ${Object.values(f).some(Boolean) ? "" : "hidden"}>${EQX.x}Сбросить</button></section>
-    <section class="eqs-card eqs-tcard">${r.rows.length ? `<table class="tbl eqs-reg" id="logT"><thead><tr><th>Дата</th><th>Оборудование</th><th>Событие</th><th>Описание</th><th class="num">Сумма</th><th>Сотрудник</th></tr></thead><tbody>${r.rows.map(x => `<tr data-e="${esc(x.equipment_id)}">
-        <td>${fmtDateShort(x.date)}</td><td><b>${esc(x.name || "—")}</b>${x.inv_number ? ` <small class="muted">${esc(x.inv_number)}</small>` : ""}</td><td><span class="eqs-cat">${esc(x.kind_title)}</span></td>
-        <td class="muted eqs-wraptd">${esc(x.text || "")}</td><td class="num">${x.cost ? eqMoney(x.cost) : "—"}</td><td>${esc(x.user_name || "—")}</td></tr>`).join("")}</tbody></table><div class="eqs-foot muted">Показано: ${r.rows.length}${r.rows.length >= 500 ? " (последние 500)" : ""}</div>`
-      : `<div class="empty"><b>Событий нет</b><span>Измените фильтры</span></div>`}</section></div>`;
-  const set = (k, v) => { f[k] = v; eqLogTab(); };
-  $("#lgK").onchange = e => set("kind", e.target.value); $("#lgF").onchange = e => set("from", e.target.value);
-  $("#lgT").onchange = e => set("to", e.target.value); $("#lgU").onchange = e => set("user", e.target.value);
-  $("#lgX").onclick = () => { EQS.logF = {}; eqLogTab(); };
-  $$("tr[data-e]", body).forEach(tr => tr.onclick = () => openEquipment(tr.dataset.e, "history"));
-}
-
 /* ------------------------------------------------------------ «Справочники и настройки» (3.16, mockup 10) */
 const EQR = {
   chair: '<svg viewBox="0 0 24 24"><path d="M6 20.5h7M9.5 20.5V16M4.5 12.5c0-1.7 1.3-3 3-3h2l1.5 2h5.5a3 3 0 0 1 3 3v.5H8a3.5 3.5 0 0 1-3.5-2.5z"/><path d="M9.5 9.5V5.5a1.5 1.5 0 0 1 3 0v6"/></svg>',
@@ -1098,4 +1074,86 @@ async function eqRefsLog() {
       <td class="eqs-wraptd">${((v.data && v.data.changes) || []).map(c => `<div>${esc(c.t)}: <span class="muted">${esc(c.old)}</span> → <b>${esc(c.new)}</b></div>`).join("") || esc(v.text)}</td></tr>`).join("")}</tbody></table>`
     : `<div class="empty"><b>Изменений ещё не было</b><span>Здесь появятся правки справочников и настроек раздела: кто, когда, что было и что стало</span></div>`}</section>
     ${x.rows.length ? `<div class="eqs-row"><span class="grow"></span><button class="btn ghost" data-xls="#eqRlT" data-xls-name="Журнал изменений справочников оборудования">${EQX.down}Excel</button></div>` : ""}`;
+}
+
+/* ------------------------------------------------------------ «Журнал действий» (3.16, mockup 11) */
+const eqActIc = k => ({plus: EQX.plus, move: EQN.eq_moves, pen: EQR.pen, cycle: EQX.cycle, gear: EQX.gear, doc: EQX.doc, wrench: EQX.wrench, ok: EQX.ok,
+  check: EQX.check, cart: EQX.cart, trash: EQR.trash})[k] || EQX.doc;
+const eqActCls = k => ({plus: "g", ok: "g", check: "g", move: "b", trash: "r", wrench: "o", cart: "v", gear: "n"})[k] || "t";
+/** «Период»: presets and two dates; on change calls back with {from, to}. */
+function eqPeriodHtml(id, f) {
+  const txt = f.from || f.to ? `${f.from ? fmtDateShort(f.from) : "…"} – ${f.to ? fmtDateShort(f.to) : "…"}` : "всё время";
+  return `<span class="eqs-perw"><button class="eqs-period eqs-perb" id="${id}" type="button">${EQX.cal}<span>Период:</span><b>${txt}</b>${EQN.more}</button>
+    <div class="eqs-perpop" id="${id}Pop" hidden>${[["today", "Сегодня"], ["d7", "7 дней"], ["month", "Этот месяц"], ["prev", "Прошлый месяц"], ["year", "Этот год"], ["all", "Всё время"]].map(([k, t]) => `<button type="button" data-pp="${k}">${t}</button>`).join("")}
+      <div class="eqs-perdd"><input class="input" type="date" data-pf value="${esc(f.from || "")}"><span>–</span><input class="input" type="date" data-pt value="${esc(f.to || "")}"></div>
+      <button type="button" class="btn small" data-pok>Применить</button></div></span>`;
+}
+function eqPeriodWire(id, cb) {
+  const b = $("#" + id), pop = $("#" + id + "Pop"); if (!b) return;
+  b.onclick = ev => { ev.stopPropagation(); pop.hidden = !pop.hidden; };
+  pop.onclick = ev => ev.stopPropagation();
+  document.addEventListener("click", () => { pop.hidden = true; }, {once: true});
+  const d = new Date(), y = d.getFullYear(), m = d.getMonth();
+  const P = {today: [iso(d), iso(d)], d7: [iso(new Date(y, m, d.getDate() - 6)), iso(d)], month: [iso(new Date(y, m, 1)), iso(d)],
+    prev: [iso(new Date(y, m - 1, 1)), iso(new Date(y, m, 0))], year: [`${y}-01-01`, iso(d)], all: ["", ""]};
+  $$("[data-pp]", pop).forEach(x => x.onclick = () => cb({from: P[x.dataset.pp][0], to: P[x.dataset.pp][1]}));
+  $("[data-pok]", pop).onclick = () => cb({from: $("[data-pf]", pop).value, to: $("[data-pt]", pop).value});
+}
+async function eqLogTab() {
+  const body = $("#stockBody");
+  if (!EQS.logF) { const d = new Date(); EQS.logF = {from: iso(new Date(d.getFullYear(), d.getMonth(), 1)), to: iso(d)}; }
+  const f = EQS.logF, r = await api.equipment_log(f), L = r.lists, rows = r.rows, per = 12;
+  const pages = Math.max(1, Math.ceil(rows.length / per)), page = Math.min(EQS.logPage || 1, pages);
+  const cur = rows.find(x => x.id === EQS.logSel) || null;
+  const opt = (v, t, c) => `<option value="${esc(v)}" ${String(v) === String(c ?? "") ? "selected" : ""}>${esc(t)}</option>`;
+  const sel = (k, label, all, items) => `<label class="eqs-f"><span>${label}</span><select class="input" data-lf="${k}">${opt("", all, f[k])}${items.map(([v, t]) => opt(v, t, f[k])).join("")}</select></label>`;
+  const who = x => `<div class="eqs-who">${EQR.user}<span>${x.position ? `<small>${esc(x.position)}</small>` : ""}<b>${esc(x.user_name || "—")}</b></span></div>`;
+  const act = x => `<span class="eqs-act ${eqActCls(x.icon)}">${eqActIc(x.icon)}${esc(x.action_title)}</span>`;
+  const pnums = (() => { const s = new Set([1, pages, page - 1, page, page + 1]); return [...s].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b); })();
+  const pager = `<div class="eqs-pager"><span class="muted">Показано: ${rows.length ? `${(page - 1) * per + 1}–${Math.min(page * per, rows.length)} из ${rows.length}` : "0"}</span><span class="grow"></span>
+    ${pages > 1 ? `<button data-pg="${page - 1}" ${page === 1 ? "disabled" : ""}>${'<svg viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></svg>'}</button>${pnums.map((n, i) => `${i && n - pnums[i - 1] > 1 ? "<i>…</i>" : ""}<button data-pg="${n}" class="${n === page ? "on" : ""}">${n}</button>`).join("")}<button data-pg="${page + 1}" ${page === pages ? "disabled" : ""}>${EQX.chev}</button>` : ""}</div>`;
+  const chg = c => `<li>${esc(c.t)}: <span class="muted">${esc(c.old)}</span> → <b>${esc(c.new)}</b></li>`;
+  const det = x => `<aside class="eqs-card eqs-det"><div class="eqs-deth"><h3>${EQX.doc}Детали действия</h3><button class="x" id="lgClose" title="Закрыть">×</button></div>
+    <dl class="eqs-detl"><dt>${EQX.cal}Дата и время:</dt><dd>${fmtDT(x.at)}</dd><dt>${EQR.user}Пользователь:</dt><dd>${esc(x.user_name || "—")}${x.position ? ` <span class="muted">(${esc(x.position)})</span>` : ""}</dd>
+      <dt>${eqActIc(x.icon)}Действие:</dt><dd>${esc(x.action_title)}</dd>
+      <dt>${EQX.box}Объект:</dt><dd class="eqs-detobj">${x.equipment_id ? `<span class="sn-mat sm">${phHtml(x.photo_id)}</span>` : ""}<span><b>${esc(x.object)}</b>${x.inv_number ? `<small class="muted">${esc(x.inv_number)}</small>` : ""}</span></dd>
+      <dt>${EQR.layers}Модуль:</dt><dd>${esc(x.module)}</dd><dt>${EQR.place}Кабинет:</dt><dd>${esc(x.place || "—")}</dd>
+      ${x.cost ? `<dt>${EQX.coins}Сумма:</dt><dd><b>${eqMoney(x.cost)}</b></dd>` : ""}
+      <dt>${EQR.pen}Изменения:</dt><dd>${x.changes.length ? `<ul class="eqs-chg">${x.changes.map(chg).join("")}</ul>` : `<div class="eqs-chg1">${esc(x.text || "—")}</div>`}</dd></dl>
+    ${x.changes.length ? `<div class="eqs-pv"><div><b>Предыдущее значение</b>${x.changes.map(c => `<span>${esc(c.t)}: <i>${esc(c.old)}</i></span>`).join("")}</div>
+      <div class="now"><b>Текущее значение</b>${x.changes.map(c => `<span>${esc(c.t)}: <i>${esc(c.new)}</i></span>`).join("")}</div></div>` : ""}
+    ${x.checklist.length ? `<div class="eqs-check"><b>Чек-лист</b>${x.checklist.map(c => `<label>${c.ok ? EQX.ok : EQX.x}<span>${esc(c.t)}</span></label>`).join("")}</div>` : ""}
+    ${x.suspicious ? `<div class="eqs-sus">${EQX.warn}<span><b>Подозрительное действие</b>${esc(x.suspicious)}</span></div>` : ""}
+    ${x.equipment_id ? `<button class="btn ghost eqs-hist" id="lgHist">${EQX.cycle}История изменений по объекту</button>` : ""}</aside>`;
+  const xrow = x => `<tr><td>${fmtDT(x.at)}</td><td>${esc(x.position)}</td><td>${esc(x.user_name)}</td><td>${esc(x.action_title)}</td><td>${esc(x.object)}</td><td>${esc(x.inv_number)}</td><td>${esc(x.module)}</td><td>${esc(x.place)}</td>
+    <td>${esc(x.text)}</td><td>${esc(x.changes.map(c => `${c.t}: ${c.old} → ${c.new}`).join("; "))}</td><td>${x.cost ? x.cost : ""}</td><td>${esc(x.suspicious)}</td></tr>`;
+  const any = ["user", "action", "object", "module", "place", "suspicious"].some(k => f[k]);
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head eqs-hico"><i>${EQR.history}</i><div><h2>Журнал действий</h2><span class="muted">Полная история операций в модуле «Оборудование»: кто, что и когда изменил</span></div><span class="grow"></span>
+      ${eqPeriodHtml("lgPer", f)}<button class="btn ghost" data-xls="#logX" data-xls-name="Журнал действий с оборудованием">${EQX.down}Excel</button></div>
+    <div class="eqs-tiles">${eqTile(EQR.layers, "Всего действий", r.tiles.total.toLocaleString("ru-RU"))}${eqTile(EQR.user, "Активных пользователей", r.tiles.users)}${eqTile(EQX.cal, "Действий сегодня", r.tiles.today)}
+      <button class="eqs-tile eqs-tbtn ${r.tiles.suspicious ? "bad" : ""} ${f.suspicious ? "on" : ""}" id="lgSus" title="Правила: задним числом изменены стоимость, срок службы или дата ввода; выбытие без документа; убран документ; действие с 23:00 до 6:00. Нажмите — только они."><i>${EQX.warn}</i><span>Подозрительных действий</span><b>${r.tiles.suspicious}</b></button></div>
+    <section class="eqs-card eqs-filters">${sel("user", "Пользователь", "Все пользователи", L.users.map(u => [u.name, u.position ? `${u.name} — ${u.position}` : u.name]))}
+      ${sel("action", "Действие", "Все действия", L.actions.map(a => [a, a]))}${sel("object", "Объект", "Все объекты", L.objects.map(o => [o.id, o.name]))}
+      ${sel("module", "Модуль", "Все модули", L.modules.map(m => [m, m]))}${sel("place", "Кабинет", "Все кабинеты", L.places.map(p => [p, p]))}
+      <button class="linkbtn eqs-reset" id="lgX" ${any ? "" : "hidden"}>${EQX.x}Сбросить</button></section>
+    <div class="eqs-lgrid ${cur ? "with" : ""}"><section class="eqs-card eqs-tcard">${rows.length ? `<table class="tbl eqs-reg eqs-logt"><thead><tr><th>Дата и время</th><th>Пользователь</th><th>Действие</th><th>Объект (наименование / инв. №)</th><th>Модуль</th><th>Кабинет</th><th></th></tr></thead><tbody>${rows.slice((page - 1) * per, page * per).map(x => `<tr data-l="${x.id}" class="${cur && cur.id === x.id ? "sel" : ""}">
+          <td class="eqs-nw">${fmtDT(x.at)}${x.suspicious ? ` <span class="eqs-susd" title="${esc(x.suspicious)}">${EQX.warn}</span>` : ""}</td><td>${who(x)}</td><td>${act(x)}</td>
+          <td><b class="eqs-obj">${esc(x.object)}</b>${x.inv_number ? `<small class="muted" style="display:block">${esc(x.inv_number)}</small>` : ""}</td><td>${esc(x.module)}</td><td>${esc(x.place || "—")}</td>
+          <td>${x.equipment_id ? `<button class="icon-btn eqs-more3" data-card="${esc(x.equipment_id)}" title="Открыть карточку оборудования">${'<svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></svg>'}</button>` : ""}</td></tr>`).join("")}</tbody></table>${pager}`
+        : `<div class="empty"><b>Действий нет</b><span>${any ? "Измените фильтры" : "За этот период в разделе ничего не делали"}</span></div>`}</section>
+      ${cur ? det(cur) : ""}</div>
+    <table id="logX" hidden><thead><tr><th>Дата и время</th><th>Должность</th><th>Сотрудник</th><th>Действие</th><th>Объект</th><th>Инв. №</th><th>Модуль</th><th>Кабинет</th><th>Описание</th><th>Изменения</th><th>Сумма</th><th>Подозрительное</th></tr></thead><tbody>${rows.map(xrow).join("")}</tbody></table></div>`;
+  loadThumbs(body);
+  eqPeriodWire("lgPer", p => { Object.assign(f, p); EQS.logPage = 1; eqLogTab(); });
+  $$("[data-lf]", body).forEach(s => s.onchange = () => { f[s.dataset.lf] = s.value; EQS.logPage = 1; eqLogTab(); });
+  $("#lgX").onclick = () => { ["user", "action", "object", "module", "place", "suspicious"].forEach(k => delete f[k]); EQS.logPage = 1; eqLogTab(); };
+  $("#lgSus").onclick = () => { f.suspicious = !f.suspicious; EQS.logPage = 1; eqLogTab(); };
+  $$("[data-pg]", body).forEach(b => b.onclick = () => { EQS.logPage = +b.dataset.pg; eqLogTab(); });
+  $$("tr[data-l]", body).forEach(tr => tr.onclick = ev => {
+    const c = ev.target.closest("[data-card]"); if (c) return openEquipment(c.dataset.card, "history");
+    EQS.logSel = +tr.dataset.l; eqLogTab();
+  });
+  const cl = $("#lgClose"); if (cl) cl.onclick = () => { EQS.logSel = null; eqLogTab(); };
+  const h = $("#lgHist"); if (h) h.onclick = () => { EQS.logF = {object: cur.equipment_id}; EQS.logPage = 1; eqLogTab(); };
 }
