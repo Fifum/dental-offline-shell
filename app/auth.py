@@ -329,6 +329,7 @@ METHOD_PERMS = {
     "stock_photos": ("stock_view", "stock_edit", "stock_ops", "equipment"), "stock_photo": ("stock_view", "stock_edit", "stock_ops", "equipment"),
     "stock_photo_set": ("stock_edit", "stock_ops", "equipment"), "stock_photo_clear": ("stock_edit", "stock_ops", "equipment"),
     "equipment_amortization": "accounting", "amort_settings_save": "accounting",
+    "equipment_capex_candidates": "accounting", "expenses_to_capex": "accounting",  # 3.14
     # money 2.12: advance, refunds, installments, memberships, cash shifts, insurance (ДМС)
     "money_patient": ("payments", "billing", "patients_view"), "deposit_use": "payments", "refund": "payments",
     "schedule": ("payments", "billing"), "schedule_draft": ("payments", "billing"), "schedule_save": ("payments", "billing"),
@@ -444,6 +445,7 @@ AUDITED = {
     "stock_approval_decide": "Согласование списания материалов", "stock_approval_cancel": "Отмена списания на согласовании",
     "stock_photo_set": "Фото материала или оборудования", "stock_photo_clear": "Фото материала или оборудования убрано",
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
+    "expenses_to_capex": "Расходы перенесены в «Покупку оборудования»",
     "fiscal_open_shift": "Открытие смены на кассе", "fiscal_close_shift": "Закрытие смены (Z-отчёт)",
     "fiscal_x_report": "X-отчёт", "fiscal_retry": "Повтор чека", "fiscal_refund": "Чек возврата",
     "fiscal_for_payment": "Чек по оплате", "fiscal_save_settings": "Настройки кассы",

@@ -47,7 +47,7 @@ DEFAULTS = {
     "location": "",           # the place for visits whose cabinet or branch is unknown («» — the main stock)
     "by_title": "1",          # a visit without services: take the service whose name is the visit's title
     "doctor_pct": "",         # the doctor's percent in the cost («» — the average of the doctors' pay schemes)
-    "pnl_materials": "expenses",  # «expenses» — the P&L takes the purchases; «stock» — what was written off
+    "pnl_materials": "stock",  # «stock» — the P&L takes what was written off (3.14: the default); «expenses» — the purchases
 }
 MODES = {"off": "Не связан с Dentist Plus — склад только в Dental Desk", "draft": "Черновик — списывать после подтверждения",
          "auto": "Сразу — списывать автоматически"}
@@ -150,6 +150,12 @@ class StockAuto:
                 for k, v in (("mode", "off"), ("split_313", "1")):
                     db.conn.execute("INSERT INTO stock_settings(k, v, updated_at) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET "
                                     "v=excluded.v, updated_at=excluded.updated_at", (k, v, _now()))
+            # 3.14 «финотчёт правильнее»: the materials go into the P&L as they are written off, the equipment by its depreciation —
+            # switched on once on every computer (and synced as settings); both switches stay in «Бухгалтерия»
+            if not db.conn.execute("SELECT 1 FROM stock_settings WHERE k='fin_314'").fetchone():
+                for k, v in (("pnl_materials", "stock"), ("pnl_amort", "1"), ("fin_314", "1")):
+                    db.conn.execute("INSERT INTO stock_settings(k, v, updated_at) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET "
+                                    "v=excluded.v, updated_at=excluded.updated_at", (k, v, _now()))
             db.conn.commit()
         self._last_tick = 0.0
         self._count_cache = (0.0, None)
@@ -164,7 +170,7 @@ class StockAuto:
         if s["mode"] not in MODES:
             s["mode"] = "off"
         if s["pnl_materials"] not in PNL_MODES:
-            s["pnl_materials"] = "expenses"
+            s["pnl_materials"] = "stock"
         return s
 
     def _put(self, vals: dict):
@@ -206,7 +212,7 @@ class StockAuto:
                 v = f"{p:g}"
             out["doctor_pct"] = v
         if "pnl_materials" in f:
-            out["pnl_materials"] = f["pnl_materials"] if f["pnl_materials"] in PNL_MODES else "expenses"
+            out["pnl_materials"] = f["pnl_materials"] if f["pnl_materials"] in PNL_MODES else "stock"
         if out:
             self._put(out)
         return self.settings()
@@ -752,6 +758,24 @@ class StockAuto:
         return next(r for r in self.costs()["rows"] if r["service_id"] == sid)
 
 
+def is_household(category) -> bool:
+    """3.14: napkins, paper, cleaning — the household part of the stock («Хозяйственные товары»)."""
+    return str(category or "").strip().lower().startswith("хоз")
+
+
+def household_used(db, a, b):
+    """3.14: the value of the household goods written off in [a, b) — the P&L puts it into «Хозяйственные расходы»."""
+    try:
+        ids = [r["id"] for r in db.q("SELECT id, category FROM materials") if is_household(r["category"])]
+        if not ids:
+            return 0.0
+        r = db.one(f"""SELECT COALESCE(SUM(-qty*price),0) AS v FROM stock_moves WHERE kind IN ('service','writeoff')
+                       AND at >= ? AND at < ? AND material_id IN ({",".join("?" * len(ids))})""", (a, b, *ids))
+        return round(r["v"] or 0, 2)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def stock_used(db, a, b):
     """The value of the materials that left the stock in [a, b): services, visits and write-offs (not transfers). None — no stock."""
     try:
@@ -763,11 +787,11 @@ def stock_used(db, a, b):
 
 
 def amort_in_pnl(db) -> bool:
-    """3.10: the depreciation of the equipment is a line of the P&L (off by default: the clinic may already put the purchase
-    of equipment into the expenses, and then it would be counted twice)."""
+    """3.10: the depreciation of the equipment is a line of the P&L. 3.14: on by default — the purchase of equipment has its own
+    category «Покупка оборудования», which the P&L leaves out, so nothing is counted twice."""
     try:
         r = db.one("SELECT v FROM stock_settings WHERE k='pnl_amort'")
-        return bool(r and r["v"] == "1")
+        return not r or r["v"] != "0"
     except Exception:  # noqa: BLE001
         return False
 
@@ -782,6 +806,6 @@ def set_amort_in_pnl(db, on: bool):
 def pnl_mode(db) -> str:
     try:
         r = db.one("SELECT v FROM stock_settings WHERE k='pnl_materials'")
-        return r["v"] if r and r["v"] in PNL_MODES else "expenses"
+        return r["v"] if r and r["v"] in PNL_MODES else "stock"
     except Exception:  # noqa: BLE001
-        return "expenses"
+        return "stock"

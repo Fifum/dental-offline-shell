@@ -28,18 +28,19 @@ async function accSummary(body) {
   const cats = Object.entries(r.by_category), cMax = Math.max(0, ...cats.map(x => x[1]));
   body.innerHTML = accTools() + `<div class="stat-row">
       <div class="stat"><span>Поступило от пациентов</span><b>${money(r.income)}</b></div>
-      <div class="stat"><span>Расходы</span><b>${money(r.expense)}</b></div>
+      <div class="stat" ${r.in_pnl ? `title="Без покупки оборудования; с амортизацией ${money(r.amortization)}${r.disposal ? ` и выбытием ${money(r.disposal)}` : ""}"` : ""}><span>Расходы</span><b>${money(r.expense)}</b></div>
       <div class="stat ${r.result < 0 ? "warn" : ""}"><span>${r.result < 0 ? "Убыток" : "Прибыль"}</span><b>${money(r.result)}</b></div>
       <div class="stat"><span>Рентабельность</span><b>${r.income ? r.margin + "%" : "—"}</b></div>
       <div class="stat ${r.debts.total_debt ? "warn" : ""}"><span>Долги пациентов</span><b>${money(r.debts.total_debt)}</b></div>
-      <div class="stat"><span>Авансы пациентов</span><b>${money(r.debts.total_advance)}</b></div></div>
+      <div class="stat"><span>Авансы пациентов</span><b>${money(r.debts.total_advance)}</b></div>
+      ${r.capex ? `<div class="stat" title="Не расход: в прибыль идёт амортизацией"><span>Вложения в оборудование</span><b>${money(r.capex)}</b></div>` : ""}</div>
     <div class="rep-grid">
       <div class="pbody rep-card"><div class="pb-head"><b>По месяцам</b></div>${r.by_month.length ? `<table class="tbl compact"><thead><tr><th>Месяц</th><th class="num">Поступления</th><th class="num">Расходы</th><th class="num">Результат</th></tr></thead><tbody>${
         r.by_month.map(m => `<tr><td>${monthName(m.month)}</td><td class="num">${money(m.income)}</td><td class="num">${money(m.expense)}</td><td class="num ${m.result < 0 ? "bad-t" : ""}"><b>${money(m.result)}</b></td></tr>`).join("")}</tbody>
         <tfoot><tr><td>Итого</td><td class="num">${money(r.income)}</td><td class="num">${money(r.expense)}</td><td class="num">${money(r.result)}</td></tr></tfoot></table>` : `<div class="empty sm"><span>Нет поступлений и расходов за период</span></div>`}</div>
       <div class="pbody rep-card"><div class="pb-head"><b>Расходы по статьям</b>${can("accounting") ? `<button class="linkbtn" id="accAdd2">+ расход</button>` : ""}</div>${cats.length ? `<table class="tbl compact"><tbody>${
         cats.map(([k, v]) => `<tr data-cat="${esc(k)}" class="lnk-row"><td>${esc(k)}</td><td class="num">${money(v)}</td><td class="bar-cell">${hbar(v, cMax)}</td><td class="num muted">${pct(v, r.expense)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty sm"><span>Расходов за период нет</span></div>`}</div></div>
-    <div class="muted note-line">Поступления — оплаты пациентов в этой программе за период; выставлено счетов на ${money(r.billed)}. Расходы вносятся во вкладке «Расходы», выплаты зарплаты — во вкладке «Зарплата».</div>`;
+    <div class="muted note-line">Поступления — оплаты пациентов в этой программе за период; выставлено счетов на ${money(r.billed)}. Расходы вносятся во вкладке «Расходы», выплаты зарплаты — во вкладке «Зарплата». Покупка оборудования — не расход: в прибыль идёт амортизация${r.in_pnl ? "" : " (сейчас выключена: «Оборудование → Амортизация»)"}, при выбытии — остаточная стоимость. Точный расчёт по ступеням — во вкладке «Финмодель».</div>`;
   $$("#accBody tr[data-cat]").forEach(tr => tr.onclick = () => { S.accCat = tr.dataset.cat; S.accTab = "expenses"; $$("#accTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === "expenses")); loadAccounting(); });
   const a = $("#accAdd2"); if (a) a.onclick = () => editExpense({});
 }

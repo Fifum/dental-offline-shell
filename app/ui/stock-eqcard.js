@@ -159,6 +159,7 @@ function eqPane() {
       <div><h3>Замена оборудования</h3>${kv([["Рыночная стоимость сейчас", e.market_value ? money(e.market_value) : nz("", "Не указана")], ["Стоимость замены (новое)", e.replace_cost ? money(e.replace_cost) : nz("", "Не указана")],
         ["Плановая дата замены", e.replace_date ? fmtDate(e.replace_date) : nz("", "Не запланирована")], ["Резерв на обновление в месяц", e.reserve_monthly ? `<b>${money(e.reserve_monthly)}</b>` : "—"]])}
         ${c.edit ? `<button class="btn ghost small" id="eqRepl">${EQI.cal}Запланировать замену</button>` : ""}</div></div>
+      ${["lease", "owner"].includes(e.ownership) ? `<div class="note-box">${esc(e.ownership_title)}: это не имущество клиники, поэтому амортизация и выбытие не идут в финансовый отчёт. Платежи по аренде вносятся расходами.</div>` : ""}
       ${amortBlock(e)}`;
     const h = $("#eqHours"); if (h) h.onclick = async () => { const v = await askInput("Часы работы кресла в месяц", [{label: "Часов в месяц", type: "number", value: e.chair_hours}], {text: "Например, 154 = 22 рабочих дня × 7 часов. Амортизация в месяц делится на это число.", ok: "Сохранить"});
       if (v) { try { await api.equipment_settings_save({chair_hours: v[0]}); toast("Сохранено"); eqCard(); } catch (x) { toast(errText(x), true); } } };
@@ -322,7 +323,7 @@ function eqDispose(e) {
   const box = modal(`<div class="m-h"><h3>Выбытие: ${esc(e.name)}, инв. № ${esc(e.inv_number)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b"><div class="seg" id="dsK">${Object.entries(r.disposals).map(([k, t]) => `<button data-k="${k}" class="${k === kind ? "on" : ""}">${t}</button>`).join("")}</div>
       <div class="grid3"><label class="fl">Дата<input class="input" type="date" id="dsD" value="${iso(new Date())}"></label><label class="fl" id="dsNW">Номер акта<input class="input" id="dsN" placeholder="присвоится сам"></label>
-        ${m ? `<label class="fl">Остаточная стоимость, ₽<input class="input" type="number" min="0" step="any" id="dsR" value="${e.amort && e.amort.on ? e.amort.residual : e.price || 0}" title="По амортизации на сегодня"></label>` : ""}</div>
+        ${m ? `<label class="fl">Остаточная стоимость, ₽<input class="input" type="number" min="0" step="any" id="dsR" placeholder="${e.amort && e.amort.on ? "по амортизации на дату выбытия" : money(e.price || 0)}" title="Пусто — посчитается по амортизации на дату выбытия"></label>` : ""}</div>
       <label class="fl" id="dsWL"><span id="dsWT">Причина списания*</span><input class="input" id="dsW" list="dsWo"></label>
       <datalist id="dsWo"><option value="Физический износ, ремонт экономически нецелесообразен"><option value="Неисправность, не подлежит восстановлению"><option value="Моральный износ, замена на новое"><option value="Повреждение в результате аварии"></datalist>
       ${m ? `<label class="fl" id="dsAW" hidden>Сумма продажи, ₽<input class="input" type="number" min="0" step="any" id="dsA"></label>` : ""}
@@ -396,7 +397,8 @@ async function editEquipment(e) {
         <label class="fl">Срок полезного использования, мес.<input class="input" type="number" min="0" max="600" step="1" id="eLife" list="eLifes" value="${e.useful_months || ""}" placeholder="например, 60 = 5 лет"></label>
         <label class="fl">Ликвидационная стоимость, ₽<input class="input" type="number" min="0" step="any" id="eSalv" value="${e.salvage || ""}" placeholder="0"></label></div>
       <datalist id="eLifes">${[12, 24, 36, 60, 84, 120, 180].map(x => `<option value="${x}">${x / 12} ${plural(x / 12, "год", "года", "лет")}</option>`).join("")}</datalist>
-      <div class="muted" id="eLifeT" style="margin-top:-4px"></div>` : `<div class="muted">Стоимость и амортизацию вносит директор (право «Бухгалтерия»).</div>`}
+      <div class="muted" id="eLifeT" style="margin-top:-4px"></div>
+      ${isNew ? `<div class="grid3"><label class="fl" style="grid-column:span 2" title="Расход запишется датой покупки в статью «Покупка оборудования»: в движении денег он есть, а в прибыль оборудование идёт амортизацией">Записать оплату в расходы<select class="input" id="ePay"><option value="">— не записывать (оплата уже внесена или будет позже) —</option>${["Безналичный перевод", "Наличные", "Карта"].map(m => `<option>${m}</option>`).join("")}</select></label></div>` : ""}` : `<div class="muted">Стоимость и амортизацию вносит директор (право «Бухгалтерия»).</div>`}
       <label class="fl">Комментарий<input class="input" id="eCom" value="${esc(e.comment || "")}"></label><div class="auth-err" id="eErr"></div></div>
     <div class="m-f"><span class="muted">${isNew ? "После сохранения откроется карточка: фото, документы, QR-этикетка" : ""}</span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="eOk">${isNew ? "Создать карточку" : "Сохранить"}</button></div>`, {wide: true});
   const syncLoc = () => { $("#eLW", box).style.visibility = $("#eLoc", box).value ? "hidden" : ""; }; $("#eLoc", box).onchange = syncLoc; syncLoc();
@@ -406,6 +408,7 @@ async function editEquipment(e) {
       next_service: $("#eNx").value, comment: $("#eCom").value, in_service: $("#eIn").value, ownership: $("#eOwn").value, condition: $("#eCond").value};
     if ($("#eLoc").value) f.location_id = $("#eLoc").value; else { f.location_id = ""; f.location = $("#eL").value; }
     if (money) Object.assign(f, {price: $("#ePr").value, useful_months: $("#eLife").value, salvage: $("#eSalv").value});
+    const pay = $("#ePay"); if (pay && pay.value) f.pay = pay.value;  // 3.14: «Покупка оборудования»
     try { const id = await api.save_equipment(f); closeModal(); toast(isNew ? "Карточка создана" : "Сохранено"); openEquipment(id); }
     catch (err) { $("#eErr").textContent = errText(err); }
   };

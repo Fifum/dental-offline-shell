@@ -19,7 +19,7 @@ async function accPnl(body) {
   const from = shiftMonth(S.pnlTo, -(S.pnlN - 1));
   let r;
   try { r = await api.fin_pnl(from, S.pnlTo); } catch (e) { body.innerHTML = `<div class="empty"><b>${esc(errText(e))}</b></div>`; return; }
-  const cls = x => x.kind === "total" ? "fm-total" : x.kind === "group" ? "fm-group" : "fm-sub";
+  const cls = x => x.kind === "total" ? "fm-total" : x.kind === "group" ? "fm-group" : x.kind === "info" ? "fm-sub muted-row" : "fm-sub";
   const cell = (v, x) => `<td class="num ${x.profit && v < 0 ? "bad-t" : ""}">${v ? money(v) : `<span class="muted">—</span>`}</td>`;
   body.innerHTML = accTools(`<div class="month-nav"><button class="icon-btn" id="pnPrev" title="Раньше">‹</button><b>${esc(r.titles[0])} — ${esc(r.titles[r.titles.length - 1])}</b><button class="icon-btn" id="pnNext" title="Позже">›</button></div>
       <div class="seg sm" id="pnN">${[3, 6, 12].map(n => `<button data-n="${n}" class="${S.pnlN === n ? "on" : ""}">${n} мес.</button>`).join("")}</div>

@@ -738,4 +738,27 @@ async function eqAmortTab() {
   const p = $("#amPnl"); if (p) p.onchange = async () => { try { await api.amort_settings_save({in_pnl: p.checked}); toast(p.checked ? "Амортизация учитывается в ОПиУ" : "Амортизация убрана из ОПиУ"); } catch (e) { toast(errText(e), true); p.checked = !p.checked; } };
   $$("tr[data-e]", body).forEach(tr => tr.onclick = () => openEquipment(tr.dataset.e, "finance"));
   if (typeof eqCapexBox === "function") eqCapexBox($("#amCapex"));
+  if (r.off_books) $("#amCapex").insertAdjacentHTML("afterend", `<div class="muted eqc-hint">Не амортизируются в ОПиУ: ${r.off_books} ед. в аренде или имущество учредителя — это не имущество клиники.</div>`);
+}
+
+/** 3.14: old purchases of equipment written down under another category (the same sum near the purchase date) — they would
+    count the equipment twice next to its depreciation. One button moves them into «Покупка оборудования». */
+async function eqCapexBox(el, after) {
+  if (!el || !can("accounting")) return;
+  let rows;
+  try { rows = await api.equipment_capex_candidates(); } catch (e) { return; }
+  if (!rows.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="capex-box"><div class="capex-h"><b>Похоже, покупка оборудования записана в расходы месяца: ${rows.length}</b>
+      <span class="muted">Покупка не должна целиком уходить в расходы: в прибыль оборудование идёт амортизацией. Перенесите эти расходы в статью «Покупка оборудования» — в движении денег они останутся.</span></div>
+    <table class="tbl compact"><thead><tr><th><input type="checkbox" id="cxAll" checked title="Все"></th><th>Расход</th><th>Статья сейчас</th><th class="num">Сумма</th><th>Похоже на покупку</th></tr></thead><tbody>${
+      rows.map(x => `<tr><td><input type="checkbox" data-cx="${esc(x.expense_id)}" checked></td><td>${fmtDate(x.date)}${x.comment ? `<small class="muted" style="display:block">${esc(x.comment)}</small>` : ""}</td><td>${esc(x.category)}</td>
+        <td class="num"><b>${money(x.amount)}</b></td><td>${esc(x.name)}${x.inv_number ? ` <span class="muted">· ${esc(x.inv_number)}</span>` : ""}<small class="muted" style="display:block">куплено ${fmtDate(x.purchase_date)}</small></td></tr>`).join("")}</tbody></table>
+    <div class="capex-f"><button class="btn" id="cxGo">Перенести в «Покупку оборудования»</button><span class="muted">Можно и вручную: «Бухгалтерия → Расходы», статья «Покупка оборудования».</span></div></div>`;
+  $("#cxAll", el).onchange = e => $$("[data-cx]", el).forEach(c => c.checked = e.target.checked);
+  $("#cxGo", el).onclick = async () => {
+    const ids = $$("[data-cx]", el).filter(c => c.checked).map(c => c.dataset.cx);
+    if (!ids.length) return toast("Отметьте расходы", true);
+    try { const r = await api.expenses_to_capex(ids); toast(`Перенесено: ${r.moved}`); if (after) after(); else eqCapexBox(el); }
+    catch (e) { toast(errText(e), true); }
+  };
 }

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from accounting import SALARY, _month_range
+from accounting import CAPEX, HOUSEHOLD, SALARY, _month_range
 
 VARIABLE = {"Материалы и закупки": "materials", "Зуботехническая лаборатория": "lab", "Банк и эквайринг": "acquiring"}
 TAXES = "Налоги и взносы"
@@ -27,6 +27,14 @@ LIMITS = {"price": (-50, 100), "visits": (-80, 100), "doctors": (-30, 30), "fixe
 
 def _r(x):
     return round(x or 0, 2)
+
+
+def _gone_name(x):
+    """3.14: «Автоклав (СТ-002): остаточная 40 000, продан за 25 000» — a row of the detail of «Выбытие оборудования»."""
+    name = x["name"] + (f" ({x['inv_number']})" if x["inv_number"] else "")
+    if x["sale"]:
+        return f"{name}: остаточная {x['residual']:,.0f} ₽, продано за {x['sale']:,.0f} ₽".replace(",", " ")
+    return f"{name}: остаточная стоимость"
 
 
 def _share(x, rev):
@@ -88,32 +96,48 @@ class FinModel:
         doctors, staff, pay_rows = self._salaries(mon)
         staff += cats.pop(SALARY, 0)  # a payout without a person: nobody accrues it
         taxes = cats.pop(TAXES, 0)
+        capex = cats.pop(CAPEX, 0)  # 3.14: an investment — the P&L takes the depreciation instead (below)
 
         var = [_line("doctors", DOCTORS, doctors, rev, detail=[x for x in pay_rows if x["doctors"]])]
         # 3.5: materials by the purchases (the default) or by what left the stock — a setting of «Бухгалтерия», never both
         import stock_auto
         used = stock_auto.stock_used(self.db, a, b)
         mat_mode = stock_auto.pnl_mode(self.db) if used is not None else "expenses"
+        house = stock_auto.household_used(self.db, a, b) if mat_mode == "stock" else 0.0  # 3.14: napkins, paper, cleaning
         for cat, key in VARIABLE.items():
             amount = cats.pop(cat, 0)
             if key == "materials":
                 bought = amount
-                amount = used if mat_mode == "stock" else bought
+                amount = (used - house) if mat_mode == "stock" else bought
                 detail = [{"name": "Закупки (расходы)" + (" — не входят, чтобы не считать дважды" if mat_mode == "stock" else ""), "amount": _r(bought)}]
                 if used is not None:
                     detail.append({"name": "Списано со склада" + ("" if mat_mode == "stock" else " — для сравнения"), "amount": _r(used)})
+                if house:
+                    detail.append({"name": "из них хозяйственные товары — в «Хозяйственные расходы»", "amount": _r(house)})
                 var.append(_line(key, cat, amount, rev, detail=detail))
                 continue
             var.append(_line(key, cat, amount, rev))
+        house_detail = None
+        if house:
+            house_detail = [{"name": "Расходы за период", "amount": _r(cats.get(HOUSEHOLD, 0))},
+                            {"name": "Списано со склада: хозяйственные товары", "amount": _r(house)}]
+            cats[HOUSEHOLD] = cats.get(HOUSEHOLD, 0) + house
         var_total = sum(x["amount"] for x in var)
         fixed = [_line("staff", STAFF, staff, rev, detail=[x for x in pay_rows if x["staff"]])]
         for cat, v in sorted(cats.items(), key=lambda x: -x[1]):
-            fixed.append(_line(cat, cat, v, rev))
+            fixed.append(_line(cat, cat, v, rev, detail=house_detail if cat == HOUSEHOLD else None))
+        am = disp = 0.0
         if stock_auto.amort_in_pnl(self.db):  # 3.10: straight-line depreciation of the equipment, a setting of «Бухгалтерия»
             import stock
             am = stock.amort_month(self.db, mon)
             if am:
-                fixed.append(_line("amortization", "Амортизация оборудования", am, rev))
+                fixed.append(_line("amortization", "Амортизация оборудования", am, rev, detail=stock.amort_month_detail(self.db, mon)))
+            # 3.14: a piece that left the clinic: its book value less what it was sold for
+            gone = stock.disposal_month(self.db, mon)
+            disp = _r(sum(x["amount"] for x in gone))
+            if gone:
+                fixed.append(_line("disposal", "Выбытие оборудования (остаточная стоимость)", disp, rev,
+                                   detail=[{"name": _gone_name(x), "amount": x["amount"]} for x in gone]))
         fixed_total = sum(x["amount"] for x in fixed)
         margin = rev - var_total
         op = margin - fixed_total
@@ -134,7 +158,7 @@ class FinModel:
             "revenue": rev, "billed": billed, "has_data": bool(rev or billed or n_exp),
             "variable": var, "variable_total": _r(var_total), "variable_share": _share(var_total, rev),
             "margin": _line("margin", "Маржинальная прибыль", margin, rev, profit=True),
-            "fixed": [x for x in fixed if x["amount"] or x["key"] == "staff"], "fixed_total": _r(fixed_total),
+            "fixed": [x for x in fixed if x["amount"] or x["key"] in ("staff", "disposal")], "fixed_total": _r(fixed_total),
             "fixed_share": _share(fixed_total, rev),
             "operating": _line("operating", "Операционная прибыль", op, rev, profit=True),
             "taxes": _line(TAXES, TAXES, taxes, rev),
@@ -146,6 +170,7 @@ class FinModel:
             "per_day_left": _r(max(0.0, be - rev) / left) if be is not None and left else None,
             "no_schemes": not any(p["percent"] or p["fixed"] for p in self.acc.schemes()),
             "materials_mode": mat_mode, "materials_used": used,
+            "capex": _r(capex), "amortization": _r(am), "disposal": disp, "household_used": _r(house),
         }
 
     def _workdays(self, a, b):

@@ -290,10 +290,12 @@ check("month totals", cm["revenue"] == round(sum(r["made"] * r["price"] for r in
 # ------------------------------------------------------------------ materials in the P&L
 _, ma, mb = __import__("accounting")._month_range(mY)
 a.save_expense({"category": "Материалы и закупки", "amount": 7000, "date": f"{mY}-01", "method": "Карта"})
+check("3.14: by default the write-off", a._fm().pnl(mY)["materials_mode"] == "stock")
+a.stock_cost_settings_save({"pnl_materials": "expenses"})
 p = a._fm().pnl(mY)
 mat = next(x for x in p["variable"] if x["key"] == "materials")
 used = stock_auto.stock_used(d, ma, mb)
-check("by default the purchases", p["materials_mode"] == "expenses" and mat["amount"] == 7000 and p["materials_used"] == used, (mat, used))
+check("by the purchases", p["materials_mode"] == "expenses" and mat["amount"] == 7000 and p["materials_used"] == used, (mat, used))
 check("the stock for comparison", any("Списано со склада" in x["name"] and x["amount"] == used for x in mat["detail"]), mat["detail"])
 a.stock_cost_settings_save({"pnl_materials": "stock"})
 p = a._fm().pnl(mY)
@@ -302,7 +304,7 @@ check("by the stock: what was written off, purchases not twice", p["materials_mo
       and "не входят" in mat["detail"][0]["name"], (mat, used))
 check("P&L by months follows", next(r for r in a.fin_pnl(mY, mY)["rows"] if r["key"] == "materials")["values"][0] == used)
 a.stock_cost_settings_save({"pnl_materials": "nonsense"})
-check("unknown mode — purchases", a._sauto.settings()["pnl_materials"] == "expenses")
+check("unknown mode — the write-off (3.14)", a._sauto.settings()["pnl_materials"] == "stock")
 
 # ------------------------------------------------------------------ sync: two computers, the same visit written off offline
 names = {t.name for t in replica.TABLES}
@@ -323,7 +325,7 @@ d2.replace_visits(Y2, TD, [  # each computer loads the visits from Dentist Plus 
     for v in d.q("SELECT id, patient_id, doctor_id, branch_id, start, \"end\", status, title, data FROM visits")])
 check("the other computer sees the same", a2.stock_visit("v1")["status"] == "done" and a2.stock_visit("v2")["status"] == "draft"
       and a2.materials(location=CAB1) and next(m["balance"] for m in a2.materials(location=CAB1) if m["id"] == M1) == bal(M1, CAB1))
-check("settings and costs arrive", a2.service_costs()["doctor_pct"] == 35 and a2._sauto.settings()["pnl_materials"] == "expenses")
+check("settings and costs arrive", a2.service_costs()["doctor_pct"] == 35 and a2._sauto.settings()["pnl_materials"] == "stock")
 # both write off v2 without the network
 r1, r2 = a.stock_visit_confirm("v2"), a2.stock_visit_confirm("v2")
 check("both wrote off offline", r1["done"] == ["v2"] and r2["done"] == ["v2"])

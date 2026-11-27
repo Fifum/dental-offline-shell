@@ -59,6 +59,8 @@ with d.tx() as c:
         c.execute("INSERT INTO invoices(id, patient_id, doctor_id, items, total, status, created_at, kind, plan_status) VALUES(?,?,?,?,?,?,?,?,?)",
                   (iid, "1", "1", "[]", total, "", at, "plan", st))
 
+# 3.14: the materials by the write-off are the default now (tests/test_amort_pnl.py); this model counts them by the purchases
+a.stock_cost_settings_save({"pnl_materials": "expenses"})
 a.save_salary_scheme({"person": "d:1", "percent": 30, "base": "paid"})
 a.save_salary_scheme({"person": "d:2", "percent": 25, "fixed": 20000, "base": "paid"})
 for f in ({"category": "Зарплата", "person": "d:1", "period": M, "amount": 100000, "date": f"{M}-31"},   # payout of the accrued pay

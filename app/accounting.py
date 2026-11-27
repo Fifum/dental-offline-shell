@@ -25,7 +25,11 @@ CREATE TABLE IF NOT EXISTS salary_schemes(
 """
 CATEGORIES = ["Аренда", "Зарплата", "Материалы и закупки", "Зуботехническая лаборатория", "Коммунальные услуги",
               "Связь и интернет", "Реклама", "Налоги и взносы", "Банк и эквайринг", "Ремонт и обслуживание",
-              "Хозяйственные расходы", "Транспорт и доставка", "Прочее"]  # 2.14: the last two — for the front desk's day
+              "Хозяйственные расходы", "Транспорт и доставка", "Прочее", "Покупка оборудования"]  # 2.14: «Транспорт», «Прочее» — the front desk's day
+# 3.14: money paid for equipment is an investment, not a cost of the month: it is in the cash flow, while the P&L takes the
+# depreciation every month and the book value when the piece leaves (finmodel.py)
+CAPEX = "Покупка оборудования"
+HOUSEHOLD = "Хозяйственные расходы"
 SALARY = "Зарплата"
 AD = "Реклама"  # these expenses can name the patient source they paid for (CRM: payback of advertising)
 METHODS = ["Наличные", "Безналичный перевод", "Карта"]
@@ -124,6 +128,17 @@ class Accounting:
                 c.execute("""INSERT INTO expenses(id, date, category, amount, method, person, period, comment, source, user_name, created_at)
                              VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (eid, *vals, who, _now()))
         return eid
+
+    def set_category(self, ids, category):
+        """3.14: move expenses to another category (e.g. an old purchase of equipment into «Покупка оборудования»)."""
+        cat = str(category or "").strip()[:80]
+        if not cat:
+            raise ValueError("Укажите статью расхода")
+        ids = [str(x) for x in (ids or []) if x][:500]
+        with self.db.tx() as c:
+            for eid in ids:
+                c.execute("UPDATE expenses SET category=? WHERE id=?", (cat, eid))
+        return len(ids)
 
     def delete_expense(self, eid):
         with self.db.tx() as c:
@@ -239,7 +254,12 @@ class Accounting:
         pays = self.db.q("""SELECT substr(created_at,1,7) AS m, SUM(amount) AS s FROM payments WHERE created_at >= ? AND created_at < ?
                             AND method<>'Бонусы' GROUP BY m""",  # bonuses are a discount, not income
                          (a, b))
-        exps = self.db.q("SELECT substr(date,1,7) AS m, SUM(amount) AS s FROM expenses WHERE date >= ? AND date < ? GROUP BY m", (a, b))
+        # 3.14: a purchase of equipment is not a cost — the profit takes its depreciation and the book value when it leaves
+        exps = self.db.q("""SELECT substr(date,1,7) AS m, SUM(amount) AS s FROM expenses WHERE date >= ? AND date < ? AND category<>?
+                            GROUP BY m""", (a, b, CAPEX))
+        capex = round(self.db.one("SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE date >= ? AND date < ? AND category=?",
+                                  (a, b, CAPEX))["s"] or 0, 2)
+        eq = equipment_costs(self.db, a, b)
         billed = self.db.one("""SELECT COALESCE(SUM(total),0) AS s FROM invoices WHERE COALESCE(kind,'invoice')='invoice'
                                 AND created_at >= ? AND created_at < ?""", (a, b))["s"]
         months = {}
@@ -247,10 +267,47 @@ class Accounting:
             months.setdefault(r["m"], {"month": r["m"], "income": 0.0, "expense": 0.0})["income"] = round(r["s"] or 0, 2)
         for r in exps:
             months.setdefault(r["m"], {"month": r["m"], "income": 0.0, "expense": 0.0})["expense"] = round(r["s"] or 0, 2)
+        for m, v in eq["by_month"].items():
+            if v:
+                x = months.setdefault(m, {"month": m, "income": 0.0, "expense": 0.0})
+                x["expense"] = round(x["expense"] + v, 2)
         rows = [{**v, "result": round(v["income"] - v["expense"], 2)} for _, v in sorted(months.items())]
         income = round(sum(r["income"] for r in rows), 2)
         expense = round(sum(r["expense"] for r in rows), 2)
         return {"from": a, "to": (date.fromisoformat(b) - timedelta(days=1)).isoformat(),
                 "income": income, "billed": round(billed or 0, 2), "expense": expense, "result": round(income - expense, 2),
                 "margin": round((income - expense) * 100 / income, 1) if income else 0,
-                "by_month": rows, "by_category": self.expenses(date_from, date_to)["by_category"]}
+                "by_month": rows, "by_category": _by_category(self.expenses(date_from, date_to)["by_category"], eq),
+                "capex": capex, "amortization": eq["amortization"], "disposal": eq["disposal"], "in_pnl": eq["on"]}
+
+
+def equipment_costs(db, a, b) -> dict:
+    """3.14: the depreciation of the equipment and its disposals (book value less the sale) in [a, b), by month — when the
+    clinic counts the depreciation in the P&L («Оборудование → Амортизация → Учитывать в ОПиУ»)."""
+    out = {"on": False, "amortization": 0.0, "disposal": 0.0, "by_month": {}}
+    try:
+        import stock
+        import stock_auto
+        if not stock_auto.amort_in_pnl(db):
+            return out
+        out["on"] = True
+        ka, kb = stock._mon(a), stock._mon((date.fromisoformat(b) - timedelta(days=1)).isoformat())
+        for k in range(ka, kb + 1):
+            m = stock._mon_str(k)
+            am = stock.amort_month(db, m)
+            disp = round(sum(x["amount"] for x in stock.disposal_month(db, m)), 2)
+            out["amortization"] = round(out["amortization"] + am, 2)
+            out["disposal"] = round(out["disposal"] + disp, 2)
+            out["by_month"][m] = round(am + disp, 2)
+    except Exception:  # noqa: BLE001 — a bare database without the stock
+        pass
+    return out
+
+
+def _by_category(by, eq):
+    by = {k: v for k, v in by.items() if k != CAPEX}
+    if eq["amortization"]:
+        by["Амортизация оборудования"] = eq["amortization"]
+    if eq["disposal"]:
+        by["Выбытие оборудования"] = eq["disposal"]
+    return dict(sorted(by.items(), key=lambda x: -x[1]))

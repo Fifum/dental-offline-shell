@@ -50,7 +50,9 @@ async function accFinmodel(body) {
             ${line({...r.taxes, name: "− " + r.taxes.name}, "fm-group")}
             ${line(r.net, "fm-total fm-net", true)}
           </tbody></table></div>
-          <div class="muted note-line dir-note">Зарплата — начисленная по схемам оплаты за этот месяц: процент врачей — переменный расход, оклады — постоянный. Наведите на строку зарплаты, чтобы увидеть, кому сколько. Ориентиры — примерные доли для стоматологии, повод присмотреться, а не правило.</div></div>
+          ${r.capex ? `<div class="note-box fm-capex">Покупка оборудования за месяц: <b>${rub(r.capex)}</b> — это вложение, а не расход месяца: деньги видны в движении денег, а в прибыль оборудование идёт амортизацией${r.amortization ? ` (в этом месяце ${rub(r.amortization)})` : ""}.</div>` : ""}
+          <div id="fmCapex"></div>
+          <div class="muted note-line dir-note">Зарплата — начисленная по схемам оплаты за этот месяц: процент врачей — переменный расход, оклады — постоянный. Наведите на строку зарплаты, чтобы увидеть, кому сколько. ${r.materials_mode === "stock" ? "Материалы — по списанию со склада (расход в лечении, списания, услуги по нормам); хозяйственные товары — в «Хозяйственных расходах». " : ""}Оборудование — амортизацией каждый месяц, при выбытии — остаточной стоимостью. Ориентиры — примерные доли для стоматологии, повод присмотреться, а не правило.</div></div>
         <div class="pbody"><div class="pb-head"><b>Прибыль по месяцам</b><span class="muted">после налогов</span></div>
           <div class="tbl-scroll"><table class="tbl compact fm-hist"><thead><tr><th>Месяц</th><th class="num">Поступления</th><th class="num">Расходы</th><th class="num">Прибыль</th><th></th><th class="num">Доля</th></tr></thead><tbody>${(() => {
             const mx = Math.max(0, ...r.history.filter(h => h.has_data).map(h => Math.abs(h.net)));
@@ -86,6 +88,7 @@ async function accFinmodel(body) {
   $("#fmi-target").oninput = e => { S.fmWhat.target = e.target.value; recount(); };
   $("#fmReset").onclick = () => { S.fmWhat = {price: 0, visits: 0, doctors: 0, fixed: 0, target: ""}; loadAccounting(); };
   fmScenario();
+  if (typeof eqCapexBox === "function") eqCapexBox($("#fmCapex"), () => loadAccounting());  // 3.14: old purchases among the costs
 }
 
 async function fmScenario() {

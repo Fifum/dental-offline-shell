@@ -319,7 +319,22 @@ class Api:
         return self._stock.next_inv()
 
     def save_equipment(self, f):
-        return self._stock.save_equipment(f, self._who(), money=self._eq_money())
+        """3.14: a new piece with its cost may write its payment down at once — into «Покупка оборудования» (not a cost of the
+        month: the P&L takes the depreciation), on the day it was bought."""
+        import accounting
+        f = f if isinstance(f, dict) else {}
+        pay = f.get("pay") if f.get("pay") in accounting.METHODS else None
+        if pay and not self._eq_money():
+            raise ValueError("Записать оплату оборудования может только сотрудник с правом «Бухгалтерия»")
+        eid = self._stock.save_equipment(f, self._who(), money=self._eq_money())
+        if pay and not f.get("id"):
+            e = self._stock.equipment(eid)
+            if e and (e["price"] or 0) > 0:
+                self._acc.save_expense({"date": e["purchase_date"] or date.today().isoformat(), "category": accounting.CAPEX,
+                                        "amount": e["price"], "method": pay,
+                                        "comment": f"{e['name']}, инв. № {e['inv_number']}" if e["inv_number"] else e["name"]},
+                                       self._who())
+        return eid
 
     def equipment_event(self, f):
         return self.equipment(self._stock.equipment_event(f, self._who()))
@@ -511,6 +526,16 @@ class Api:
         from stock_auto import amort_in_pnl
         perms, _ = self._my_perms()
         return {**self._stock.amort_report(m_from, m_to), "in_pnl": amort_in_pnl(self._db), "can_pnl": "accounting" in perms}
+
+    def equipment_capex_candidates(self):
+        """3.14: expenses that look like a purchase of equipment written down under another category."""
+        return self._stock.capex_candidates()
+
+    def expenses_to_capex(self, ids):
+        """3.14: «Перенести в «Покупку оборудования»» — the old purchases leave the costs of their months."""
+        import accounting
+        return {"moved": self._acc.set_category(ids if isinstance(ids, list) else [], accounting.CAPEX),
+                "left": self._stock.capex_candidates()}
 
     def amort_settings_save(self, f):
         import stock_auto

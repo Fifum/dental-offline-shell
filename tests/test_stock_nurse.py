@@ -314,9 +314,11 @@ check("a form without the fields keeps them", a.equipment(eid)["useful_months"] 
 rep = a.equipment_amortization("2026-01", "2026-12")
 row = next((x for x in rep["rows"] if x["id"] == eid), None)
 check("report by months", row and row["values"][0] == 0 and row["values"][1] == 6000 and rep["months"][0] == "2026-01", row)
-check("report: totals", rep["totals"][1] >= 6000 and rep["in_pnl"] is False, rep["totals"][:3])
+check("report: totals", rep["totals"][1] >= 6000 and rep["in_pnl"] is True, rep["totals"][:3])  # 3.14: on by default
 pnl = a._fm().pnl("2026-11")
-check("P&L without depreciation by default", not any(x["key"] == "amortization" for x in pnl["fixed"]))
+check("P&L with depreciation by default (3.14)", any(x["key"] == "amortization" for x in pnl["fixed"]))
+a.amort_settings_save({"in_pnl": False})
+check("switched off: no depreciation", not any(x["key"] == "amortization" for x in a._fm().pnl("2026-11")["fixed"]))
 a.amort_settings_save({"in_pnl": True})
 pnl = a._fm().pnl("2026-11")
 line = next((x for x in pnl["fixed"] if x["key"] == "amortization"), None)

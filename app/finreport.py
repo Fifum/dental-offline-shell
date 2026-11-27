@@ -116,6 +116,9 @@ def pnl_months(fm, m_from=None, m_to=None) -> dict:
     add("operating", "Операционная прибыль", [p["operating"]["amount"] for p in ps], "total", True)
     add("taxes", "Налоги и взносы", [p["taxes"]["amount"] for p in ps], "group")
     add("net", "Чистая прибыль", [p["net"]["amount"] for p in ps], "total", True)
+    capex = [p.get("capex") or 0 for p in ps]
+    if any(capex):  # 3.14: for reference — the money that went into equipment is not a cost, the depreciation above is
+        add("capex", "Справочно: покупка оборудования (не расход — идёт амортизацией)", capex, "info")
     sal = [next((x["amount"] for x in p["variable"] if x["key"] == "doctors"), 0) + next((x["amount"] for x in p["fixed"] if x["key"] == "staff"), 0)
            for p in ps]
     total_rev = _r(sum(rev))

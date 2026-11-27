@@ -141,3 +141,10 @@
 td.wrap{white-space:normal}
 /* the longer label of the menu wraps to two lines instead of being cut when the badge is shown */
 .rail .nav[data-view="stock"] span{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.1;font-size:13px}
+
+/* 3.14: old purchases of equipment that sit among the costs */
+.capex-box{border:1px solid var(--warn-line);background:var(--warn-soft);border-radius:var(--r);padding:12px 14px;margin:0 0 12px}
+.capex-h{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.capex-box .tbl{background:var(--panel)}
+.capex-f{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
+.fm-capex{margin:10px 0 0}

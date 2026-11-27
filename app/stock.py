@@ -97,6 +97,9 @@ CHAIR_HOURS = 154       # working hours of a chair in a month, for «аморт�
 INV_FIRST = "ОБ-001"
 UNITS = ["шт", "уп", "мл", "г", "фл", "амп", "карп", "набор", "пара", "м"]
 AMORT_METHODS = {"linear": "Линейный"}
+# 3.14: rented equipment and the founder's own property are not the clinic's assets: no depreciation and no disposal in the P&L
+OFF_BOOKS = ("lease", "owner")
+CAPEX_DAYS = 45         # an expense this close to the purchase, of the same sum, looks like the purchase itself
 MAX_USEFUL_MONTHS = 600  # 50 years
 
 
@@ -256,9 +259,37 @@ def amort_schedule(e):
     return out
 
 
+def on_books(e) -> bool:
+    """3.14: the piece is the clinic's own (or in leasing) — its depreciation and disposal go into the P&L."""
+    return (e.get("ownership") or "own") not in OFF_BOOKS
+
+
 def amort_month(db, month):
-    """3.10: depreciation of all the equipment for one month ('YYYY-MM') — a line of the P&L."""
-    return round(sum(amort_charge(e, month) for e in db.q("SELECT * FROM equipment")), 2)
+    """3.10: depreciation of all the equipment for one month ('YYYY-MM') — a line of the P&L (3.14: the clinic's own only)."""
+    return round(sum(amort_charge(e, month) for e in db.q("SELECT * FROM equipment") if on_books(e)), 2)
+
+
+def amort_month_detail(db, month):
+    """3.14: the depreciation of one month by piece, the largest first — the detail of the P&L line."""
+    out = [{"name": f"{e['name']}{' (' + e['inv_number'] + ')' if e['inv_number'] else ''}", "amount": amort_charge(e, month)}
+           for e in db.q("SELECT * FROM equipment") if on_books(e)]
+    return sorted([x for x in out if x["amount"]], key=lambda x: -x["amount"])
+
+
+def disposal_month(db, month):
+    """3.14: the equipment that left the clinic in the month ('YYYY-MM'): its book value at the disposal less what it was sold
+    for — the P&L line «Выбытие оборудования» (a sale above the book value makes it negative: a gain)."""
+    out = []
+    for e in db.q("""SELECT * FROM equipment WHERE status='written_off' AND substr(COALESCE(writeoff_date,''),1,7)=?
+                     ORDER BY writeoff_date, name""", (str(month or "")[:7],)):
+        if not on_books(e):
+            continue
+        residual = e["residual"] if e["residual"] is not None else amortization(e)["residual"]
+        sale = (e["disposal_amount"] or 0) if e.get("disposal_kind") == "sale" else 0
+        out.append({"id": e["id"], "inv_number": e["inv_number"], "name": e["name"], "kind": e.get("disposal_kind") or "writeoff",
+                    "date": e["writeoff_date"], "residual": round(residual or 0, 2), "sale": round(sale, 2),
+                    "amount": round((residual or 0) - sale, 2)})
+    return out
 
 
 class Stock:
@@ -1205,6 +1236,40 @@ class Stock:
     def amort_month(self, month):
         return amort_month(self.db, month)
 
+    def capex_candidates(self):
+        """3.14: expenses that look like the purchase of a piece of equipment — the same sum (±1 ₽) within 45 days of its
+        purchase or putting into service — but are written down under another category. Next to the depreciation they would
+        count the equipment twice; «Перенести» moves them into «Покупка оборудования»."""
+        from accounting import CAPEX, SALARY
+        eq = [e for e in self.db.q("SELECT * FROM equipment WHERE COALESCE(price,0) > 0") if on_books(e)]
+        if not eq:
+            return []
+        try:
+            exps = self.db.q("SELECT * FROM expenses WHERE category NOT IN (?, ?) ORDER BY date", (CAPEX, SALARY))
+        except Exception:  # noqa: BLE001 — no accounting tables
+            return []
+        out, used = [], set()
+        for x in exps:
+            try:
+                xd = date.fromisoformat(str(x["date"])[:10])
+            except ValueError:
+                continue
+            for e in eq:
+                day = e.get("purchase_date") or e.get("in_service")
+                if e["id"] in used or not day or abs((x["amount"] or 0) - (e["price"] or 0)) > 1:
+                    continue
+                try:
+                    if abs((xd - date.fromisoformat(str(day)[:10])).days) > CAPEX_DAYS:
+                        continue
+                except ValueError:
+                    continue
+                used.add(e["id"])
+                out.append({"expense_id": x["id"], "date": x["date"], "category": x["category"], "amount": x["amount"],
+                            "comment": x["comment"] or "", "equipment_id": e["id"], "name": e["name"], "inv_number": e["inv_number"],
+                            "purchase_date": day})
+                break
+        return out
+
     def amort_report(self, m_from=None, m_to=None):
         """Depreciation by months for every piece: the charge of each month, the total so far and the book value today."""
         t = date.today()
@@ -1216,9 +1281,13 @@ class Stock:
         b = max(b, a - 35)  # at most three years at a time
         months = [_mon_str(k) for k in range(b, a + 1)]
         rows = []
+        off = 0
         for e in self.db.q("SELECT * FROM equipment ORDER BY name"):
             am = amortization(e)
             if not am["on"]:
+                continue
+            if not on_books(e):  # 3.14: rented or the founder's — not in the clinic's depreciation
+                off += 1
                 continue
             vals = [amort_charge(e, m) for m in months]
             rows.append({"id": e["id"], "inv_number": e["inv_number"], "name": e["name"], "status": e["status"],
@@ -1230,7 +1299,7 @@ class Stock:
         return {"months": months, "rows": rows, "totals": [round(sum(r["values"][i] for r in rows), 2) for i in range(len(months))],
                 "total": round(sum(r["total"] for r in rows), 2), "cost": round(sum(r["cost"] for r in rows), 2),
                 "accumulated": round(sum(r["accumulated"] for r in rows), 2), "residual": round(sum(r["residual"] for r in rows), 2),
-                "this_month": self.amort_month(t.strftime("%Y-%m")), "without_life": no}
+                "this_month": self.amort_month(t.strftime("%Y-%m")), "without_life": no, "off_books": off}
 
     # ---------------------------------------- 3.13: inventory numbers, settings --
     _INV = re.compile(r"^(.*?)(\d+)$")
@@ -1483,11 +1552,13 @@ class Stock:
         if kind == "writeoff":
             n = self.db.one("SELECT COUNT(*) AS n FROM equipment WHERE status='written_off' AND COALESCE(disposal_kind,'writeoff')='writeoff'")["n"] + 1
             act = _clean(f.get("act_number"), 30) or str(n)
+        # 3.14: the book value is the depreciation's as of the day of the disposal (not of today — a disposal entered later)
+        book = amortization({**e, "status": "written_off", "writeoff_date": day})["residual"]
         if money:
-            residual = max(0, _num(f.get("residual"), "Остаточная стоимость")) if f.get("residual") not in (None, "") else amortization(e)["residual"]
+            residual = max(0, _num(f.get("residual"), "Остаточная стоимость")) if f.get("residual") not in (None, "") else book
             amount = max(0, _num(f.get("amount"), "Сумма продажи")) if kind == "sale" else 0
         else:  # without «Бухгалтерия» the book value is the depreciation's, the price of a sale is not taken
-            residual, amount = amortization({**e, "status": "written_off", "writeoff_date": day})["residual"], 0
+            residual, amount = book, 0
         text = {"writeoff": f"Акт № {act}: {reason}", "sale": f"Продано: {reason}", "return": f"Возвращено владельцу: {reason}"}[kind]
         with self.db.tx() as c:
             c.execute("""UPDATE equipment SET status='written_off', writeoff_date=?, writeoff_reason=?, writeoff_act=?,
