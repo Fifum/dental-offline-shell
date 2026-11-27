@@ -1,8 +1,8 @@
 /* ===== 3.13 «читабельный шрифт» and the stock's teal palette (loaded last) =====
    Inter (SIL OFL, fonts/Inter-OFL.txt) is built into the program, so it works offline; only 400–700 are shipped, so no
    thin weights can appear (a lighter weight asked anywhere falls to 400). Headings lose the serif small caps; the clinic's
-   brand mark and printed documents keep Playfair. The teal colors of the equipment card mockup are tokens of the stock
-   section and of the dialogs opened from it (body[data-view="stock"], set by show() in app.js). */
+   brand mark and printed documents keep Playfair. The teal colors of the equipment card mockup are, after 3.13.0, the
+   palette of the whole program (light and dark); before they were only the stock's. */
 @font-face{font-family:"Inter";src:url("fonts/inter-cyrillic-400-normal.woff2") format("woff2");font-weight:400;font-style:normal;font-display:block;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
 @font-face{font-family:"Inter";src:url("fonts/inter-cyrillic-500-normal.woff2") format("woff2");font-weight:500;font-style:normal;font-display:block;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
 @font-face{font-family:"Inter";src:url("fonts/inter-cyrillic-600-normal.woff2") format("woff2");font-weight:600;font-style:normal;font-display:block;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
@@ -25,27 +25,31 @@ h1,h2,.m-h h3,.panel h3,.phead2 h2,.ph-main h2,.sub-h,.cal-sub h1,.g-day,.doc-ca
 .brandmark b,.brand b{font-family:var(--font-brand)}
 :is(.doc-page,#printArea) :is(h1,h2,h3){font-family:var(--font-brand);font-variant:small-caps;letter-spacing:.02em;font-weight:500}
 
-/* ----------------------------------------------------------------- the stock in teal */
-body[data-view="stock"] :is(#view-stock,#modal){
+/* --------------------------------------------- the whole program in teal (after 3.13.0; in 3.13.0 — the stock only) */
+:root{
   --bg:#F2F6F7; --panel:#FFFFFF; --panel2:#F7FAFA; --hover:#F1F7F7; --sunken:#E6EEF0; --faint:#C5D3D6;
   --line:#DFE8EA; --line2:#EBF1F2;
   --ink:#13292D; --ink2:#3E5559; --muted:#6E8286;
   --accent:#167C76; --accent-ink:#11645F; --accent-soft:#E4F3F1; --accent-line:#B9DEDA; --on-accent:#FFFFFF;
+  --primary:#167C76; --primary-hover:#11645F; --on-primary:#FFFFFF;
   --graphite:#145F5C; --graphite-hover:#0E4A47; --on-graphite:#FFFFFF;
   --beige:#E2EFEE; --beige2:#EEF6F5;
   --ok:#1F8A4C; --ok-soft:#E2F5E8; --ok-line:#B7E0C5;
   --focus-ring:rgba(22,124,118,.16);
+  --side:#102A2C; --side-ink:#C3D6D7; --side-mut:#7F9A9C; --side-hover:rgba(255,255,255,.06); --side-on:#167C76; --side-line:#2DB3A5;
   --teal-bar:#2DB3A5; --teal-deep:#0E4F52; --teal-tile:#F5F9FA}
 body[data-view="stock"] #view-stock{background:var(--bg)}
 @media screen{
-  :root[data-theme="dark"] body[data-view="stock"] :is(#view-stock,#modal){
+  :root[data-theme="dark"]{
     --bg:#0E1719; --panel:#142124; --panel2:#182729; --hover:#1B2C2F; --sunken:#0B1314; --faint:#3A5155;
     --line:#26393C; --line2:#1F3134;
     --ink:#E4EEEE; --ink2:#B9CBCC; --muted:#8CA2A5;
     --accent:#4FC5B8; --accent-ink:#6FD3C7; --accent-soft:#173634; --accent-line:#285A55; --on-accent:#08201E;
+    --primary:#3FB3A6; --primary-hover:#5CC9BC; --on-primary:#06201D;
     --graphite:#4FC5B8; --graphite-hover:#79D8CD; --on-graphite:#08201E;
     --beige:#203A3A; --beige2:#1A2E2F;
     --ok:#6FD39A; --ok-soft:#173222; --ok-line:#2C5A3C;
     --focus-ring:rgba(79,197,184,.22);
+    --side:#0A1516; --side-ink:#BFD0D1; --side-mut:#7A9395; --side-hover:rgba(255,255,255,.05); --side-on:#167C76; --side-line:#3FC2B3;
     --teal-bar:#3FC2B3; --teal-deep:#0A3437; --teal-tile:#172628}
 }
