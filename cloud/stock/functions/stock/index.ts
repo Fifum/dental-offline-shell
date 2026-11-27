@@ -9,7 +9,7 @@
 // Laptop:  POST /v1/join {code, name, version, tz} · /v1/status · /v1/push {changes} · /v1/pull {since} · /v1/staff · /v1/leave
 //          (header X-DD-Token: the laptop's token)
 // Phone:   POST /p/hello {code, name} → device token · /p/login {login, pin} (X-DD-Device) → session ·
-//          /p/me · /p/pull {since} · /p/op {id, kind, …} · /p/logout (X-DD-Session)
+//          /p/me · /p/pull {since} · /p/op {op, kind, id, …} · /p/logout (X-DD-Session)
 import postgres from "npm:postgres@3.4.5";
 
 const sql = postgres(Deno.env.get("SUPABASE_DB_URL")!, { prepare: false, max: 3, idle_timeout: 20, connect_timeout: 10 });
@@ -210,7 +210,7 @@ async function push(ctx: Ctx, f: any) {
     out.push({ t: c.t, k: c.k, ver: c.ver, base: c.base ?? null, vv: c.vv ?? null, row: hide(c.t, c.row), pbase: hide(c.t, c.pbase),
       pvv: c.pvv ?? null, origin: clean(c.origin, 40) });
   }
-  const [r] = await sql`select dd.push(${ctx.tenant.id}, ${ctx.device.id}, ${JSON.stringify(out)}::jsonb) as r`;
+  const [r] = await sql`select dd.push(${ctx.tenant.id}, ${ctx.device.id}, ${sql.json(out)}::jsonb) as r`;
   return { ...r.r, skipped };
 }
 
@@ -231,7 +231,7 @@ async function staff(ctx: Ctx, f: any) {
     perms: (Array.isArray(u.perms) ? u.perms : []).filter((p: string) => PHONE_PERMS.includes(p)),
     pin_hash: /^pbkdf2\$\d+\$[0-9a-f]+\$[0-9a-f]+$/.test(String(u.pin_hash || "")) ? u.pin_hash : null, pin_at: clean(u.pin_at, 20) || null,
   })).filter((u: any) => u.login);
-  const [r] = await sql`select dd.set_staff(${ctx.tenant.id}, ${JSON.stringify(list)}::jsonb) as n`;
+  const [r] = await sql`select dd.set_staff(${ctx.tenant.id}, ${sql.json(list)}::jsonb) as n`;
   return { ok: true, staff: r.n };
 }
 
@@ -379,7 +379,7 @@ type W = { t: string; k: string; row: any; expect?: string | null };
 
 async function write(ctx: Ctx, items: W[]) {
   try {
-    const [r] = await sql`select dd.write(${ctx.tenant.id}, ${ctx.node}, ${ctx.device.id}, ${JSON.stringify(items)}::jsonb) as r`;
+    const [r] = await sql`select dd.write(${ctx.tenant.id}, ${ctx.node}, ${ctx.device.id}, ${sql.json(items)}::jsonb) as r`;
     return r.r;
   } catch (e) {
     if (String((e as Error).message || "").includes("changed:")) throw new E("Пока вы заполняли, это изменили на другом устройстве. Обновите и повторите.", 409);
@@ -473,7 +473,7 @@ async function checkBalances(ctx: Ctx, form: any, mats: Map<string, Row>, placeN
 
 async function opUse(ctx: Ctx, f: any) {
   need(ctx, "stock_edit", "stock_ops");
-  const kind = f.kind === "writeoff" ? "writeoff" : "consume";
+  const kind = f.what === "writeoff" ? "writeoff" : "consume";  // `kind` of the request is the operation («use»)
   const { want, mats } = await lines(ctx, f.lines);
   const loc = await place(ctx, f.location_id);
   const at = localNow(ctx);
@@ -725,7 +725,7 @@ async function opEquipmentEvent(ctx: Ctx, f: any) {
   need(ctx, "equipment");
   const e = await one(ctx, "equipment", clean(f.id, 60));
   if (!e) throw new E("Оборудование не найдено", 404);
-  const kind = ["service", "repair", "note"].includes(f.kind) ? f.kind : "note";
+  const kind = ["service", "repair", "note"].includes(f.event) ? f.event : "note";  // `kind` is the operation
   const text = clean(f.text, 1000);
   if (!text) throw new E("Опишите, что сделано");
   const d = f.date ? day(f.date) : localNow(ctx).slice(0, 10);
@@ -760,8 +760,9 @@ const OPS: Record<string, (ctx: Ctx, f: any) => Promise<any>> = {
   equipment_set: opEquipmentSet, equipment_inventory: opEquipmentInventory, equipment_event: opEquipmentEvent, barcode: opBarcode,
 };
 
+// {op: the phone's own id of the operation (a repeat after a lost answer is done once), kind, id: the row it is about, …}
 async function op(ctx: Ctx, f: any) {
-  const id = clean(f.id, 80);
+  const id = clean(f.op, 80);
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new E("Неверная операция");
   const fn = OPS[f.kind];
   if (!fn) throw new E("Неизвестная операция");
@@ -769,7 +770,7 @@ async function op(ctx: Ctx, f: any) {
   if (done) return { ...done.result, repeated: true };   // the phone sent it again after a lost answer
   const res = await fn(ctx, f);
   await sql`insert into dd.ops(tenant_id, id, login, kind, result) values (${ctx.tenant.id}, ${id}, ${ctx.user.login}, ${f.kind},
-            ${JSON.stringify(res)}::jsonb) on conflict do nothing`;
+            ${sql.json(res)}::jsonb) on conflict do nothing`;
   return res;
 }
 

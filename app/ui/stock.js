@@ -19,6 +19,7 @@ function stockTabsByRights() {
   const vis = {home: canAny("stock_view", "stock_edit", "stock_ops"), balance: canAny("stock_view", "stock_edit"), docs: canAny("stock_view", "stock_edit"), moves: canAny("stock_view", "stock_edit"),
     visits: canAny("stock_view", "stock_edit") && !!STK.dp_link, places: canAny("stock_view", "stock_edit"),
     equipment: canAny("equipment", "stock_view"), norms: canAny("stock_view", "stock_edit"), suppliers: can("stock_edit"),
+    phone: canAny("settings", "stock_edit", "stock_approve"),  // 3.13: the cloud of the stock and the QR for phones
     steril: canAny("sterilization", "equipment")};
   $$("#stockTabs button").forEach(b => b.hidden = !vis[b.dataset.k]);
   if (!vis[S.stockTab]) S.stockTab = Object.keys(vis).find(k => vis[k]) || "equipment";
@@ -32,7 +33,7 @@ async function loadStock() {
   stockTabsByRights();  // 3.13: «По приёмам» only while the stock is linked to Dentist Plus (STK.dp_link)
   if (S.matOpen && ["home", "balance"].includes(S.stockTab)) return mtCard();  // 3.13: the material card is a screen of these tabs
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, equipment: stockEquipment, norms: stockNorms, suppliers: stockSuppliers,
-    visits: stockVisits, places: stockPlaces}[S.stockTab];
+    visits: stockVisits, places: stockPlaces, phone: stockPhone}[S.stockTab];
   await fn();
 }
 

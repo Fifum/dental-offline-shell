@@ -189,8 +189,9 @@ begin
   return jsonb_build_object('written', out, 'seq', s);
 end $$;
 
--- The staff a phone may sign in as (sent by the laptops: who has a phone PIN and a right of the stock). A PIN changed or
--- taken away ends that person's sessions on every phone; people no longer in the list go, with their sessions.
+-- The staff a phone may sign in as (sent by the laptops: who has a phone PIN and a right of the stock; the others of the clinic
+-- with an empty PIN). A PIN changed or taken away ends that person's sessions on every phone. Nobody is deleted for missing
+-- from a list: a laptop that does not know everyone yet (a new one) must not lock the others out.
 create or replace function dd.set_staff(p_tenant text, p_staff jsonb) returns int
 language plpgsql volatile set search_path = '' as $$
 declare u jsonb; n int := 0; old text; had boolean;
@@ -211,8 +212,6 @@ begin
       pin_hash = excluded.pin_hash, pin_at = excluded.pin_at;
     n := n + 1;
   end loop;
-  delete from dd.staff where tenant_id = p_tenant
-    and login not in (select value->>'login' from jsonb_array_elements(p_staff));
   delete from dd.sessions s where s.tenant_id = p_tenant
     and not exists (select 1 from dd.staff st where st.tenant_id = s.tenant_id and st.login = s.login and st.pin_hash is not null);
   return n;

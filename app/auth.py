@@ -381,6 +381,11 @@ METHOD_PERMS = {
     "cloud_status": "settings", "cloud_join": "settings", "cloud_sync": "settings", "cloud_code": "settings",
     "cloud_leave": "settings", "cloud_revoke": "settings", "cloud_conflicts": "settings",
     "cloud_conflict_seen": "settings", "cloud_conflict_restore": "settings",
+    # 3.13: the cloud of the stock (connecting is checked for the director in Api) and the QR for the phones
+    "stock_cloud_status": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
+    "stock_cloud_phone": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
+    "stock_cloud_join": "settings", "stock_cloud_leave": "settings",
+    "stock_cloud_sync": ("settings", "stock_edit", "stock_approve"),
     # 3.0: the clinic network (accepting a computer and merging laptops are checked for the director in Api)
     "dp_main_status": ANY_USER, "dp_main_claim": "settings",
     "p2p_status": "settings", "p2p_accept": "settings", "p2p_reject": "settings", "p2p_sync": ANY_USER,
@@ -438,6 +443,7 @@ AUDITED = {
     "stock_request_save": "Заявка на выдачу материалов", "stock_request_cancel": "Заявка на материалы отменена",
     "stock_request_reject": "Заявка на материалы отклонена", "stock_request_accept": "Заявка на материалы принята", "stock_use": "Расход материалов (медсестра — на согласование)",
     "stock_approval_decide": "Согласование списания материалов", "stock_approval_cancel": "Отмена списания на согласовании",
+    "stock_cloud_join": "Склад подключён к облаку (телефоны)", "stock_cloud_leave": "Склад отключён от облака",
     "stock_photo_set": "Фото материала или оборудования", "stock_photo_clear": "Фото материала или оборудования убрано",
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
     "fiscal_open_shift": "Открытие смены на кассе", "fiscal_close_shift": "Закрытие смены (Z-отчёт)",

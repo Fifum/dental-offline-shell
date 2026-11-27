@@ -324,7 +324,7 @@ class StockFlow:
 
     def _apply(self, form, who, did=None, uid=None):
         wf = {"reason": form["reason"], "comment": form["comment"], "date": form["date"], "time": form["time"],
-              "location_id": form["location_id"], "patient_id": form["patient_id"],
+              "location_id": form.get("location_id") or "", "patient_id": form.get("patient_id") or "",
               "lines": [{"material_id": ln["material_id"], "qty": ln["qty"]} for ln in form["lines"]]}
         return self.stock.write_off(wf, who, did=did, uid=uid)
 
