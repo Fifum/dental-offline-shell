@@ -114,6 +114,9 @@
 /* 3.14: «Инвентаризация» and «Оборудование» as sections of their own */
 .lnk-row{cursor:pointer}
 .lnk-row:hover td{background:var(--hover)}
+/* «Инвентаризация»: the search starts at the left edge of the note «Пересчитайте…» and «Печать бланка» / «Печать описи»
+   end at its right edge (and at the right edge of the tabs above) — the toolbar has no box of its own to keep 16px inside */
+.inv-screen>.tab-tools{padding-left:0;padding-right:0}
 .inv-screen .tab-tools .fl{display:flex;flex-direction:row;align-items:center;gap:8px;margin:0}
 .inv-screen .tab-tools .fl select{min-width:180px}
 .inv-t td{vertical-align:middle}
