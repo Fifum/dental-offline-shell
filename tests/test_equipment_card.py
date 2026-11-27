@@ -204,10 +204,10 @@ check("director sees the money", code == 200 and eq["price"] == 1500000 and eq["
 
 # ------------------------------------------------------- replication --
 check("table replicated", "equipment_docs" in replica.BY_NAME and replica.ORDER["equipment_docs"] > replica.ORDER["equipment"])
-check("catch-up bumped", replica.CATCHUP == "3.13", replica.CATCHUP)
+check("catch-up bumped", tuple(map(int, replica.CATCHUP.split("."))) >= (3, 13), replica.CATCHUP)
 check("catch-up lists the new columns", {"manufacturer", "condition", "location_id", "disposal_kind"} <= set(replica.CATCHUP_COLS["equipment"])
       and replica.CATCHUP_COLS["equipment_events"] == ["data"])
-check("catch-up done", d.one("SELECT v FROM sync_state WHERE k='catchup'")["v"] == "3.13")
+check("catch-up done", d.one("SELECT v FROM sync_state WHERE k='catchup'")["v"] == replica.CATCHUP)
 check("docs are captured", d.one("SELECT COUNT(*) AS n FROM sync_dirty WHERE tbl='equipment_docs'")["n"] >= 1)
 # a row synced by an older computer without the new columns gets them from the synced copy
 row = d.one("SELECT * FROM equipment WHERE id=?", (e2,))

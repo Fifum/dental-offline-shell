@@ -168,7 +168,7 @@ check("staff list shows it", call("auth", "staff_list", token=TD)[1]["staff"] an
 # ------------------------------------------------------- replication --
 check("the hash goes to the other computers", "phone_pin_hash" not in replica.BY_NAME["users"].skip)
 check("a conflict never shows it", "phone_pin_hash" in replica.SECRET_COLS)
-check("catch-up for the new columns", replica.CATCHUP == "3.13" and replica.CATCHUP_COLS.get("users") == ["phone_pin_hash", "phone_pin_at"]
+check("catch-up for the new columns", tuple(map(int, replica.CATCHUP.split("."))) >= (3, 13) and replica.CATCHUP_COLS.get("users") == ["phone_pin_hash", "phone_pin_at"]
       and replica.CATCHUP_COLS.get("stock_requests") == ["accepted_by", "accepted_name", "accepted_at"])
 cols = {r[1] for r in d.conn.execute("PRAGMA table_info(stock_requests)")}
 check("request columns", {"accepted_by", "accepted_name", "accepted_at"} <= cols)

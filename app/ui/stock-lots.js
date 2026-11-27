@@ -55,11 +55,11 @@ async function openPurchase(cover) {
           <span class="grow"></span><b>${money(g.total)}</b>
           <button class="icon-btn" title="Скачать в Excel" data-xls="#po${gi} table.tbl" data-xls-name="Заказ — ${esc(g.supplier_name)}">${XLS}</button>
           <button class="icon-btn" title="Печать заявки" data-po-print="${gi}">${PRINT_ICON}</button>
-          ${edit ? `<button class="btn small" data-po-in="${gi}">Оформить приход по заказу</button>` : ""}</div>
+          ${edit ? `<button class="btn small" data-po-save="${gi}" title="Записать заказ: заказанное покажется «в пути» и не будет заказано второй раз">Сформировать заказ</button><button class="btn ghost small" data-po-in="${gi}">Оформить приход</button>` : ""}</div>
         <table class="tbl compact"><thead><tr><th>Код</th><th>Материал</th><th class="num">Остаток</th><th class="num">Минимум</th><th class="num">Расход в день</th><th>Почему</th><th class="num">Заказать</th><th class="num">Цена</th><th class="num">Сумма</th></tr></thead><tbody>${
           g.lines.map(l => `<tr><td class="muted">${esc(l.code)}</td><td><b>${esc(l.name)}</b>${offers(l)}</td>
             <td class="num">${qtyFmt(l.usable, l.unit)}${l.expired_qty ? `<small class="bad-t" style="display:block">+ просрочено ${qtyFmt(l.expired_qty)}</small>` : ""}</td>
-            <td class="num muted">${l.min_qty ? qtyFmt(l.min_qty) : "—"}</td><td class="num muted">${l.daily ? qtyFmt(l.daily) : "—"}</td><td class="muted">${esc(l.why)}</td>
+            <td class="num muted">${l.min_qty ? qtyFmt(l.min_qty) : "—"}${l.in_transit ? `<small class="muted" style="display:block">в пути ${qtyFmt(l.in_transit)}</small>` : ""}</td><td class="num muted">${l.daily ? qtyFmt(l.daily) : "—"}</td><td class="muted">${esc(l.why)}</td>
             <td class="num"><b>${qtyFmt(l.qty, l.unit)}</b></td><td class="num">${money(l.price)}</td><td class="num">${money(l.sum)}</td></tr>`).join("")}</tbody></table></section>`).join("")
       : `<div class="empty"><b>Заказывать нечего</b><span>Всех материалов хватит больше чем на 14 дней, и все выше минимума</span></div>`}
     </div>
@@ -68,6 +68,9 @@ async function openPurchase(cover) {
   let t; $("#poCover", box).oninput = e => { clearTimeout(t); t = setTimeout(() => { const v = +e.target.value; if (v >= 1 && v <= 365) openPurchase(v); }, 500); };
   $$("[data-po-print]", box).forEach(b => b.onclick = () => printPurchase([r.groups[+b.dataset.poPrint]]));
   const pa = $("#poPrintAll", box); if (pa) pa.onclick = () => printPurchase(r.groups);
+  $$("[data-po-save]", box).forEach(b => b.onclick = async () => { const g = r.groups[+b.dataset.poSave];
+    try { await api.stock_order_save({supplier_id: g.supplier_id || "", lines: g.lines.map(l => ({material_id: l.material_id, qty: l.qty, price: l.price}))});
+      toast(`Заказ записан${g.supplier_id ? ": " + g.supplier_name : ""}`); closeModal(); if (S.matOpen) mtCard(); else stockGo("stock", "orders"); } catch (x) { toast(errText(x), true); } });
   $$("[data-po-in]", box).forEach(b => b.onclick = () => { const g = r.groups[+b.dataset.poIn];
     openStockDoc("receipt", g.lines.map(l => ({material_id: l.material_id, qty: l.qty, price: l.price})),
       {supplier_id: g.supplier_id || "", comment: `По заказу от ${fmtDate(iso(new Date()))}`}); });
@@ -85,4 +88,38 @@ async function printPurchase(groups) {
     <p>Цены — по последней закупке, просим подтвердить актуальные цены и срок поставки.</p>
     ${signLines([{role: "Заказ составил", name: ME ? ME.name : ""}, {role: "Руководитель", name: c.director || ""}])}</div>`).join("");
   window.print();
+}
+
+/* ------------------------------------------------ 3.14 «Закупки»: orders to suppliers and what is on its way */
+async function stockOrders() {
+  const body = $("#stockBody");
+  const r = await api.stock_orders({status: S.ordStatus || ""});
+  const edit = can("stock_edit"), list = r.orders, open = list.filter(o => ["ordered", "partial"].includes(o.status));
+  body.innerHTML = `<div class="stat-row"><div class="stat"><span>Открытых заказов</span><b>${open.length}</b></div>
+      <div class="stat ${open.some(o => o.late) ? "warn" : ""}"><span>Опаздывают</span><b>${open.filter(o => o.late).length}</b></div>
+      <div class="stat"><span>В пути на сумму</span><b>${money(open.reduce((s, o) => s + o.lines.reduce((t, l) => t + l.left * (+l.price || 0), 0), 0))}</b></div></div>
+    <div class="tab-tools"><select class="input sm-sel" id="ordSt"><option value="">Все заказы</option>${Object.entries(r.statuses).map(([k, t]) => `<option value="${k}" ${k === S.ordStatus ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
+      <span class="grow"></span><button class="btn" id="ordNew" title="Что и сколько заказать, у кого дешевле">Заказ поставщикам</button></div>
+    <div class="pbody" style="margin-top:8px">${list.length ? list.map(o => `<section class="po-group ord-card ${o.status}">
+        <div class="po-gh"><div><b>${esc(o.number)} · ${o.supplier_name ? esc(o.supplier_name) : "поставщик не выбран"}</b><small class="muted">от ${fmtDate(o.date)}${o.expected ? ` · ожидается ${fmtDate(o.expected)}` : ""}${o.user_name ? " · " + esc(o.user_name) : ""}${o.comment ? " · " + esc(o.comment) : ""}</small></div>
+          <span class="grow"></span>${o.late ? `<span class="pill st-cancel">опаздывает</span>` : ""}<span class="pill ${o.status === "received" ? "st-ok" : o.status === "cancelled" ? "st-cancel" : o.status === "partial" ? "st-done" : "st-come"}">${esc(o.status_title)}</span><b>${money(o.total)}</b>
+          ${edit && ["ordered", "partial"].includes(o.status) ? `<button class="btn small" data-in="${esc(o.id)}">Принять по заказу</button><button class="btn ghost small danger-t" data-x="${esc(o.id)}">Отменить</button>` : ""}</div>
+        <table class="tbl compact"><thead><tr><th>Материал</th><th class="num">Заказано</th><th class="num">Получено</th><th class="num">В пути</th><th class="num">Цена</th></tr></thead><tbody>${o.lines.map(l => `<tr data-m="${esc(l.material_id)}"><td class="lnk"><b>${esc(l.name)}</b>${l.number ? ` <small class="muted">${esc(l.number)}</small>` : ""}</td>
+          <td class="num">${qtyFmt(l.qty, l.unit)}</td><td class="num">${qtyFmt(l.received, l.unit)}</td><td class="num"><b>${["ordered", "partial"].includes(o.status) ? qtyFmt(l.left, l.unit) : "—"}</b></td><td class="num">${money(l.price)}</td></tr>`).join("")}</tbody></table></section>`).join("")
+      : `<div class="empty"><b>Заказов нет</b><span>«Заказ поставщикам» подберёт, что заказать, и запишет заказ — заказанное будет «в пути» до прихода</span></div>`}</div>`;
+  $("#ordSt").onchange = e => { S.ordStatus = e.target.value; stockOrders(); };
+  $("#ordNew").onclick = () => openPurchase();
+  $$("tr[data-m]", body).forEach(tr => tr.onclick = () => openMaterial(tr.dataset.m, "buy"));
+  $$("[data-in]", body).forEach(b => b.onclick = () => receiveByOrder(list.find(o => o.id === b.dataset.in)));
+  $$("[data-x]", body).forEach(b => b.onclick = () => cancelOrder(list.find(o => o.id === b.dataset.x), stockOrders));
+}
+/** The usual receipt form, filled with what is still on its way by the order; the receipt counts against it. */
+function receiveByOrder(o) {
+  const lines = o.lines.filter(l => l.left > 0).map(l => ({material_id: l.material_id, qty: l.left, price: l.price}));
+  if (!lines.length) return toast("По заказу всё получено");
+  openStockDoc("receipt", lines, {supplier_id: o.supplier_id || "", comment: `По заказу ${o.number} от ${fmtDate(o.date)}`, order_id: o.id});
+}
+async function cancelOrder(o, after) {
+  if (!await ask(`Отменить заказ ${o.number}?`, {danger: true, ok: "Отменить заказ", cancel: "Не отменять", text: "Заказанное перестанет считаться «в пути». Полученное по нему останется на складе."})) return;
+  try { await api.stock_order_cancel(o.id); toast("Заказ отменён"); after(); } catch (x) { toast(errText(x), true); }
 }

@@ -118,6 +118,7 @@ class Api:
             import demo
             demo.ensure_stock(self._stock)
             demo.ensure_stock_lots(self._stock)
+            self._stock.fill_numbers()  # 3.14: the demo puts its materials in directly
 
     # ------------------------------------------------- stock and equipment --
     @staticmethod
@@ -233,7 +234,73 @@ class Api:
             perms, _, _, direct, _ = self._stock_rights()
             m["can"] = {"edit": "stock_edit" in perms, "ops": bool(perms & {"stock_edit", "stock_ops"}), "direct": direct,
                         "photo": bool(perms & {"stock_edit", "stock_ops"})}
+            if not perms & {"stock_view", "stock_edit"}:  # 3.14: the orders (prices of suppliers) — for the stock's own people
+                m["orders"] = []
         return m
+
+    # ------------------------------------------------------ 3.14: the material card --
+    def material_set(self, mid, field, value):
+        """Минимальный и оптимальный остаток, срок поставки, основной поставщик — saved at once from the card."""
+        return self._stock.material_set(mid, field, value)
+
+    def material_qr(self, mid):
+        """The label of a material: its barcode (EAN-13 of the box or the internal one) and the QR with its number."""
+        import crm
+        m = self._stock.db.one("SELECT * FROM materials WHERE id=?", (str(mid or ""),))
+        if not m:
+            raise ValueError("Материал не найден")
+        clinic = (config.load_settings().get("clinic") or {}).get("name") or config.BRAND.get("name") or ""
+        text = self._stock.material_qr_text(m, clinic)
+        import barcodes
+        bar = m["barcode"] or ""
+        ean = bar if barcodes.valid_ean(bar) else ("" if bar else barcodes.internal_ean(m["id"]))
+        return {"text": text, "png": crm.qr_data_uri(text), "link": text.startswith("https://"), "clinic": clinic,
+                "number": m["number"] or "", "name": m["name"], "code": m["code"] or "", "barcode": bar, "ean": ean,
+                "ean_svg": barcodes.ean_svg(ean) if ean else "", "ean_internal": bool(ean and ean != bar)}
+
+    def material_label(self, mid):
+        """«Печать наклейки»: a material without a barcode gets its internal EAN-13 written down first."""
+        return self.material_qr(self._stock.material_label(mid))
+
+    def material_doc_add(self, mid, kind, name, data_b64, title=""):
+        import files
+        perms, _ = self._my_perms()
+        if kind != "photo" and "stock_edit" not in perms:
+            raise ValueError("Документы материала загружает кладовщик или администратор склада")
+        if not self._db.one("SELECT 1 AS x FROM materials WHERE id=? AND active=1", (str(mid or ""),)):
+            raise ValueError("Материал не найден или убран из справочника")
+        fr = self._files.add_stock_file(name, files.b64_bytes(data_b64), self._who())
+        self._stock.material_doc_add(mid, kind, title or fr.get("title") or name, fr["id"], self._who())
+        return self.material(mid)
+
+    def material_doc_delete(self, did):
+        return self.material(self._stock.material_doc_delete(did))
+
+    def material_doc_open(self, did):
+        d = self._stock.material_doc_file(did)
+        return {**self._files.stock_photo(d["file_id"]), "title": d["title"]}
+
+    def material_analog_add(self, mid, other):
+        self._stock.analog_add(mid, other, self._who())
+        return self._stock.analogs(mid)
+
+    def material_analog_delete(self, mid, other):
+        self._stock.analog_delete(mid, other)
+        return self._stock.analogs(mid)
+
+    def stock_orders(self, f=None):
+        f = f if isinstance(f, dict) else {}
+        from stock import ORDER_STATUS
+        return {"orders": self._stock.orders(f.get("status"), bool(f.get("open"))), "statuses": ORDER_STATUS}
+
+    def stock_order(self, oid):
+        return self._stock.order(oid)
+
+    def stock_order_save(self, f):
+        return self._stock.save_order(f if isinstance(f, dict) else {}, self._who())
+
+    def stock_order_cancel(self, oid):
+        return self._stock.cancel_order(oid)
 
     def save_material(self, f):
         return self._stock.save_material({**f, "_user": self._who()})

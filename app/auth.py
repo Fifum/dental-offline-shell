@@ -330,6 +330,12 @@ METHOD_PERMS = {
     "stock_photo_set": ("stock_edit", "stock_ops", "equipment"), "stock_photo_clear": ("stock_edit", "stock_ops", "equipment"),
     "equipment_amortization": "accounting", "amort_settings_save": "accounting",
     "equipment_capex_candidates": "accounting", "expenses_to_capex": "accounting",  # 3.14
+    # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
+    "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
+    "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",
+    "material_doc_open": ("stock_view", "stock_edit", "stock_ops"), "material_analog_add": "stock_edit",
+    "material_analog_delete": "stock_edit", "stock_orders": ("stock_view", "stock_edit"), "stock_order": ("stock_view", "stock_edit"),
+    "stock_order_save": "stock_edit", "stock_order_cancel": "stock_edit",
     # money 2.12: advance, refunds, installments, memberships, cash shifts, insurance (ДМС)
     "money_patient": ("payments", "billing", "patients_view"), "deposit_use": "payments", "refund": "payments",
     "schedule": ("payments", "billing"), "schedule_draft": ("payments", "billing"), "schedule_save": ("payments", "billing"),
@@ -446,6 +452,10 @@ AUDITED = {
     "stock_photo_set": "Фото материала или оборудования", "stock_photo_clear": "Фото материала или оборудования убрано",
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
     "expenses_to_capex": "Расходы перенесены в «Покупку оборудования»",
+    "material_set": "Материал: минимум, оптимум, срок поставки, поставщик", "material_label": "Наклейка материала (штрихкод)",
+    "material_doc_add": "Документ материала", "material_doc_delete": "Документ материала убран",
+    "material_analog_add": "Аналог материала", "material_analog_delete": "Аналог материала убран",
+    "stock_order_save": "Заказ поставщику", "stock_order_cancel": "Заказ поставщику отменён",
     "fiscal_open_shift": "Открытие смены на кассе", "fiscal_close_shift": "Закрытие смены (Z-отчёт)",
     "fiscal_x_report": "X-отчёт", "fiscal_retry": "Повтор чека", "fiscal_refund": "Чек возврата",
     "fiscal_for_payment": "Чек по оплате", "fiscal_save_settings": "Настройки кассы",

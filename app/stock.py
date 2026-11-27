@@ -30,6 +30,8 @@ import uuid
 from datetime import date, datetime, timedelta
 from urllib.parse import quote, unquote
 
+import barcodes
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS materials(
     id TEXT PRIMARY KEY, code TEXT, name TEXT, unit TEXT, category TEXT, min_qty REAL DEFAULT 0,
@@ -66,6 +68,16 @@ CREATE TABLE IF NOT EXISTS equipment_docs(
     id TEXT PRIMARY KEY, equipment_id TEXT, kind TEXT, title TEXT, file_id TEXT, created_by TEXT, created_at TEXT,
     deleted INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS ix_eqdocs_eq ON equipment_docs(equipment_id);
+CREATE TABLE IF NOT EXISTS stock_orders(
+    id TEXT PRIMARY KEY, number TEXT, supplier_id TEXT, date TEXT, expected TEXT, lines TEXT, received TEXT, status TEXT,
+    total REAL DEFAULT 0, comment TEXT, doc_ids TEXT, user_name TEXT, created_at TEXT, updated_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_sorders_status ON stock_orders(status);
+CREATE TABLE IF NOT EXISTS material_docs(
+    id TEXT PRIMARY KEY, material_id TEXT, kind TEXT, title TEXT, file_id TEXT, created_by TEXT, created_at TEXT,
+    deleted INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS ix_matdocs_mat ON material_docs(material_id);
+CREATE TABLE IF NOT EXISTS material_analogs(
+    id TEXT PRIMARY KEY, a TEXT, b TEXT, created_by TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
 """
 SOON_DAYS = 30          # a lot expiring within this many days is highlighted
 USAGE_DAYS = 60         # the average daily use for the purchase list is taken over this period
@@ -101,6 +113,17 @@ AMORT_METHODS = {"linear": "Линейный"}
 OFF_BOOKS = ("lease", "owner")
 CAPEX_DAYS = 45         # an expense this close to the purchase, of the same sum, looks like the purchase itself
 MAX_USEFUL_MONTHS = 600  # 50 years
+# 3.14 «карточка материала»: its own number (МТ-0001, as the equipment's inventory number), the details of the mockup,
+# the orders to suppliers («в пути»), the documents and photos, the analogs
+MAT_FIRST = "МТ-0001"
+MAT_NEW_COLS = ("number TEXT", "manufacturer TEXT", "description TEXT", "form TEXT", "shelf_life TEXT", "storage TEXT",
+                "opt_qty REAL DEFAULT 0", "lead_days INTEGER DEFAULT 0", "supplier_id TEXT")
+MAT_TEXT = {"manufacturer": 120, "description": 200, "form": 120, "shelf_life": 80, "storage": 200}
+MAT_DOC_KINDS = {"reg": "Регистрационное удостоверение", "cert": "Сертификат или декларация", "manual": "Инструкция",
+                 "msds": "Паспорт безопасности", "waybill": "Накладная", "photo": "Фото", "other": "Другое"}
+ORDER_STATUS = {"ordered": "Заказан", "partial": "Получен частично", "received": "Получен", "cancelled": "Отменён"}
+ORDER_OPEN = ("ordered", "partial")
+REQ_OPEN = ("new", "accepted", "partial")   # stock_flow.OPEN: the cabinets' requests still to be issued — the reserve
 
 
 def _now():
@@ -191,6 +214,14 @@ def parse_scan(code):
         except ValueError:
             pass
     return out
+
+
+def _jl(v, default):
+    try:
+        x = json.loads(v) if v else default
+        return x if isinstance(x, type(default)) else default
+    except (TypeError, ValueError):
+        return default
 
 
 def _mon(day):
@@ -315,9 +346,34 @@ class Stock:
                     db.conn.execute(f"ALTER TABLE equipment ADD COLUMN {col}")
             if "data" not in {r[1] for r in db.conn.execute("PRAGMA table_info(equipment_events)")}:  # 3.13: inventory details
                 db.conn.execute("ALTER TABLE equipment_events ADD COLUMN data TEXT")
+            mcols = {r[1] for r in db.conn.execute("PRAGMA table_info(materials)")}
+            for col in MAT_NEW_COLS:  # 3.14: the material card
+                if col.split()[0] not in mcols:
+                    db.conn.execute(f"ALTER TABLE materials ADD COLUMN {col}")
+            self._fill_numbers(db.conn)
             db.conn.commit()
 
     service_location = None  # 3.5: callable(invoice row) -> place of the automatic write-off by an invoice (set by Api)
+
+    @staticmethod
+    def _fill_numbers(conn):
+        """3.14: a material without a number (made before 3.14, by the demo, or on a computer not updated yet) gets the next one,
+        in the order the materials were made: every computer numbers the same materials the same way."""
+        todo = conn.execute("SELECT id FROM materials WHERE COALESCE(number,'')='' ORDER BY COALESCE(created_at,''), id").fetchall()
+        if not todo:
+            return 0
+        used = {str(r[0]) for r in conn.execute("SELECT number FROM materials WHERE COALESCE(number,'')<>''")}
+        n = max([int(m[1]) for x in used if (m := re.match(r"^МТ-(\d+)$", x))] or [0])
+        for (mid,) in todo:
+            n += 1
+            while f"МТ-{n:04d}" in used:
+                n += 1
+            conn.execute("UPDATE materials SET number=? WHERE id=?", (f"МТ-{n:04d}", mid))
+        return len(todo)
+
+    def fill_numbers(self):
+        with self.db.tx() as c:
+            return self._fill_numbers(c)
 
     # ============================================================ materials --
     def materials(self, q="", only_low=False, with_inactive=False, only_expiring=False, location=None):
@@ -350,7 +406,8 @@ class Stock:
                 r["balance"] = round(at.get(r["id"], {}).get(location or "", 0), 3)
                 r["value"] = round(r["balance"] * (r["price"] or 0), 2)
         if q:
-            rows = [r for r in rows if q in f"{r['code']} {r['name']} {r['category']} {r['barcode']}".lower()]
+            rows = [r for r in rows if q in f"{r['code']} {r['name']} {r['category']} {r['barcode']} {r.get('number') or ''} "
+                                             f"{r.get('manufacturer') or ''}".lower()]
         if only_low:
             rows = [r for r in rows if r["low"]]
         if only_expiring:
@@ -432,7 +489,7 @@ class Stock:
             return None
         m = rows[0]
         m["lot_list"] = self.lots(mid)
-        m["moves"] = self.moves(material_id=mid, limit=200)
+        m["moves"] = self.moves(material_id=mid, limit=1000)  # 3.14: «История» — every move
         names = self._loc_names()  # 3.5: where it is
         m["by_location"] = [{"id": k, "name": names.get(k, MAIN), "qty": v}
                             for k, v in sorted(self.location_balances().get(mid, {}).items(), key=lambda x: (x[0] != "", names.get(x[0], "")))
@@ -441,7 +498,295 @@ class Stock:
                                   JOIN services s ON s.id = sm.service_id WHERE sm.material_id=? ORDER BY s.title""", (mid,))
         m.update(self.material_supplies(mid))   # 3.13 «карточка материала»
         m.update(self.material_usage(mid, m["balance"] - (m.get("expired_qty") or 0)))
+        m.update(self.material_card(m))         # 3.14: by the mockup
         return m
+
+    # ------------------------------------------------------ 3.14: the material card --
+    def reserve(self, mid=None):
+        """«Резервный остаток»: what the cabinets asked for and did not get yet (new, accepted and partly issued requests)."""
+        if not self.db.one("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='stock_requests'"):
+            return {}
+        out = {}
+        for r in self.db.q(f"SELECT lines, issued FROM stock_requests WHERE status IN ({','.join('?' * len(REQ_OPEN))})", REQ_OPEN):
+            issued = _jl(r["issued"], {})
+            for ln in _jl(r["lines"], []):
+                k = str((ln or {}).get("material_id") or "")
+                if not k or (mid and k != mid):
+                    continue
+                try:
+                    left = float(ln.get("qty") or 0) - float(issued.get(k, 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if left > 1e-9:
+                    out[k] = round(out.get(k, 0) + left, 3)
+        return out
+
+    def in_transit(self, mid=None):
+        """«В пути (заказано)»: ordered from suppliers and not received yet, by the open orders."""
+        out = {}
+        for o in self.db.q(f"SELECT lines, received FROM stock_orders WHERE status IN ({','.join('?' * len(ORDER_OPEN))})", ORDER_OPEN):
+            got = _jl(o["received"], {})
+            for ln in _jl(o["lines"], []):
+                k = str((ln or {}).get("material_id") or "")
+                if not k or (mid and k != mid):
+                    continue
+                left = float(ln.get("qty") or 0) - float(got.get(k, 0) or 0)
+                if left > 1e-9:
+                    out[k] = round(out.get(k, 0) + left, 3)
+        return out
+
+    def material_card(self, m):
+        """What the 3.14 card adds: reserve, in transit, the coverage by days, the analytics, the use by month, the orders,
+        the documents and photos, the analogs, the barcode and the services it is used in."""
+        mid, today = m["id"], date.today()
+        usable = max(0.0, (m["balance"] or 0) - (m.get("expired_qty") or 0))
+        reserve = self.reserve(mid).get(mid, 0.0)
+        free = round(max(0.0, usable - reserve), 3)
+        transit = self.in_transit(mid).get(mid, 0.0)
+        daily = (m.get("usage") or {}).get("daily") or 0
+        days = round(free / daily, 1) if daily > 0 else None
+        opt = m.get("opt_qty") or 0
+        full = opt or (m["min_qty"] or 0) * 2
+        # by month for a year: services, the use in treatment (the nurse's «Расход в лечении») and the other write-offs
+        ym = []
+        y, mo = today.year, today.month
+        for _ in range(12):
+            ym.append(f"{y}-{mo:02d}")
+            y, mo = (y, mo - 1) if mo > 1 else (y - 1, 12)
+        ym.reverse()
+        months = {}
+        for r in self.db.q("""SELECT substr(at,1,7) AS mon, kind, reason, -SUM(qty) AS q, -SUM(qty*price) AS v FROM stock_moves
+                              WHERE material_id=? AND kind IN ('service','writeoff') AND substr(at,1,10) >= ?
+                              GROUP BY mon, kind, reason""", (mid, ym[0] + "-01")):
+            k = "service" if r["kind"] == "service" else "treatment" if str(r["reason"] or "").startswith("Расход в лечении") else "writeoff"
+            g = months.setdefault(r["mon"], {"month": r["mon"], "service": 0.0, "treatment": 0.0, "writeoff": 0.0, "sum": 0.0})
+            g[k] = round(g[k] + (r["q"] or 0), 3)
+            g["sum"] = round(g["sum"] + (r["v"] or 0), 2)
+        use_months = [months.get(k) or {"month": k, "service": 0.0, "treatment": 0.0, "writeoff": 0.0, "sum": 0.0} for k in ym]
+        tot = {k: round(sum(x[k] for x in use_months), 3) for k in ("service", "treatment", "writeoff")}
+        m30 = (today - timedelta(days=30)).isoformat()
+        used30 = -(self.db.one("""SELECT COALESCE(SUM(qty),0) AS q FROM stock_moves WHERE material_id=? AND kind IN ('service','writeoff')
+                                 AND substr(at,1,10) > ?""", (mid, m30))["q"] or 0)
+        y365 = (today - timedelta(days=365)).isoformat()
+        buy = self.db.one("""SELECT COALESCE(SUM(qty*price),0) AS v, COALESCE(SUM(qty),0) AS q FROM stock_moves
+                             WHERE material_id=? AND kind='receipt' AND qty > 0 AND price > 0 AND substr(at,1,10) > ?""", (mid, y365))
+        orders = [o for o in self.orders(open_only=True) if any(ln["material_id"] == mid for ln in o["lines"])]
+        docs = self.db.q("""SELECT d.*, f.ext, f.size FROM material_docs d LEFT JOIN patient_files f ON f.id = d.file_id
+                            WHERE d.material_id=? AND d.deleted=0 ORDER BY d.created_at, d.id""", (mid,))
+        for d in docs:
+            d["kind_title"] = MAT_DOC_KINDS.get(d["kind"], d["kind"])
+            d["image"] = (d.get("ext") or "") in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+        photos = list(dict.fromkeys(x for x in [m.get("photo_id")] + [d["file_id"] for d in docs if d["kind"] == "photo"] if x))
+        sup = self.db.one("SELECT id, name, phone FROM suppliers WHERE id=?", (m.get("supplier_id"),)) if m.get("supplier_id") else None
+        bar = m.get("barcode") or ""
+        ean = bar if barcodes.valid_ean(bar) else ("" if bar else barcodes.internal_ean(mid))
+        if m["balance"] <= 0:
+            status = ("bad", "Нет в наличии")
+        elif usable <= 0:
+            status = ("bad", "Просрочено")
+        elif m["low"] or (m["min_qty"] and free <= m["min_qty"]):
+            status = ("warn", "Заканчивается")
+        else:
+            status = ("ok", "В наличии")
+        return {"reserve": round(reserve, 3), "free": free, "in_transit": round(transit, 3), "status": status,
+                "monthly": round(daily * 30, 1), "used30": round(max(0.0, used30), 3), "cover_days": days,
+                "cover_pct": round(max(0.0, min(100.0, free / full * 100)), 1) if full else (100.0 if free > 0 else 0.0),
+                "cover_full": full, "unit_cost": m["price"] or 0,
+                "avg_price": round(buy["v"] / buy["q"], 2) if buy["q"] else (m["price"] or 0), "avg_price_qty": round(buy["q"] or 0, 3),
+                "use_months": use_months, "use_total": tot, "orders": orders, "docs": docs, "photos": photos,
+                "doc_kinds": [{"kind": k, "title": t, "count": sum(1 for d in docs if d["kind"] == k)} for k, t in MAT_DOC_KINDS.items()],
+                "analogs": self.analogs(mid), "supplier": sup,
+                "ean": ean, "ean_svg": barcodes.ean_svg(ean) if ean else "", "ean_internal": bool(ean and ean != bar)}
+
+    # ---------------------------------------------------- 3.14: orders to suppliers --
+    def orders(self, status=None, open_only=False, limit=300):
+        sql, args = "SELECT o.*, s.name AS supplier_name, s.phone AS supplier_phone FROM stock_orders o LEFT JOIN suppliers s ON s.id = o.supplier_id", []
+        if open_only:
+            sql += f" WHERE o.status IN ({','.join('?' * len(ORDER_OPEN))})"
+            args += list(ORDER_OPEN)
+        elif status:
+            sql += " WHERE o.status=?"
+            args.append(status)
+        rows = self.db.q(sql + " ORDER BY CASE WHEN o.status IN ('ordered','partial') THEN 0 ELSE 1 END, o.date DESC, o.created_at DESC LIMIT ?",
+                         (*args, int(limit)))
+        mats = {r["id"]: r for r in self.db.q("SELECT id, name, unit, number, code FROM materials")}
+        today = date.today().isoformat()
+        for o in rows:
+            got = _jl(o["received"], {})
+            lines = []
+            for ln in _jl(o["lines"], []):
+                mm = mats.get(ln.get("material_id")) or {}
+                rec = round(float(got.get(ln.get("material_id"), 0) or 0), 3)
+                lines.append({**ln, "name": mm.get("name") or "удалённый материал", "unit": mm.get("unit") or "", "number": mm.get("number") or "",
+                              "code": mm.get("code") or "", "received": rec, "left": round(max(0.0, float(ln.get("qty") or 0) - rec), 3)})
+            o["lines"] = lines
+            o["received"] = got
+            o["doc_ids"] = _jl(o["doc_ids"], [])
+            o["status_title"] = ORDER_STATUS.get(o["status"], o["status"])
+            o["late"] = o["status"] in ORDER_OPEN and bool(o["expected"]) and o["expected"] < today
+            o["supplier_name"] = o["supplier_name"] or ""
+        return rows
+
+    def order(self, oid):
+        o = next((x for x in self.orders(limit=100000) if x["id"] == oid), None)
+        if not o:
+            raise ValueError("Заказ не найден")
+        return o
+
+    def save_order(self, f, user=""):
+        """«Сформировать закупку»: an order to one supplier. The expected day is the order's day plus the longest delivery term
+        of its materials (or the day typed in the form). What is ordered and not received yet is «в пути»."""
+        lines = self._lines(f.get("lines"))
+        if any(q <= 0 for _, q, _ in lines):
+            raise ValueError("Количество в заказе должно быть больше нуля")
+        merged = {}
+        for mid, q, pr in lines:
+            g = merged.setdefault(mid, {"material_id": mid, "qty": 0.0, "price": pr})
+            g["qty"] = round(g["qty"] + q, 3)
+        sid = str(f.get("supplier_id") or "").strip() or None
+        if sid and not self.db.one("SELECT 1 AS x FROM suppliers WHERE id=?", (sid,)):
+            raise ValueError("Поставщик не найден")
+        day = _day(f.get("date"), "Дата заказа") or date.today().isoformat()
+        exp = _day(f.get("expected"), "Ожидается")
+        if not exp:
+            lead = max([int(r["lead_days"] or 0) for r in self.db.q(
+                f"SELECT lead_days FROM materials WHERE id IN ({','.join('?' * len(merged))})", tuple(merged))] or [0])
+            exp = (date.fromisoformat(day) + timedelta(days=lead)).isoformat() if lead else ""
+        oid, at = _id("PO"), _now()
+        n = self.db.one("SELECT COUNT(*) AS n FROM stock_orders")["n"]
+        total = round(sum(g["qty"] * g["price"] for g in merged.values()), 2)
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO stock_orders(id, number, supplier_id, date, expected, lines, received, status, total, comment, doc_ids,
+                         user_name, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (oid, _clean(f.get("number"), 30) or f"З-{n + 1:04d}", sid, day, exp, json.dumps(list(merged.values()), ensure_ascii=False),
+                       "{}", "ordered", total, _clean(f.get("comment"), 500), "[]", user, at, at))
+        return oid
+
+    def cancel_order(self, oid):
+        o = self.db.one("SELECT * FROM stock_orders WHERE id=?", (str(oid or ""),))
+        if not o:
+            raise ValueError("Заказ не найден")
+        if o["status"] not in ORDER_OPEN:
+            raise ValueError("Заказ уже закрыт")
+        with self.db.tx() as c:
+            c.execute("UPDATE stock_orders SET status='cancelled', updated_at=? WHERE id=?", (_now(), o["id"]))
+        return True
+
+    def _order_received(self, c, oid, did, lines):
+        """A receipt by an order counts against it: «получен частично» or «получен»."""
+        o = c.execute("SELECT lines, received, doc_ids, status FROM stock_orders WHERE id=?", (oid,)).fetchone()
+        if not o or o[3] not in ORDER_OPEN:
+            raise ValueError("Заказ не найден или уже закрыт")
+        want, got, docs = _jl(o[0], []), _jl(o[1], {}), _jl(o[2], [])
+        for mid, q, _ in lines:
+            got[mid] = round(float(got.get(mid, 0) or 0) + q, 3)
+        full = all(float(got.get(ln["material_id"], 0) or 0) + 1e-9 >= float(ln["qty"]) for ln in want)
+        c.execute("UPDATE stock_orders SET received=?, doc_ids=?, status=?, updated_at=? WHERE id=?",
+                  (json.dumps(got), json.dumps(docs + [did]), "received" if full else "partial", _now(), oid))
+
+    # ------------------------------------------------- 3.14: documents and analogs --
+    def material_doc_add(self, mid, kind, title, file_id, user=""):
+        m = self.db.one("SELECT id, photo_id FROM materials WHERE id=? AND active=1", (str(mid or ""),))
+        if not m:
+            raise ValueError("Материал не найден или убран из справочника")
+        kind = kind if kind in MAT_DOC_KINDS else "other"
+        did = _id("MD")
+        with self.db.tx() as c:
+            c.execute("INSERT INTO material_docs(id, material_id, kind, title, file_id, created_by, created_at, deleted) VALUES(?,?,?,?,?,?,?,0)",
+                      (did, m["id"], kind, _clean(title, 200) or MAT_DOC_KINDS[kind], file_id, user, _now()))
+            if kind == "photo" and not m["photo_id"]:
+                c.execute("UPDATE materials SET photo_id=? WHERE id=?", (file_id, m["id"]))
+        return did
+
+    def material_doc_delete(self, did):
+        d = self.db.one("SELECT * FROM material_docs WHERE id=? AND deleted=0", (str(did or ""),))
+        if not d:
+            raise ValueError("Документ не найден")
+        with self.db.tx() as c:
+            c.execute("UPDATE material_docs SET deleted=1 WHERE id=?", (d["id"],))
+            if c.execute("SELECT 1 FROM materials WHERE id=? AND photo_id=?", (d["material_id"], d["file_id"])).fetchone():
+                nxt = c.execute("SELECT file_id FROM material_docs WHERE material_id=? AND kind='photo' AND deleted=0 AND file_id<>? "
+                                "ORDER BY created_at LIMIT 1", (d["material_id"], d["file_id"])).fetchone()
+                c.execute("UPDATE materials SET photo_id=? WHERE id=?", (nxt[0] if nxt else None, d["material_id"]))
+        return d["material_id"]
+
+    def material_doc_file(self, did):
+        d = self.db.one("SELECT * FROM material_docs WHERE id=? AND deleted=0", (str(did or ""),))
+        if not d:
+            raise ValueError("Документ не найден")
+        return d
+
+    @staticmethod
+    def _pair(a, b):
+        a, b = sorted((str(a or ""), str(b or "")))
+        return f"{a}|{b}"[:120], a, b
+
+    def analogs(self, mid):
+        rows = self.db.q("""SELECT CASE WHEN x.a=? THEN x.b ELSE x.a END AS id FROM material_analogs x
+                            WHERE x.deleted=0 AND (x.a=? OR x.b=?)""", (mid, mid, mid))
+        ids = [r["id"] for r in rows]
+        if not ids:
+            return []
+        mats = {r["id"]: r for r in self.materials(with_inactive=True) if r["id"] in ids}
+        return sorted([{"id": k, "name": mats[k]["name"], "number": mats[k].get("number") or "", "code": mats[k]["code"] or "",
+                        "unit": mats[k]["unit"], "balance": mats[k]["balance"], "price": mats[k]["price"] or 0, "active": mats[k]["active"],
+                        "photo_id": mats[k].get("photo_id") or ""} for k in ids if k in mats], key=lambda x: x["name"])
+
+    def analog_add(self, mid, other, user=""):
+        if not mid or not other or mid == other:
+            raise ValueError("Выберите другой материал")
+        for x in (mid, other):
+            if not self.db.one("SELECT 1 AS x FROM materials WHERE id=? AND active=1", (x,)):
+                raise ValueError("Материал не найден")
+        key, a, b = self._pair(mid, other)
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO material_analogs(id, a, b, created_by, created_at, deleted) VALUES(?,?,?,?,?,0)
+                         ON CONFLICT(id) DO UPDATE SET deleted=0, created_by=excluded.created_by, created_at=excluded.created_at""",
+                      (key, a, b, user, _now()))
+        return key
+
+    def analog_delete(self, mid, other):
+        key, _, _ = self._pair(mid, other)
+        with self.db.tx() as c:
+            c.execute("UPDATE material_analogs SET deleted=1 WHERE id=?", (key,))
+        return True
+
+    # ------------------------------------------------ 3.14: the label of a material --
+    def material_qr_text(self, m, clinic=""):
+        """Like the equipment's: a link `<app>/m/<номер>` or the text with the number first."""
+        url = self.phone_url()
+        if url:
+            return f"{url.rstrip('/')}/m/{quote(str(m.get('number') or ''), safe='')}"
+        lines = [str(m.get("number") or ""), m["name"], m.get("code") and f"Арт.: {m['code']}",
+                 m.get("manufacturer") and f"Производитель: {m['manufacturer']}", clinic]
+        return "\n".join(str(x) for x in lines if x)
+
+    def material_by_code(self, code):
+        """The material a scanned label points to: the link, the text of the QR or just the number «МТ-0147»."""
+        s = str(code or "").strip()
+        if not s:
+            return None
+        m = re.search(r"/m/([^/?#\s]+)", s)
+        num = unquote(m[1]) if m else s.splitlines()[0].strip()
+        if not num:
+            return None
+        r = self.db.one("SELECT id FROM materials WHERE number=? AND active=1", (num,))
+        if not r:  # «мт-0147» typed by hand: SQLite lower() knows no Cyrillic
+            r = next((x for x in self.db.q("SELECT id, number FROM materials WHERE active=1 AND COALESCE(number,'')<>''")
+                      if x["number"].casefold() == num.casefold()), None)
+        return r["id"] if r else None
+
+    def material_label(self, mid):
+        """Printing the label of a material without a barcode writes its internal EAN-13 down, so a desk scanner finds it."""
+        m = self.db.one("SELECT * FROM materials WHERE id=?", (str(mid or ""),))
+        if not m:
+            raise ValueError("Материал не найден")
+        if not m["barcode"]:
+            ean = barcodes.internal_ean(m["id"])
+            if not self.db.one("SELECT 1 AS x FROM materials WHERE barcode=? AND id<>?", (ean, m["id"])):
+                with self.db.tx() as c:
+                    c.execute("UPDATE materials SET barcode=? WHERE id=? AND COALESCE(barcode,'')=''", (ean, m["id"]))
+        return m["id"]
 
     def material_supplies(self, mid):
         """3.13 «Карточка материала»: every receipt of the material — when, from whom, how much, at what price, by which invoice;
@@ -501,24 +846,44 @@ class Stock:
                           "days_left": round(max(0.0, usable) / daily, 1) if daily > 0 else None}}
 
     def save_material(self, f):
+        """3.14: the fields not sent keep their values (the nurse's quick form, the scanner and the importer send only some);
+        a new material gets the next number «МТ-…»."""
         name = _clean(f.get("name"), 200)
         if not name:
             raise ValueError("Укажите название материала")
         mid = f.get("id") or _id("M")
-        bar = _clean(f.get("barcode"), 60)
+        old = self.db.one("SELECT * FROM materials WHERE id=?", (mid,)) or {}
+        val = lambda k, fn: fn(f[k]) if k in f and f[k] is not None else old.get(k)  # noqa: E731
+        bar = _clean(f.get("barcode"), 60) if "barcode" in f and f["barcode"] is not None else (old.get("barcode") or "")
         if bar:
             dup = self.db.one("SELECT name FROM materials WHERE barcode=? AND id<>? AND active=1", (bar, mid))
             if dup:
                 raise ValueError(f"Штрихкод {bar} уже указан у материала «{dup['name']}»")
+        number = _clean(f.get("number"), 30) if f.get("number") else (old.get("number") or self._next_mat_number())
+        if number != old.get("number"):  # only a number being given is checked: two offline computers may have made a pair
+            dup = self.db.one("SELECT name FROM materials WHERE number=? AND id<>? AND active=1", (number, mid))
+            if dup:
+                raise ValueError(f"Номер {number} уже у материала «{dup['name']}»")
+        sup_id = val("supplier_id", lambda v: str(v or "").strip() or None)
+        if sup_id and not self.db.one("SELECT 1 AS x FROM suppliers WHERE id=?", (sup_id,)):
+            sup_id = None
+        extra = {k: val(k, lambda v, n=n: _clean(v, n)) or "" for k, n in MAT_TEXT.items()}
+        opt = val("opt_qty", lambda v: max(0, _num(v, "Оптимальный остаток"))) or 0
+        lead = val("lead_days", lambda v: max(0, min(365, int(_num(v, "Срок поставки"))))) or 0
         with self.db.tx() as c:
-            c.execute("""INSERT INTO materials(id, code, name, unit, category, min_qty, price, barcode, comment, active, created_at)
-                         VALUES(?,?,?,?,?,?,?,?,?,1,?)
+            c.execute("""INSERT INTO materials(id, code, name, unit, category, min_qty, price, barcode, comment, active, created_at,
+                         number, manufacturer, description, form, shelf_life, storage, opt_qty, lead_days, supplier_id)
+                         VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?)
                          ON CONFLICT(id) DO UPDATE SET code=excluded.code, name=excluded.name, unit=excluded.unit,
                          category=excluded.category, min_qty=excluded.min_qty, price=excluded.price,
-                         barcode=excluded.barcode, comment=excluded.comment, active=1""",
-                      (mid, _clean(f.get("code"), 50), name, _clean(f.get("unit"), 20) or "шт", _clean(f.get("category"), 100),
-                       max(0, _num(f.get("min_qty"), "Минимальный остаток")), max(0, _num(f.get("price"), "Цена")),
-                       bar, _clean(f.get("comment"), 500), _now()))
+                         barcode=excluded.barcode, comment=excluded.comment, active=1, number=excluded.number,
+                         manufacturer=excluded.manufacturer, description=excluded.description, form=excluded.form,
+                         shelf_life=excluded.shelf_life, storage=excluded.storage, opt_qty=excluded.opt_qty,
+                         lead_days=excluded.lead_days, supplier_id=excluded.supplier_id""",
+                      (mid, val("code", lambda v: _clean(v, 50)) or "", name, val("unit", lambda v: _clean(v, 20)) or "шт",
+                       val("category", lambda v: _clean(v, 100)) or "", val("min_qty", lambda v: max(0, _num(v, "Минимальный остаток"))) or 0,
+                       val("price", lambda v: max(0, _num(v, "Цена"))) or 0, bar, val("comment", lambda v: _clean(v, 500)) or "",
+                       old.get("created_at") or _now(), number, *extra.values(), opt, lead, sup_id))
             sup = f.get("supplier_id") if f.get("supplier_id") and self.db.one("SELECT 1 AS x FROM suppliers WHERE id=?", (f.get("supplier_id"),)) else None
             if f.get("start_qty") and not f.get("id") and not sup:
                 q = _num(f["start_qty"])
@@ -530,6 +895,44 @@ class Stock:
             self.receive({"supplier_id": sup, "number": f.get("doc_number"), "lines": [{"material_id": mid, "qty": f["start_qty"], "price": f.get("price")}],
                           "comment": "Начальный остаток"}, f.get("_user", ""))
         return mid
+
+    _MAT_SET = {"min_qty": "Минимальный остаток", "opt_qty": "Оптимальный остаток", "lead_days": "Срок поставки",
+                "supplier_id": "Основной поставщик"}
+
+    def material_set(self, mid, field, value):
+        """3.14: the four fields under «Общие сведения» are saved at once, one by one (no form, no «Сохранить»)."""
+        m = self.db.one("SELECT * FROM materials WHERE id=? AND active=1", (str(mid or ""),))
+        if not m:
+            raise ValueError("Материал не найден или убран из справочника")
+        if field not in self._MAT_SET:
+            raise ValueError("Это поле так не меняется")
+        if field == "supplier_id":
+            v = str(value or "").strip() or None
+            if v and not self.db.one("SELECT 1 AS x FROM suppliers WHERE id=? AND active=1", (v,)):
+                raise ValueError("Поставщик не найден")
+        elif field == "lead_days":
+            v = int(max(0, min(365, _num(value, self._MAT_SET[field]))))
+        else:
+            v = max(0, _num(value, self._MAT_SET[field]))
+        with self.db.tx() as c:
+            c.execute(f"UPDATE materials SET {field}=? WHERE id=?", (v, m["id"]))
+        return v
+
+    _MNUM = re.compile(r"^(.*?)(\d+)$")
+
+    def _next_mat_number(self):
+        """The next number of a material: the prefix of the last numbered one goes on (МТ-0147 → МТ-0148), first МТ-0001."""
+        rows = self.db.q("SELECT number FROM materials WHERE COALESCE(number,'')<>'' ORDER BY COALESCE(created_at,''), rowid")
+        parsed = [(m[1], m[2]) for r in rows if (m := self._MNUM.match(str(r["number"]).strip()))]
+        if not parsed:
+            return MAT_FIRST
+        prefix = parsed[-1][0]
+        same = [n for p, n in parsed if p == prefix]
+        nxt, width = max(int(n) for n in same) + 1, max(len(n) for n in same)
+        used = {str(r["number"]).strip() for r in rows}
+        while f"{prefix}{str(nxt).zfill(width)}" in used:
+            nxt += 1
+        return f"{prefix}{str(nxt).zfill(width)}"
 
     def delete_material(self, mid):
         with self.db.tx() as c:
@@ -597,6 +1000,8 @@ class Stock:
                               (mid, cur.lastrowid, lot, exp, q, at))
                 if p > 0:
                     c.execute("UPDATE materials SET price=? WHERE id=?", (p, mid))
+            if f.get("order_id"):  # 3.14: the receipt by an order to a supplier closes it (or a part of it)
+                self._order_received(c, str(f["order_id"]), did, lines)
         return did
 
     def write_off(self, f, user="", did=None, uid=None):
@@ -970,11 +1375,12 @@ class Stock:
         return out
 
     def purchase_list(self, cover_days=30):
-        """What to order now, grouped by the cheapest supplier.
+        """What to order now, grouped by the supplier: the material's main one (3.14) or the cheapest.
 
-        Daily use = what services and write-offs took over the last 60 days / 60. Target stock =
-        max(2 × minimum, minimum + daily use × cover_days). A material is ordered when its usable stock
-        (expired lots do not count) is at or below the minimum, or lasts fewer than 14 days."""
+        Daily use = what services and write-offs took over the last 60 days / 60. Target stock = the optimal stock of the card
+        (3.14) or max(2 × minimum, minimum + daily use × cover_days). A material is ordered when its usable stock (expired lots
+        do not count) is at or below the minimum, or lasts fewer days than max(14, its delivery term). What is already ordered
+        and on its way (3.14) counts as stock: neither ordered twice nor a reason to order."""
         try:
             cover = max(1, min(365, int(float(cover_days or 30))))
         except (TypeError, ValueError):
@@ -985,30 +1391,36 @@ class Stock:
                GROUP BY material_id""", (since,))}
         offers = self.offers()
         sups = {s["id"]: s for s in self.suppliers()}
+        transit = self.in_transit()
         groups = {}
         for m in self.materials():
             daily = max(0.0, used.get(m["id"], 0) or 0) / USAGE_DAYS
+            on_way = transit.get(m["id"], 0.0)
             have = round(m["balance"] - m["expired_qty"], 3)
-            days_left = round(have / daily, 1) if daily > 0 else None
+            soon = round(have + on_way, 3)
+            days_left = round(soon / daily, 1) if daily > 0 else None
             mn = m["min_qty"] or 0
-            if not (have <= mn or (days_left is not None and days_left < MIN_DAYS_LEFT)):
+            lead = int(m.get("lead_days") or 0)
+            if not (soon <= mn or (days_left is not None and days_left < max(MIN_DAYS_LEFT, lead))):
                 continue
-            target = max(mn * 2, mn + daily * cover)
-            qty = math.ceil(round(target - max(0.0, have), 6))
+            target = (m.get("opt_qty") or 0) or max(mn * 2, mn + daily * cover)
+            qty = math.ceil(round(target - max(0.0, soon), 6))
             if qty <= 0:
                 continue
             offs = offers.get(m["id"], [])
-            best = offs[0] if offs else None
+            main = m.get("supplier_id") if m.get("supplier_id") in sups else None
+            best = next((o for o in offs if o["supplier_id"] == main), None) if main else (offs[0] if offs else None)
             price = best["price"] if best else (m["price"] or 0)
-            sid = best["supplier_id"] if best else ""
-            g = groups.setdefault(sid, {"supplier_id": sid, "supplier_name": best["supplier_name"] if best else "Поставщик не выбран",
+            sid = main or (best["supplier_id"] if best else "")
+            g = groups.setdefault(sid, {"supplier_id": sid, "supplier_name": (sups.get(sid) or {}).get("name") or "Поставщик не выбран",
                                         "phone": (sups.get(sid) or {}).get("phone", ""), "inn": (sups.get(sid) or {}).get("inn", ""),
                                         "lines": [], "total": 0})
-            g["lines"].append({"material_id": m["id"], "code": m["code"], "name": m["name"], "unit": m["unit"], "category": m["category"],
+            g["lines"].append({"material_id": m["id"], "code": m["code"], "number": m.get("number") or "", "name": m["name"], "unit": m["unit"],
+                               "category": m["category"], "in_transit": on_way, "lead_days": lead, "main": bool(main),
                                "balance": m["balance"], "usable": have, "expired_qty": m["expired_qty"], "min_qty": mn,
                                "daily": round(daily, 3), "days_left": days_left, "target": round(target, 3), "qty": qty,
                                "price": price, "sum": round(qty * price, 2), "offers": offs,
-                               "why": "ниже минимума" if have <= mn else f"хватит на {days_left:g} дн."})
+                               "why": "ниже минимума" if soon <= mn else f"хватит на {days_left:g} дн."})
             g["total"] = round(g["total"] + qty * price, 2)
         out = sorted(groups.values(), key=lambda g: (not g["supplier_id"], g["supplier_name"]))
         return {"cover_days": cover, "groups": out, "count": sum(len(g["lines"]) for g in out),
@@ -1027,6 +1439,12 @@ class Stock:
             m = self.db.one("SELECT id FROM materials WHERE barcode=? AND active=1", (k,))
             if m:
                 break
+        if not m and barcodes.valid_ean(p["code"]) and p["code"].startswith("29"):  # 3.14: the internal EAN of a label
+            m = next(({"id": r["id"]} for r in self.db.q("SELECT id FROM materials WHERE active=1 AND COALESCE(barcode,'')=''")
+                      if barcodes.internal_ean(r["id"]) == p["code"]), None)
+        if not m:  # 3.14: the QR or the number «МТ-0147» of a material label
+            k = self.material_by_code(code)
+            m = {"id": k} if k else None
         mat = next((x for x in self.materials() if x["id"] == m["id"]), None) if m else None
         # 3.13: the QR of an equipment label opens its card
         return {**p, "material": mat, "equipment_id": None if mat else self.equipment_by_code(code)}

@@ -9,7 +9,8 @@ const STOCK_AREAS = {
   stock: {title: "Склад и материалы", sub: "Поставки, выдача в кабинеты, расход, заявки и закупки — медицинские и хозяйственные материалы",
     tabs: [["home", "Главная"], ["balance", "Остатки"], ["docs", "Документы"], ["moves", "Движение"],
       ["visits", 'По приёмам<i class="cnt" id="stVisitsCnt" hidden></i>', "Списание материалов по приёмам Dentist Plus"],
-      ["places", "Места хранения", "Кабинеты, филиалы и перемещения"], ["norms", "Нормы списания"], ["suppliers", "Поставщики"]]},
+      ["places", "Места хранения", "Кабинеты, филиалы и перемещения"], ["orders", "Закупки", "Заказы поставщикам и что в пути"],
+      ["norms", "Нормы списания"], ["suppliers", "Поставщики"]]},
   equipment: {title: "Оборудование", sub: "Карточки и QR-этикетки, ТО и ремонт, выбытие и амортизация",
     tabs: [["equipment", "Оборудование"], ["service", "ТО и ремонт"], ["amort", "Амортизация", "Видят директор и учредитель (право «Бухгалтерия»)"],
       ["disposed", "Выбывшее"], ["steril", "Стерилизация"]]},
@@ -53,7 +54,7 @@ function stockGo(area, tab) {
 function stockTabsByRights() {
   const st = canAny("stock_view", "stock_edit");
   const vis = {home: canAny("stock_view", "stock_edit", "stock_ops"), balance: st, docs: st, moves: st, visits: st && !!STK.dp_link, places: st,
-    norms: st, suppliers: can("stock_edit"),
+    norms: st, suppliers: can("stock_edit"), orders: st,
     equipment: canAny("equipment", "stock_view"), service: canAny("equipment", "stock_view"), amort: can("accounting"),
     disposed: canAny("equipment", "stock_view"), steril: canAny("sterilization", "equipment"),
     inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment")};
@@ -75,7 +76,7 @@ async function loadStock() {
   stockTabsByRights();  // 3.13: «По приёмам» only while the stock is linked to Dentist Plus (STK.dp_link)
   if (S.matOpen && ["home", "balance"].includes(S.stockTab)) return mtCard();  // 3.13: the material card is a screen of these tabs
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
-    visits: stockVisits, places: stockPlaces,
+    visits: stockVisits, places: stockPlaces, orders: stockOrders,
     equipment: stockEquipment, service: eqServiceTab, amort: eqAmortTab, disposed: eqDisposedTab,
     inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory}[S.stockTab];
   await fn();
@@ -149,26 +150,35 @@ function editMaterial(m, {onSaved} = {}) {
   const box = modal(`<div class="m-h"><h3>${m.id ? "Редактировать: " + esc(m.name) : "Карточка материала"}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
       <label class="fl">Название*<input class="input" id="mName" value="${esc(m.name || "")}" autofocus></label>
-      <div class="grid3"><label class="fl">Код / артикул<input class="input" id="mCode" value="${esc(m.code || "")}"></label>
-        <label class="fl">Раздел<input class="input" id="mCat" value="${esc(m.category || "")}" list="mCats"></label>
+      <div class="grid3"><label class="fl" title="Внутренний номер карточки: на наклейке, в QR и для сканера">Номер<input class="input" id="mNum" value="${esc(m.number || "")}" placeholder="присвоится сам"></label>
+        <label class="fl">Артикул (код поставщика)<input class="input" id="mCode" value="${esc(m.code || "")}"></label>
         <label class="fl">Единица<input class="input" id="mUnit" value="${esc(m.unit || "шт")}" list="mUnits"></label></div>
-      <div class="grid3"><label class="fl">Минимальный остаток<input class="input" id="mMin" type="number" step="any" min="0" value="${m.min_qty ?? ""}"></label>
-        <label class="fl">Цена за единицу, ₽<input class="input" id="mPrice" type="number" step="any" min="0" value="${m.price ?? ""}"></label>
-        ${m.id ? `<label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>` : `<label class="fl">Начальный остаток<input class="input" id="mStart" type="number" step="any" min="0"></label>`}</div>
-      ${m.id ? "" : `<div class="grid3"><label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>
-        <label class="fl" title="Начальный остаток запишется приходом от этого поставщика — он появится в истории поставок">Поставщик начального остатка<select class="input" id="mSup"><option value="">— без поставщика —</option></select></label>
-        <label class="fl">Номер накладной<input class="input" id="mDoc" placeholder="если есть"></label></div>`}
+      <div class="grid2"><label class="fl">Производитель<input class="input" id="mMan" value="${esc(m.manufacturer || "")}" placeholder="например: 3M"></label>
+        <label class="fl">Категория<input class="input" id="mCat" value="${esc(m.category || "")}" list="mCats"></label></div>
+      <label class="fl">Описание<input class="input" id="mDesc" value="${esc(m.description || "")}" placeholder="например: композит светового отверждения"></label>
+      <div class="grid3"><label class="fl">Форма выпуска<input class="input" id="mForm" value="${esc(m.form || "")}" placeholder="шприц 4 г"></label>
+        <label class="fl">Срок годности (общий)<input class="input" id="mLife" value="${esc(m.shelf_life || "")}" placeholder="2 года"></label>
+        <label class="fl">Условия хранения<input class="input" id="mStore" value="${esc(m.storage || "")}" placeholder="+15…+25 °C"></label></div>
+      <div class="grid3"><label class="fl">Минимальный остаток<input class="input" id="mMin" type="number" step="any" min="0" value="${m.min_qty || ""}"></label>
+        <label class="fl" title="До него «Заказ поставщикам» дозаказывает материал">Оптимальный остаток<input class="input" id="mOpt" type="number" step="any" min="0" value="${m.opt_qty || ""}"></label>
+        <label class="fl">Срок поставки, дней<input class="input" id="mLead" type="number" step="1" min="0" max="365" value="${m.lead_days || ""}"></label></div>
+      <div class="grid3"><label class="fl">Цена за единицу, ₽<input class="input" id="mPrice" type="number" step="any" min="0" value="${m.price ?? ""}"></label>
+        <label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>
+        <label class="fl" title="${m.id ? "У него «Заказ поставщикам» заказывает этот материал" : "Основной поставщик; начальный остаток запишется приходом от него — он появится в истории поставок"}">${m.id ? "Основной поставщик" : "Поставщик"}<select class="input" id="mSup"><option value="">— не выбран —</option></select></label></div>
+      ${m.id ? "" : `<div class="grid2"><label class="fl">Начальный остаток<input class="input" id="mStart" type="number" step="any" min="0"></label>
+        <label class="fl">Номер накладной начального остатка<input class="input" id="mDoc" placeholder="если есть"></label></div>`}
       <label class="fl">Комментарий<input class="input" id="mCom" value="${esc(m.comment || "")}"></label>
       <datalist id="mUnits">${STK.units.map(u => `<option value="${esc(u)}">`).join("")}</datalist>
       <datalist id="mCats">${[...new Set([...MAT_CATS, ...(S.stockRows || []).map(r => r.category).filter(Boolean)])].map(c => `<option value="${esc(c)}">`).join("")}</datalist>
       <div class="auth-err" id="mErr"></div></div>
     <div class="m-f">${m.id ? `<button class="btn ghost small danger" id="mDel">Убрать из справочника</button>` : ""}<span class="muted">Когда остаток опустится до минимума, материал попадёт в «Заканчиваются»</span>
-      <button class="btn ghost" data-close>Отмена</button><button class="btn" id="mOk">Сохранить</button></div>`);
+      <button class="btn ghost" data-close>Отмена</button><button class="btn" id="mOk">Сохранить</button></div>`, {wide: true});
   $("#mOk", box).onclick = async () => {
     try {
-      const id = await api.save_material({id: m.id, name: $("#mName").value, code: $("#mCode").value, category: $("#mCat").value, unit: $("#mUnit").value,
-        min_qty: $("#mMin").value, price: $("#mPrice").value, barcode: $("#mBar").value, comment: $("#mCom").value, start_qty: m.id ? null : $("#mStart").value,
-        supplier_id: m.id ? null : $("#mSup").value, doc_number: m.id ? null : $("#mDoc").value});
+      const id = await api.save_material({id: m.id, name: $("#mName").value, number: $("#mNum").value, code: $("#mCode").value, category: $("#mCat").value, unit: $("#mUnit").value,
+        manufacturer: $("#mMan").value, description: $("#mDesc").value, form: $("#mForm").value, shelf_life: $("#mLife").value, storage: $("#mStore").value,
+        min_qty: $("#mMin").value, opt_qty: $("#mOpt").value, lead_days: $("#mLead").value, price: $("#mPrice").value, barcode: $("#mBar").value,
+        comment: $("#mCom").value, supplier_id: $("#mSup").value, start_qty: m.id ? null : $("#mStart").value, doc_number: m.id ? null : $("#mDoc").value});
       closeModal(); toast(m.id ? "Сохранено" : "Карточка создана");
       if (onSaved) onSaved(id);
       else if (!m.id && ["home", "balance"].includes(S.stockTab)) openMaterial(id);  // 3.13: like equipment, the new card opens
@@ -178,7 +188,7 @@ function editMaterial(m, {onSaved} = {}) {
   const del = $("#mDel", box);
   if (del) del.onclick = async () => { if (await ask(`Убрать «${m.name}» из справочника?`, {danger: true, ok: "Убрать", text: "История движения сохранится, нормы списания по услугам удалятся."})) { await api.delete_material(m.id); closeModal(); S.matOpen = null; loadStock(); } };
   const ms = $("#mSup", box);
-  if (ms) api.suppliers().then(list => { ms.insertAdjacentHTML("beforeend", list.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")); }).catch(() => {});
+  if (ms) api.suppliers().then(list => { ms.insertAdjacentHTML("beforeend", list.map(x => `<option value="${esc(x.id)}" ${x.id === m.supplier_id ? "selected" : ""}>${esc(x.name)}</option>`).join("")); }).catch(() => {});
 }
 
 /* openMaterial — the screen «Карточка материала»: stock-matcard.js (3.13) */
@@ -275,7 +285,7 @@ async function openStockDoc(kind, preset, opts = {}) {
     const f = {date: $("#dDate").value, comment: $("#dCom").value, lines, nodoc};
     if (dp) f.location_id = dp.value;
     try {
-      const id = isIn ? await api.stock_receive({...f, supplier_id: $("#dSup").value, number: $("#dNum").value, pay})
+      const id = isIn ? await api.stock_receive({...f, supplier_id: $("#dSup").value, number: $("#dNum").value, pay, order_id: opts.order_id || undefined})
         : await api.stock_write_off({...f, reason: $("#dReason").value});
       closeModal(); toast((isIn ? "Приход оформлен" : "Материалы списаны") + (nodoc ? " — без документов" : "") + (pay ? ", расход записан" : ""));
       loadStock();

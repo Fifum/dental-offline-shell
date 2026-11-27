@@ -242,7 +242,7 @@ async function editPlace(p) {
 async function openTransfer(preset = {}) {
   const locs = await api.stock_locations();
   if (locs.length < 2) return toast("Сначала добавьте кабинет или филиал во вкладке «Места хранения»", true);
-  const st = {from: preset.from ?? "", to: preset.to ?? (locs[1] || {}).id ?? "", lines: [{material_id: "", qty: ""}]};
+  const st = {from: preset.from ?? "", to: preset.to ?? (locs[1] || {}).id ?? "", lines: preset.lines || [{material_id: "", qty: ""}]};
   const box = modal(`<div class="m-h"><h3>Перемещение материалов</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
       <div class="grid3"><label class="fl">Откуда<select class="input" id="trF">${locs.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("")}</select></label>

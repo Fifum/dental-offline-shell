@@ -70,6 +70,10 @@ TABLES = [
     T("materials", title="Материал"),
     T("suppliers", title="Поставщик"),
     T("stock_locations", title="Место хранения"),  # 3.5: before the documents and moves that name it
+    # 3.14: the material card — orders to suppliers («в пути»), documents and photos, analogs
+    T("stock_orders", title="Заказ поставщику"),
+    T("material_docs", title="Документ материала"),
+    T("material_analogs", title="Аналог материала"),
     T("stock_docs", title="Складской документ"),
     T("stock_moves", intpk=True, title="Движение по складу"),
     T("stock_lots", intpk=True, refs={"move_id": "stock_moves"}, title="Партия"),
@@ -207,8 +211,11 @@ def install(db):
 #  * the new columns are filled from the last synced copy of the row (sync_rows.base keeps the whole row as it came);
 #  * every peer and the cloud are asked for everything again: versions already here are skipped at once, the rows of the
 #    new tables arrive.
-CATCHUP = "3.13"
-CATCHUP_COLS = {"materials": ["photo_id"],
+CATCHUP = "3.14"
+CATCHUP_COLS = {"materials": ["photo_id",
+                              # 3.14: the material card
+                              "number", "manufacturer", "description", "form", "shelf_life", "storage", "opt_qty", "lead_days",
+                              "supplier_id"],
                 "equipment": ["photo_id", "in_service", "useful_months", "salvage", "amort_method",
                               # 3.13: the equipment card
                               "manufacturer", "ownership", "condition", "location_id", "market_value", "replace_cost",

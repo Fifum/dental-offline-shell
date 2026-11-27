@@ -219,6 +219,77 @@
 .mtc-lot{display:block;font-size:12px;color:var(--muted);white-space:nowrap}
 .mtc-best-row td{background:var(--ok-soft)}
 
+/* ===== 3.14 «Карточка материала» by the mockup: tiles, coverage, the label, the four quick fields, the use by month */
+.mtc .eqc-tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+.mtc .eqc-tabs button{flex:1 0 auto;padding:10px 9px;gap:6px;font-size:13.5px}
+.mtc .eqc-tabs button svg{width:17px;height:17px}
+.mtc .eqc-acts button{white-space:normal;line-height:1.25}
+.mtc-top .eqc-id{gap:4px}
+.mtc-top .eqc-id h3{margin-top:8px}
+.mtc-top .eqc-inv{margin-bottom:8px}
+.mtc .eqc-tile b{font-size:21px}
+.mtc-cover div b{display:inline-flex;align-items:center;gap:6px}
+.mtc-tip{all:unset;cursor:help;display:inline-grid;place-items:center;color:var(--ink2)}
+.mtc-tip svg{width:17px;height:17px}
+.mtc-used{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 16px;border-radius:12px;background:var(--accent-soft);border:1px solid var(--accent-line);font-size:14px;color:var(--ink)}
+.mtc-used span{flex:1;min-width:0}
+.mtc-used>svg:first-child{color:var(--accent);width:20px;height:20px}
+.mtc-used>svg:last-child{color:var(--ink2);width:16px;height:16px}
+.mtc-used:hover{border-color:var(--accent)}
+.mtc-an h3{margin-bottom:6px}
+.mtc-an>div{display:flex;align-items:center;gap:12px;padding:10px 2px;border-top:1px solid var(--line2)}
+.mtc-an>div:first-of-type{border-top:0}
+.mtc-an i{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:var(--teal-tile);border:1px solid var(--line);color:var(--accent);flex:none}
+.mtc-an i svg{width:20px;height:20px}
+.mtc-an span{display:flex;flex-direction:column;gap:1px;min-width:0}
+.mtc-an small{font-size:13px;color:var(--ink2)}
+.mtc-an b{font-size:18px;font-weight:700;letter-spacing:-.01em;color:var(--ink)}
+.mtc-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
+.mtc-label{display:flex;flex-direction:column;gap:10px}
+.mtc-label h4{margin:0}
+.mtc-codes{display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:12px;align-items:center}
+.mtc-ean{background:#fff;border-radius:10px;border:1px solid var(--line);padding:8px 6px;display:grid;place-items:center;min-height:92px;color:#000}
+.mtc-ean svg{width:100%;height:auto;max-height:84px;stroke:none;fill:initial}
+.mtc-ean svg *{stroke:none}
+.mtc-label .eqc-qr{width:92px;height:92px}
+.mtc-lbl-foot{display:flex;align-items:center;gap:8px;position:relative}
+.mtc-dl{display:inline-flex;align-items:center;gap:6px;color:var(--accent-ink);border-color:var(--accent-line)}
+.mtc-dl svg{width:16px;height:16px}
+.mtc-codes-menu{top:40px}
+.mtc-label>small{font-size:12px;line-height:1.35}
+.mtc-quick{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:18px}
+.mtc-quick .eqc-sel{position:relative;display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px}
+.mtc-quick .eqc-sel{padding:10px}
+.mtc-quick .eqc-sel>span{grid-column:1/-1;font-size:13px;gap:6px;white-space:nowrap}
+.mtc-quick .eqc-sel select{grid-column:1/-1}
+.mtc-quick .eqc-sel input{height:38px;border-radius:9px;background:var(--panel);font-weight:600;min-width:0}
+.mtc-quick .eqc-sel small{font-size:13px}
+.mtc-quick .eqc-sel.hl{border-color:var(--accent);box-shadow:0 0 0 3px var(--focus-ring)}
+.mtc-quick input.saved,.mtc-quick select.saved{border-color:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.mtc-quick :disabled{opacity:1;color:var(--ink);background:var(--panel2)}
+.mtc-h3btn{margin-left:auto;display:inline-flex;align-items:center;gap:6px}
+.mtc-h3btn svg{width:16px;height:16px}
+.mtc-al-add{margin-top:12px}
+.mtc-t td.mtc-oacts{white-space:normal}
+.mtc-oacts .linkbtn{display:block;line-height:1.5}
+.mtc-ord-m{display:flex;flex-direction:column;gap:2px;margin-bottom:10px}
+.mtc-bars{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;align-items:end;height:190px;padding:6px 2px 0}
+.mtc-bar{display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;min-width:0}
+.mtc-bar i{flex:1;width:100%;max-width:34px;display:flex;flex-direction:column-reverse;border-radius:7px 7px 3px 3px;background:var(--sunken);overflow:hidden}
+.mtc-bar u{display:block;width:100%}
+.mtc-bar b{font-size:12px;font-weight:600;min-height:15px;font-variant-numeric:tabular-nums}
+.mtc-bar small{font-size:12px;color:var(--muted)}
+.mtc-bar u.service,.mtc-legend .service::before{background:var(--accent)}
+.mtc-bar u.treatment,.mtc-legend .treatment::before{background:var(--teal-bar);opacity:.55}
+.mtc-bar u.writeoff,.mtc-legend .writeoff::before{background:#D9A441}
+.mtc-legend{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 4px;font-size:13px;color:var(--ink2)}
+.mtc-legend span{display:inline-flex;align-items:center;gap:6px}
+.mtc-legend span::before{content:"";width:10px;height:10px;border-radius:3px}
+.ord-card.received,.ord-card.cancelled{opacity:.75}
+.ord-card tr[data-m]{cursor:pointer}
+.ord-card td.lnk{width:50%;white-space:normal}
+.ord-card .po-gh{flex-wrap:wrap;gap:8px}
+
 /* dark theme: the warm states */
 @media screen{
   :root[data-theme="dark"] .eqc-badge.warn{background:#3A2E12;color:#F2C46B;border-color:#5C4816}
@@ -229,6 +300,7 @@
   :root[data-theme="dark"] .eqc-exp{background:rgba(20,33,36,.9);color:var(--ink)}
   :root[data-theme="dark"] :is(.mtc-loc.neg b){color:#F29C90}
   :root[data-theme="dark"] .mtc .mtc-best i{color:#E2B65C}
+  :root[data-theme="dark"] .mtc-bar u.writeoff,:root[data-theme="dark"] .mtc-legend .writeoff::before{background:#C9973A}
 }
 
 /* narrower windows */
@@ -236,6 +308,10 @@
   .eqc-grid{grid-template-columns:minmax(0,1fr) 260px}
   .eqc-top{grid-template-columns:180px minmax(0,1fr)}
   .eqc-money{grid-column:1/-1}
+}
+@media (max-width:1300px){
+  .mtc-main{grid-template-columns:1fr}
+  .mtc-quick{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:1020px){
   .eqc-tabs{flex-wrap:wrap}
@@ -254,3 +330,10 @@
 .eq-sticker span{font-size:6pt;line-height:1.15;max-height:4.5em;overflow:hidden}
 .eq-sticker small{font-size:5pt;line-height:1.1;color:#333}
 @media print{#printArea:has(.eq-sticker){padding:0!important;margin:0!important}}
+
+/* 3.14: the label of a material — the QR with the number and the name, the barcode under them */
+.mt-sticker{flex-direction:column;align-items:stretch;justify-content:space-between;gap:.8mm;padding:1.4mm 1.6mm}
+.mt-sticker .mt-st-top{display:flex;align-items:center;gap:1.6mm;min-height:0}
+.mt-sticker .mt-st-top img{width:14mm;height:14mm}
+.mt-sticker .mt-st-ean{height:11.5mm;display:flex;justify-content:center}
+.mt-sticker .mt-st-ean svg{height:100%;width:auto;max-width:100%}
