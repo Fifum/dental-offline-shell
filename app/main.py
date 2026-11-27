@@ -537,6 +537,36 @@ class Api:
     def equipment_disposals(self, year=None):
         return self._stock.eq_disposals(year, money=self._eq_money())
 
+    # 3.15 «Планирование закупок»: agreed by «Оборудование: согласование»
+    def equipment_purchases(self, year=None):
+        return self._stock.eq_purchases(year)
+
+    def equipment_purchase_save(self, f):
+        _, u = self._my_perms()
+        return self._stock.eq_purchase_save(f, self._who(), (u or {}).get("login") or "")
+
+    def equipment_purchase_status(self, pid, action, answer=""):
+        perms, u = self._my_perms()
+        if action in ("approve", "reject") and "equipment_approve" not in perms:
+            raise ValueError("Согласовывать закупки может сотрудник с правом «Оборудование: согласование»")
+        if action not in ("approve", "reject") and "equipment" not in perms and "equipment_approve" not in perms:
+            raise ValueError("Нет права на оборудование")
+        return self._stock.eq_purchase_status(pid, action, answer, (u or {}).get("login") or "", self._who())
+
+    def equipment_purchase_offer_add(self, pid, name, data_b64):
+        """A commercial offer (PDF or a photo) attached to a planned purchase."""
+        import files
+        fr = self._files.add_stock_file(name, files.b64_bytes(data_b64), self._who())
+        return self._stock.eq_purchase_offer_file(pid, fr["id"], name)
+
+    def equipment_purchase_offer_open(self, file_id):
+        if not self._db.one("SELECT 1 AS x FROM equipment_purchases WHERE offers LIKE ?", (f'%"{str(file_id or "")[:40]}"%',)):
+            raise ValueError("Файл не найден")
+        return self._files.stock_photo(file_id)
+
+    def equipment_third_party(self):
+        return self._stock.eq_third_party()
+
     def equipment_refs(self):
         """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""
         return self._stock.eq_refs()

@@ -2393,6 +2393,152 @@ class Stock:
             out["sum"] = round(sum(r["residual"] for r in period), 2)
         return out
 
+    # ------------------------------------------------ 3.15: «Планирование закупок» --
+    def _purchase_row(self, r, eqs):
+        r = dict(r)
+        r["offers"] = _jl(r.get("offers"), [])
+        r["status_title"] = PURCHASE_STATUS.get(r["status"], r["status"])
+        r["priority_title"] = PRIORITY.get(r["priority"], PRIORITY["mid"])
+        r["funding_title"] = FUNDING.get(r["funding"], r["funding"] or "")
+        e = eqs.get(r.get("replace_id")) or {}
+        r["replace_name"] = f"{e.get('name')}{' ' + e['inv_number'] if e.get('inv_number') else ''}" if e else ""
+        r["best_offer"] = min((o for o in r["offers"] if (o.get("price") or 0) > 0), key=lambda o: o["price"], default=None)
+        return r
+
+    def eq_purchases(self, year=None):
+        """The plan of purchases of a year: what to buy, why, for how much, in which quarter, how urgent, from which money; the
+        status (draft → on approval → approved / rejected → bought), the calendar by quarter, the budget by status and category,
+        the nearest actions."""
+        t = date.today()
+        y = int(year or t.year)
+        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number FROM equipment")}
+        rows = [self._purchase_row(r, eqs) for r in self.db.q(
+            "SELECT * FROM equipment_purchases WHERE year=? AND status<>'cancelled' ORDER BY quarter, CASE priority WHEN 'high' THEN 0 WHEN 'mid' THEN 1 ELSE 2 END, name", (y,))]
+        live = [r for r in rows if r["status"] != "rejected"]
+        total = round(sum(r["budget"] or 0 for r in live), 2)
+        by_st = {k: round(sum(r["budget"] or 0 for r in live if (r["status"] == k or (k == "approved" and r["status"] == "bought"))), 2)
+                 for k in ("approved", "pending", "draft")}
+        cats = {}
+        for r in live:
+            g = cats.setdefault(r["category"] or "Без категории", {"name": r["category"] or "Без категории", "budget": 0.0})
+            g["budget"] = round(g["budget"] + (r["budget"] or 0), 2)
+        by_cat = sorted(({**g, "share": round(g["budget"] * 100 / total, 1) if total else 0.0} for g in cats.values()), key=lambda g: -g["budget"])
+        acts = []
+        for r in live:
+            if r["status"] == "pending":
+                acts.append({"kind": "approve", "title": f"Согласовать: {r['name']}", "id": r["id"], "date": r.get("sent_at", "")[:10]})
+            elif r["status"] == "draft" and not r["offers"]:
+                acts.append({"kind": "offers", "title": f"Подготовить КП: {r['name']}", "id": r["id"], "date": ""})
+            elif r["status"] == "draft":
+                acts.append({"kind": "send", "title": f"Отправить на согласование: {r['name']}", "id": r["id"], "date": ""})
+            elif r["status"] == "approved":
+                acts.append({"kind": "buy", "title": f"Закупить ({['I', 'II', 'III', 'IV'][(r['quarter'] or 1) - 1]} квартал): {r['name']}", "id": r["id"], "date": ""})
+        return {"year": y, "rows": rows, "total": total, "count": len(live), "approved": sum(1 for r in live if r["status"] in ("approved", "bought")),
+                "pending": sum(1 for r in live if r["status"] == "pending"), "draft": sum(1 for r in live if r["status"] == "draft"),
+                "by_status": by_st, "by_category": by_cat,
+                "by_quarter": [round(sum(r["budget"] or 0 for r in live if r["quarter"] == q), 2) for q in (1, 2, 3, 4)],
+                "actions": acts[:6], "statuses": PURCHASE_STATUS, "priorities": PRIORITY, "funding": FUNDING}
+
+    def eq_purchase_save(self, f, user="", login=""):
+        f = f if isinstance(f, dict) else {}
+        pid = str(f.get("id") or "")
+        old = self.db.one("SELECT * FROM equipment_purchases WHERE id=?", (pid,)) if pid else None
+        if old and old["status"] not in ("draft", "rejected"):
+            raise ValueError("Закупку на согласовании или согласованную изменить нельзя — сначала верните её в черновик")
+        name = _clean(f.get("name"), 200)
+        if not name:
+            raise ValueError("Укажите, что закупить")
+        y = int(_num(f.get("year")) or date.today().year)
+        q = int(_num(f.get("quarter")) or 1)
+        if not 1 <= q <= 4:
+            raise ValueError("Квартал — от I до IV")
+        rep = str(f.get("replace_id") or "") or None
+        if rep and not self.db.one("SELECT 1 AS x FROM equipment WHERE id=?", (rep,)):
+            rep = None
+        offers = []
+        for o in (f.get("offers") if "offers" in f else _jl((old or {}).get("offers"), [])) or []:
+            o = o if isinstance(o, dict) else {}
+            sup = _clean(o.get("supplier"), 150)
+            if not sup and not o.get("file_id"):
+                continue
+            offers.append({"supplier": sup, "price": max(0, _num(o.get("price"), "Цена КП")), "days": int(_num(o.get("days")) or 0),
+                           "note": _clean(o.get("note"), 200), "file_id": str(o.get("file_id") or "")[:40], "file_name": _clean(o.get("file_name"), 120)})
+        at = _now()
+        vals = (name, _clean(f.get("reason"), 200), _clean(f.get("justification"), 1000), _clean(f.get("category"), 100),
+                max(0, _num(f.get("budget"), "Бюджет")), y, q, f.get("priority") if f.get("priority") in PRIORITY else "mid",
+                f.get("funding") if f.get("funding") in FUNDING else "own", rep, json.dumps(offers, ensure_ascii=False))
+        with self.db.tx() as c:
+            if old:
+                c.execute("""UPDATE equipment_purchases SET name=?, reason=?, justification=?, category=?, budget=?, year=?, quarter=?, priority=?,
+                             funding=?, replace_id=?, offers=?, status='draft', updated_at=? WHERE id=?""", (*vals, at, pid))
+            else:
+                pid = _id("PP")
+                n = c.execute("SELECT COUNT(*) FROM equipment_purchases").fetchone()[0] + 1
+                c.execute("""INSERT INTO equipment_purchases(name, reason, justification, category, budget, year, quarter, priority, funding, replace_id,
+                             offers, id, number, status, created_by, created_name, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          (*vals, pid, f"ЗК-{n:03d}", "draft", login, user, at, at))
+        return pid
+
+    def eq_purchase_status(self, pid, action, answer="", login="", user=""):
+        """«На согласование» (with the reason and the budget), «Согласовать» / «Отклонить» (the right «Оборудование: согласование»),
+        «Куплено», «В черновик», «Удалить» (a draft)."""
+        r = self.db.one("SELECT * FROM equipment_purchases WHERE id=?", (str(pid or ""),))
+        if not r:
+            raise ValueError("Закупка не найдена")
+        st, at = r["status"], _now()
+        nxt = {("send", "draft"): "pending", ("send", "rejected"): "pending", ("approve", "pending"): "approved", ("reject", "pending"): "rejected",
+               ("bought", "approved"): "bought", ("draft", "pending"): "draft", ("draft", "rejected"): "draft", ("draft", "approved"): "draft",
+               ("delete", "draft"): "cancelled", ("delete", "rejected"): "cancelled"}.get((action, st))
+        if not nxt:
+            raise ValueError(f"Из статуса «{PURCHASE_STATUS.get(st, st)}» так нельзя")
+        if action == "send" and not ((r["budget"] or 0) > 0 and (r["justification"] or r["reason"])):
+            raise ValueError("Перед согласованием укажите бюджет и обоснование")
+        if action == "reject" and not _clean(answer):
+            raise ValueError("Напишите, почему отклонено")
+        sets = {"status": nxt, "updated_at": at}
+        if action == "send":
+            sets["sent_at"] = at
+        if action in ("approve", "reject"):
+            sets.update(decided_by=login, decided_name=user, decided_at=at, answer=_clean(answer, 300))
+        with self.db.tx() as c:
+            c.execute(f"UPDATE equipment_purchases SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), r["id"]))
+        return r["id"]
+
+    def eq_purchase_offer_file(self, pid, file_id, name):
+        r = self.db.one("SELECT * FROM equipment_purchases WHERE id=?", (str(pid or ""),))
+        if not r:
+            raise ValueError("Закупка не найдена")
+        offers = _jl(r["offers"], [])
+        offers.append({"supplier": "", "price": 0, "days": 0, "note": "", "file_id": file_id, "file_name": _clean(name, 120)})
+        with self.db.tx() as c:
+            c.execute("UPDATE equipment_purchases SET offers=?, updated_at=? WHERE id=?", (json.dumps(offers, ensure_ascii=False), _now(), r["id"]))
+        return r["id"]
+
+    # ------------------------------------------------ 3.15: «Стороннее оборудование» --
+    THIRD = ("doctor", "lease", "leasing", "other", "owner")
+
+    def eq_third_party(self):
+        """What the clinic uses and does not own: the doctors' own, rented, in leasing, the founder's, any other use — who owns it,
+        where it is, from when and till when, what it is worth (as the card says)."""
+        t = date.today()
+        today, soon = t.isoformat(), (t + timedelta(days=30)).isoformat()
+        rows = []
+        for e in self.equipment_list("", False, True):
+            if e["ownership"] not in self.THIRD:
+                continue
+            end = e.get("use_end") or ""
+            st = ("ended", "Окончено") if end and end < today else ("soon", "Истекает") if end and end <= soon else                 ("active", "Действует") if e["ownership"] in ("lease", "leasing") or end else ("use", "В пользовании")
+            rows.append({"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "", "photo_id": e.get("photo_id") or "",
+                         "ownership": e["ownership"], "ownership_title": e["ownership_title"], "contractor": e.get("contractor") or "",
+                         "contract_no": e.get("contract_no") or "", "place": e.get("location_name") or "", "start": e.get("use_start") or "",
+                         "end": end, "status": st[0], "status_title": st[1], "price": e["price"] or 0})
+        kinds = {k: sum(1 for r in rows if r["ownership"] == k) for k in self.THIRD}
+        ev = sorted(({"date": r["end"], "title": {"lease": "Окончание аренды", "leasing": "Завершение лизинга"}.get(r["ownership"], "Окончание пользования"),
+                      "name": f"{r['name']}{' ' + r['inv_number'] if r['inv_number'] else ''}", "id": r["id"], "overdue": r["end"] < today}
+                     for r in rows if r["end"] and r["end"] <= (t + timedelta(days=180)).isoformat()), key=lambda x: x["date"])
+        return {"rows": rows, "total": len(rows), "kinds": kinds, "titles": {k: EQ_OWNERSHIP[k] for k in self.THIRD},
+                "cost": round(sum(r["price"] for r in rows), 2), "events": ev[:6]}
+
     # ------------------------------------------- 3.15: «Справочники и настройки» --
     def _setting(self, k, default):
         r = self.db.one("SELECT v FROM stock_settings WHERE k=?", (k,))

@@ -352,6 +352,61 @@ for part in ("Динамика амортизации", "Структура ст
              "Создать списание (выбытие)", "Последние документы выбытия", "Сформировать акт"):
     check(f"UI: {part}", part in sec)
 
+# ===================================== block 6: purchase plan, someone else's equipment --
+refuses("a purchase needs a name", lambda: a.equipment_purchase_save({"budget": 1}), "что закупить")
+p1 = a.equipment_purchase_save({"name": "Микроскоп", "reason": "Развитие терапии", "category": "Диагностическое оборудование", "budget": 1200000,
+                                "year": ya, "quarter": 2, "priority": "high", "funding": "own", "justification": "Эндодонтия под микроскопом",
+                                "offers": [{"supplier": "СтомТех", "price": 1180000, "days": 14}, {"supplier": "", "price": 1}]})
+p2 = a.equipment_purchase_save({"name": "Автоклав", "reason": "Плановая замена", "category": "Стерилизационное оборудование", "budget": 450000,
+                                "year": ya, "quarter": 1, "priority": "high", "replace_id": e_old})
+p3 = a.equipment_purchase_save({"name": "Компьютеры", "reason": "Обновление", "budget": 180000, "year": ya, "quarter": 3, "funding": "credit"})
+pl = a.equipment_purchases(ya)
+x1 = next(x for x in pl["rows"] if x["id"] == p1)
+check("a purchase: ЗК-…, a draft with its offer", x1["number"].startswith("ЗК-") and x1["status"] == "draft" and len(x1["offers"]) == 1
+      and x1["best_offer"]["price"] == 1180000 and x1["priority_title"] == "Высокий", x1)
+check("replacing a piece", next(x for x in pl["rows"] if x["id"] == p2)["replace_name"].startswith("Стоматологическая установка"))
+refuses("no approval without a justification or reason", lambda: a.equipment_purchase_status(
+    a.equipment_purchase_save({"name": "Без обоснования", "budget": 0, "year": ya}), "send"), "бюджет и обоснование")
+a.equipment_purchase_status(p1, "send")
+refuses("approval needs the right", lambda: S.eq_purchase_status(p1, "bought"), "так нельзя")
+a.equipment_purchase_status(p1, "approve")
+a.equipment_purchase_status(p2, "send")
+refuses("a refusal needs a reason", lambda: a.equipment_purchase_status(p2, "reject"), "почему")
+refuses("a purchase on approval is not edited", lambda: a.equipment_purchase_save({"id": p2, "name": "Автоклав 2"}), "черновик")
+pl = a.equipment_purchases(ya)
+check("plan figures", pl["approved"] == 1 and pl["pending"] == 1 and pl["draft"] >= 2 and pl["total"] >= 1200000 + 450000 + 180000, (pl["approved"], pl["pending"], pl["draft"]))
+check("budget by status", pl["by_status"]["approved"] == 1200000 and pl["by_status"]["pending"] == 450000, pl["by_status"])
+check("by quarter", pl["by_quarter"][1] == 1200000 and pl["by_quarter"][0] == 450000 and pl["by_quarter"][2] == 180000, pl["by_quarter"])
+check("by category with shares", abs(sum(g["share"] for g in pl["by_category"]) - 100) < 1)
+kinds = {x["kind"] for x in pl["actions"]}
+check("the nearest actions: approve, prepare offers, buy", {"approve", "offers", "buy"} <= kinds, kinds)
+a.equipment_purchase_status(p1, "bought")
+check("bought", next(x for x in a.equipment_purchases(ya)["rows"] if x["id"] == p1)["status"] == "bought")
+a.equipment_purchase_status(p2, "draft")
+check("back to a draft from approval", next(x for x in a.equipment_purchases(ya)["rows"] if x["id"] == p2)["status"] == "draft")
+PDF = "data:application/pdf;base64," + __import__("base64").b64encode(b"%PDF-1.4 offer").decode()
+a.equipment_purchase_offer_add(p2, "КП.pdf", PDF)
+o = next(x for x in a.equipment_purchases(ya)["rows"] if x["id"] == p2)["offers"]
+check("a commercial offer file", o and o[-1]["file_id"] and a.equipment_purchase_offer_open(o[-1]["file_id"])["url"].startswith("data:"))
+refuses("only an offer's file opens", lambda: a.equipment_purchase_offer_open("F-нет"), "не найден")
+a.equipment_purchase_status(p3, "delete")
+check("a deleted draft leaves the plan", not any(x["id"] == p3 for x in a.equipment_purchases(ya)["rows"]))
+check("the decision on the server needs the right", "equipment_approve" in auth.METHOD_PERMS["equipment_purchase_status"])
+tp = a.equipment_third_party()
+ids_ = {x["id"]: x for x in tp["rows"]}
+check("someone else's: the doctor's, the lease, other use", e_doc in ids_ and e_lease in ids_ and e_oth in ids_ and e_q not in ids_, list(ids_))
+check("lease: active till its end, contractor kept", ids_[e_lease]["status"] in ("active", "soon") and ids_[e_lease]["contractor"] == "ООО РентАльянс")
+check("other use ended", ids_[e_oth]["status"] == "soon" or ids_[e_oth]["status"] == "active" or ids_[e_oth]["status"] == "ended")
+check("the doctor's own is in use", ids_[e_doc]["status"] == "use" and ids_[e_doc]["ownership_title"] == "Имущество врача")
+check("kinds counted", tp["kinds"]["doctor"] >= 1 and tp["kinds"]["lease"] >= 1 and tp["total"] == len(tp["rows"]))
+check("events: the end of a lease", any(x["title"] == "Окончание аренды" for x in tp["events"]), tp["events"])
+for k_ in ("equipment_purchases", "equipment_purchase_save", "equipment_purchase_status", "equipment_purchase_offer_add", "equipment_purchase_offer_open", "equipment_third_party"):
+    check(f"{k_} has a right", k_ in auth.METHOD_PERMS)
+sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")
+for part in ("Планирование закупок", "Исполнение бюджета", "План закупок по категориям", "Календарный план", "Коммерческие предложения", "Источник финансирования",
+             "Стороннее оборудование", "Структура стороннего оборудования", "Контроль сроков", "Условия пользования"):
+    check(f"UI: {part}", part in sec)
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)

@@ -16,7 +16,7 @@ const STOCK_AREAS = {
     tabs: [["eq_overview", "Обзор"], ["equipment", "Реестр оборудования"], ["eq_receipts", "Поступление"], ["eq_moves", "Перемещения"],
       ["service", "Обслуживание и ремонт"],
       ["amort", "Амортизация", "Видят директор и учредитель (право «Бухгалтерия»)"]],
-    more: [["disposed", "Выбытие и списание"], ["inv", "Инвентаризация"], ["steril", "Стерилизация"], ["eq_refs", "Справочники и настройки"]]},
+    more: [["eq_purchases", "Планирование закупок"], ["eq_third", "Стороннее оборудование"], ["disposed", "Выбытие и списание"], ["inv", "Инвентаризация"], ["steril", "Стерилизация"], ["eq_refs", "Справочники и настройки"]]},
   inventory: {title: "Инвентаризация", sub: "Пересчёт материалов по местам и проверка оборудования по инвентарным номерам",
     tabs: [["inv_mat", "Материалы"], ["inv_eq", "Оборудование"], ["inv_hist", "История"]]},
 };
@@ -77,7 +77,8 @@ function stockTabsByRights() {
     disposed: canAny("equipment", "stock_view"), steril: canAny("sterilization", "equipment"),
     inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment"),
     inv: can("equipment"), eq_refs: canAny("equipment", "stock_view"), eq_overview: canAny("equipment", "stock_view", "equipment_approve"),
-    eq_receipts: canAny("equipment", "equipment_approve"), eq_moves: canAny("equipment", "stock_view", "equipment_approve")};  // 3.15
+    eq_receipts: canAny("equipment", "equipment_approve"), eq_moves: canAny("equipment", "stock_view", "equipment_approve"),
+    eq_purchases: canAny("equipment", "equipment_approve", "accounting"), eq_third: canAny("equipment", "stock_view", "equipment_approve")};  // 3.15
   const area = STOCK_AREAS[S.stockArea], keys = [...area.tabs, ...(area.more || [])].map(t => t[0]).filter(k => k !== "inv");
   $$("#stockTabs button[data-k]").forEach(b => b.hidden = !vis[b.dataset.k]);
   const mb = $("#eqMoreBtn"); if (mb) mb.parentElement.hidden = !(area.more || []).some(t => vis[t[0]]);
@@ -100,7 +101,7 @@ async function loadStock() {
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces, orders: stockOrders,
     equipment: stockEquipment, service: eqRequestsTab, amort: eqAmortYear, disposed: eqDisposalTab,
-    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview, eq_receipts: eqReceiptsTab, eq_moves: eqMovesTab}[S.stockTab];
+    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview, eq_receipts: eqReceiptsTab, eq_moves: eqMovesTab, eq_purchases: eqPurchasesTab, eq_third: eqThirdTab}[S.stockTab];
   await fn();
 }
 

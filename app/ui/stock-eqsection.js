@@ -576,3 +576,130 @@ async function eqDisposalTab() {
     catch (x) { $("#dsErr").textContent = errText(x); }
   };
 }
+
+/* ------------------------------------------------------------ «Планирование закупок» */
+const QN = ["I", "II", "III", "IV"];
+async function eqPurchasesTab() {
+  const body = $("#stockBody");
+  EQS.puYear = EQS.puYear || new Date().getFullYear();
+  const r = await api.equipment_purchases(EQS.puYear), view = EQS.puView || "plan", edit = can("equipment"), appr = can("equipment_approve");
+  const pill = x => x.status === "approved" || x.status === "bought" ? eqPill("ok", x.status_title) : x.status === "pending" ? eqPill("wait", x.status_title) : x.status === "rejected" ? eqPill("bad", x.status_title) : eqPill("plan", x.status_title);
+  const prio = x => `<span class="eqs-kind ${x.priority === "high" ? "bad" : x.priority === "mid" ? "warn" : "plan"}">${esc(x.priority_title)}</span>`;
+  const bs = r.by_status, tot = r.total || 1;
+  const sh = v => `${(v * 100 / tot).toLocaleString("ru-RU", {maximumFractionDigits: 1})} %`;
+  const acts = x => [edit && ["draft", "rejected"].includes(x.status) && ["edit", "изменить"], edit && ["draft", "rejected"].includes(x.status) && ["send", "на согласование"],
+    appr && x.status === "pending" && ["approve", "согласовать"], appr && x.status === "pending" && ["reject", "отклонить"], edit && x.status === "approved" && ["bought", "куплено"],
+    edit && ["pending", "approved"].includes(x.status) && ["draft", "в черновик"], edit && ["draft", "rejected"].includes(x.status) && ["delete", "удалить"]].filter(Boolean);
+  const plan = r.rows.length ? `<table class="tbl eqs-reg" id="puJ"><thead><tr><th>Оборудование / наименование</th><th>Причина закупки</th><th>Категория</th><th class="num">Бюджет</th><th>Период</th><th>Приоритет</th><th>Статус</th><th></th></tr></thead><tbody>${r.rows.map(x => `<tr data-pu="${esc(x.id)}">
+      <td><b>${esc(x.name)}</b><small class="muted" style="display:block">${esc([x.number, x.replace_name && "замена: " + x.replace_name, x.offers.length && `КП: ${x.offers.length}`].filter(Boolean).join(" · "))}</small></td>
+      <td class="muted">${esc(x.reason || "")}</td><td>${x.category ? `<span class="eqs-cat">${esc(x.category)}</span>` : "—"}</td><td class="num"><b>${eqMoney(x.budget)}</b></td><td>${QN[(x.quarter || 1) - 1]} квартал</td>
+      <td>${prio(x)}</td><td>${pill(x)}${x.answer && x.status === "rejected" ? `<small class="muted" style="display:block">${esc(x.answer)}</small>` : ""}</td>
+      <td class="eqs-acts2">${acts(x).map(([k, t]) => `<button class="linkbtn ${["reject", "delete"].includes(k) ? "danger-t" : ""}" data-a="${k}">${t}</button>`).join("")}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><td colspan="3"><b>Итого по плану:</b></td><td class="num"><b>${eqMoney(r.total)}</b></td><td colspan="4"></td></tr></tfoot></table>`
+    : `<div class="empty"><b>План закупок на ${r.year} год пуст</b><span>${edit ? "«Добавить закупку» — что купить, зачем, за сколько и когда" : ""}</span></div>`;
+  const cal = `<table class="tbl eqs-cal"><thead><tr><th>Оборудование</th>${QN.map(q => `<th>${q} квартал</th>`).join("")}</tr></thead><tbody>${r.rows.filter(x => x.status !== "rejected").map(x => `<tr data-pu="${esc(x.id)}"><td>${esc(x.name)}</td>${[1, 2, 3, 4].map(q => `<td>${x.quarter === q ? `<span class="eqs-calchip ${x.status}">${eqMoney(x.budget)}</span>` : ""}</td>`).join("")}</tr>`).join("") || '<tr><td colspan="5" class="muted">Нет закупок</td></tr>'}
+    <tr class="eqs-caltot"><td><b>Итого</b></td>${r.by_quarter.map(v => `<td><b>${v ? eqMoney(v) : "—"}</b></td>`).join("")}</tr></tbody></table>`;
+  const by = (k, dict) => Object.entries(dict).map(([key, t]) => [t, r.rows.filter(x => x.status !== "rejected" && x[k] === key).reduce((s, x) => s + (x.budget || 0), 0)]).filter(x => x[1]);
+  const ana = `<div class="eqs-g2"><div><h3>По источникам финансирования</h3><div class="eqs-bars">${by("funding", r.funding).map(([t, v]) => `<div class="eqs-bar"><span>${esc(t)}</span><i><u style="width:${v / tot * 100}%"></u></i><b>${eqMoney(v)}</b><small>${sh(v)}</small></div>`).join("") || '<div class="muted">—</div>'}</div></div>
+    <div><h3>По приоритету</h3><div class="eqs-bars">${by("priority", r.priorities).map(([t, v]) => `<div class="eqs-bar"><span>${esc(t)}</span><i><u style="width:${v / tot * 100}%"></u></i><b>${eqMoney(v)}</b><small>${sh(v)}</small></div>`).join("") || '<div class="muted">—</div>'}</div></div></div>`;
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Планирование закупок</h2><span class="muted">План приобретения и замены оборудования</span></div><span class="grow"></span>${eqYearSel("puYear", r.year)}</div>
+    <div class="eqs-tiles eqs-tiles5">${eqTile(EQX.coins, "Плановый бюджет", eqMoney(r.total))}${eqTile(EQX.cart, "Планируемых закупок", r.count)}${eqTile(EQX.ok, "Согласовано", r.approved, "ok")}${eqTile(EQX.clock, "На согласовании", r.pending, r.pending ? "warn" : "")}${eqTile(EQX.doc, "Черновики", r.draft)}</div>
+    <div class="eqs-g2r eqs-g2r-wide"><div class="eqs-col"><div class="eqs-bar2"><div class="eqs-seg">${[["plan", EQX.list, "План закупок"], ["cal", EQX.cal, "Календарный план"], ["ana", EQN.amort, "Аналитика"]].map(([k, ic, t]) => `<button data-v="${k}" class="${k === view ? "on" : ""}">${ic}${t}</button>`).join("")}</div>
+        <span class="grow"></span>${edit ? `<button class="btn" id="puAdd">${EQX.plus}Добавить закупку</button>` : ""}</div>
+      <section class="eqs-card ${view === "ana" ? "" : "eqs-tcard"}">${view === "plan" ? plan : view === "cal" ? cal : ana}</section></div>
+      <div class="eqs-side2"><section class="eqs-card"><h3>Исполнение бюджета ${r.year} года</h3><div class="eqs-ringrow">${eqRing([{value: bs.approved, cls: "ok"}, {value: bs.pending, cls: "warn"}, {value: bs.draft, cls: "c4"}], eqShortMoney(r.total), "план")}
+          <ul class="eqs-legend"><li class="ok"><span>Согласовано</span><b>${eqMoney(bs.approved)}</b></li><li class="warn"><span>На согласовании</span><b>${eqMoney(bs.pending)}</b></li><li class="c4"><span>Черновики</span><b>${eqMoney(bs.draft)}</b></li></ul></div></section>
+        <section class="eqs-card"><h3>План закупок по категориям</h3>${r.by_category.length ? `<div class="eqs-bars eqs-bars-v">${r.by_category.map(g => `<div class="eqs-bar"><span>${esc(g.name)}</span><i><u style="width:${g.share}%"></u></i><b>${eqMoney(g.budget)}</b><small>${g.share.toLocaleString("ru-RU")} %</small></div>`).join("")}</div>` : '<div class="muted">—</div>'}</section>
+        <section class="eqs-card"><h3>Ближайшие действия</h3>${r.actions.length ? `<div class="eqs-ev">${r.actions.map(x => `<button data-pa="${esc(x.id)}">${x.kind === "approve" ? EQX.cal : x.kind === "buy" ? EQX.cart : EQX.doc}<span><b>${esc(x.title)}</b></span>${EQX.chev}</button>`).join("")}</div>` : '<div class="muted">Нет действий</div>'}</section></div></div></div>`;
+  $("#puYear").onchange = e => { EQS.puYear = +e.target.value; eqPurchasesTab(); };
+  $$(".eqs-bar2 .eqs-seg button", body).forEach(b => b.onclick = () => { EQS.puView = b.dataset.v; eqPurchasesTab(); });
+  const add = $("#puAdd"); if (add) add.onclick = () => eqPurchaseEdit({year: r.year, quarter: 1, priority: "mid", funding: "own", offers: []}, r);
+  $$("[data-pa]", body).forEach(b => b.onclick = () => eqPurchaseEdit(r.rows.find(x => x.id === b.dataset.pa), r));
+  $$("tr[data-pu]", body).forEach(tr => tr.onclick = async ev => {
+    const x = r.rows.find(y => y.id === tr.dataset.pu), a = ev.target.dataset && ev.target.dataset.a;
+    if (!a || a === "edit") return eqPurchaseEdit(x, r);
+    try {
+      let why = "";
+      if (a === "reject") { why = await promptText("Почему отклонено?"); if (!why) return; }
+      if (a === "delete" && !await ask(`Удалить «${x.name}» из плана?`, {danger: true, ok: "Удалить"})) return;
+      await api.equipment_purchase_status(x.id, a, why); toast("Сохранено"); eqPurchasesTab();
+    } catch (e) { toast(errText(e), true); }
+  });
+}
+async function eqPurchaseEdit(x, r) {
+  const refs = EQS.refs || (EQS.refs = await api.equipment_refs()), list = await api.equipment_list("", false);
+  const ro = !can("equipment") || !["draft", "rejected"].includes(x.status || "draft");
+  const offerRow = (o, i) => `<tr data-o="${i}"><td><input class="input" data-k="supplier" value="${esc(o.supplier || "")}" placeholder="Поставщик" ${ro ? "disabled" : ""}></td><td><input class="input num" type="number" min="0" step="any" data-k="price" value="${o.price || ""}" ${ro ? "disabled" : ""}></td>
+    <td><input class="input num" type="number" min="0" step="1" data-k="days" value="${o.days || ""}" placeholder="дн." ${ro ? "disabled" : ""}></td><td><input class="input" data-k="note" value="${esc(o.note || "")}" ${ro ? "disabled" : ""}><input type="hidden" data-k="file_id" value="${esc(o.file_id || "")}"><input type="hidden" data-k="file_name" value="${esc(o.file_name || "")}"></td>
+    <td>${o.file_id ? `<button class="linkbtn" data-of="${esc(o.file_id)}">${EQX.doc}${esc(o.file_name || "файл")}</button>` : ""}${ro ? "" : ` <button class="linkbtn danger-t" data-od="${i}">убрать</button>`}</td></tr>`;
+  const box = modal(`<div class="m-h"><h3>${x.id ? `${esc(x.number)} · ${esc(x.name)}` : "Новая закупка"}</h3><button class="x" data-close>×</button></div>
+    <div class="m-b">${x.id ? `<div class="muted eqs-hint">${esc(x.status_title)}${x.decided_name ? ` · ${esc(x.decided_name)} ${fmtDT(x.decided_at)}` : ""}${x.answer ? ` · ${esc(x.answer)}` : ""}</div>` : ""}
+      <div class="grid3"><label class="fl" style="grid-column:span 2">Что закупить *<input class="input" id="puN" value="${esc(x.name || "")}" placeholder="Микроскоп" ${ro ? "disabled" : ""}></label>
+        <label class="fl">Категория<input class="input" id="puC" list="puCats" value="${esc(x.category || "")}" ${ro ? "disabled" : ""}></label>
+        <label class="fl">Причина *<input class="input" id="puR" list="puReasons" value="${esc(x.reason || "")}" placeholder="Плановая замена" ${ro ? "disabled" : ""}></label>
+        <label class="fl">Бюджет, ₽ *<input class="input num" type="number" min="0" step="any" id="puB" value="${x.budget || ""}" ${ro ? "disabled" : ""}></label>
+        <label class="fl">Источник финансирования<select class="input" id="puF" ${ro ? "disabled" : ""}>${Object.entries(refs.funding).map(([k, t]) => `<option value="${k}" ${k === x.funding ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label class="fl">Год<input class="input num" type="number" min="2020" max="2100" id="puY" value="${x.year || new Date().getFullYear()}" ${ro ? "disabled" : ""}></label>
+        <label class="fl">Квартал<select class="input" id="puQ" ${ro ? "disabled" : ""}>${[1, 2, 3, 4].map(q => `<option value="${q}" ${q === x.quarter ? "selected" : ""}>${QN[q - 1]} квартал</option>`).join("")}</select></label>
+        <label class="fl">Приоритет<select class="input" id="puP" ${ro ? "disabled" : ""}>${Object.entries(refs.priorities).map(([k, t]) => `<option value="${k}" ${k === x.priority ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
+      <label class="fl">Заменяет оборудование<select class="input" id="puX" ${ro ? "disabled" : ""}><option value="">— новое, ничего не заменяет —</option>${list.map(e => `<option value="${esc(e.id)}" ${e.id === x.replace_id ? "selected" : ""}>${esc(e.name)}${e.inv_number ? " " + esc(e.inv_number) : ""}</option>`).join("")}</select></label>
+      <label class="fl">Обоснование *<textarea class="input" id="puJ" rows="3" ${ro ? "disabled" : ""} placeholder="Зачем клинике эта покупка: развитие терапии, износ, срок службы истёк…">${esc(x.justification || "")}</textarea></label>
+      <h4 class="sub-h">Коммерческие предложения</h4><table class="tbl compact eqs-lines"><thead><tr><th>Поставщик</th><th class="num">Цена, ₽</th><th class="num">Срок</th><th>Примечание</th><th>Файл</th></tr></thead><tbody id="puO">${(x.offers || []).map(offerRow).join("")}</tbody></table>
+      ${ro ? "" : `<div class="eqs-row"><button class="btn ghost small" id="puOA">+ Предложение</button>${x.id ? `<button class="btn ghost small" id="puOF">${EQX.doc}Загрузить КП (PDF, фото)</button>` : `<span class="muted">Файлы КП — после первого сохранения</span>`}</div>`}
+      <datalist id="puCats">${refs.categories.map(c => `<option value="${esc(c.name)}">`).join("")}</datalist><datalist id="puReasons">${["Плановая замена", "Развитие терапии", "Износ", "Обновление", "Новое направление", "Требование надзора"].map(v => `<option value="${v}">`).join("")}</datalist>
+      <div class="auth-err" id="puErr"></div></div>
+    <div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>${ro ? "Закрыть" : "Отмена"}</button>${ro ? "" : `<button class="btn ghost" id="puSave">Сохранить черновик</button><button class="btn" id="puSend">На согласование</button>`}</div>`, {wide: true});
+  const read = () => ({id: x.id, name: $("#puN").value, category: $("#puC").value, reason: $("#puR").value, budget: $("#puB").value, funding: $("#puF").value, year: $("#puY").value,
+    quarter: $("#puQ").value, priority: $("#puP").value, replace_id: $("#puX").value, justification: $("#puJ").value,
+    offers: $$("#puO tr", box).map(tr => Object.fromEntries($$("[data-k]", tr).map(i => [i.dataset.k, i.value])))});
+  const wire = () => { $$("[data-od]", box).forEach(b => b.onclick = () => b.closest("tr").remove());
+    $$("[data-of]", box).forEach(b => b.onclick = async () => { try { eqOpenFile({...(await api.equipment_purchase_offer_open(b.dataset.of)), title: b.textContent}); } catch (e) { toast(errText(e), true); } }); };
+  wire();
+  const oa = $("#puOA", box); if (oa) oa.onclick = () => { $("#puO", box).insertAdjacentHTML("beforeend", offerRow({}, $$("#puO tr", box).length)); wire(); };
+  const save = async () => { const id = await api.equipment_purchase_save(read()); x.id = id; return id; };
+  const of = $("#puOF", box); if (of) of.onclick = () => { const inp = document.createElement("input"); inp.type = "file"; inp.accept = "application/pdf,image/*";
+    inp.onchange = async () => { const f = inp.files[0]; if (!f) return; try { await save(); const data = await new Promise((ok, bad) => { const rd = new FileReader(); rd.onload = () => ok(rd.result); rd.onerror = bad; rd.readAsDataURL(f); });
+      await api.equipment_purchase_offer_add(x.id, f.name, data); closeModal(); toast("КП загружено"); const rr = await api.equipment_purchases(EQS.puYear); eqPurchasesTab(); eqPurchaseEdit(rr.rows.find(y => y.id === x.id) || x, rr); } catch (e) { $("#puErr", box).textContent = errText(e); } };
+    inp.click(); };
+  const sv = $("#puSave", box); if (sv) sv.onclick = async () => { try { await save(); closeModal(); toast("Сохранено"); eqPurchasesTab(); } catch (e) { $("#puErr", box).textContent = errText(e); } };
+  const sd = $("#puSend", box); if (sd) sd.onclick = async () => { try { const id = await save(); await api.equipment_purchase_status(id, "send"); closeModal(); toast("Отправлено на согласование"); eqPurchasesTab(); } catch (e) { $("#puErr", box).textContent = errText(e); } };
+}
+
+/* ------------------------------------------------------------ «Стороннее оборудование» */
+async function eqThirdTab() {
+  const body = $("#stockBody");
+  const r = await api.equipment_third_party(), tab = EQS.tpTab || "", q = (EQS.tpQ || "").toLowerCase();
+  const grp = x => ["other", "owner"].includes(x.ownership) ? "other" : x.ownership;
+  let rows = r.rows.filter(x => (!tab || grp(x) === tab) && (!q || `${x.name} ${x.contractor} ${x.inv_number}`.toLowerCase().includes(q)));
+  if (EQS.tpSort === "end") rows = rows.slice().sort((a, b) => (a.end || "9999") < (b.end || "9999") ? -1 : 1);
+  const k = r.kinds, cls = {doctor: "ok", lease: "warn", leasing: "c3", other: "c4", owner: "c4"};
+  const tot = r.total || 1, pc = n => `${(n * 100 / tot).toLocaleString("ru-RU", {maximumFractionDigits: 1})} %`;
+  const chip = x => `<span class="eqs-kind ${x.ownership === "doctor" ? "ok" : x.ownership === "lease" ? "warn" : "plan"}">${esc(x.ownership === "doctor" ? "Имущество врача" : x.ownership_title)}</span>`;
+  const st = x => x.status === "ended" ? eqPill("bad", x.status_title) : x.status === "soon" ? eqPill("wait", x.status_title) : x.status === "active" ? eqPill("ok", x.status_title) : eqPill("plan", x.status_title);
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Стороннее оборудование</h2><span class="muted">Оборудование, не находящееся в собственности клиники (врачи, аренда, лизинг, иное пользование)</span></div><span class="grow"></span>
+      ${can("equipment") ? `<button class="btn" id="tpAdd">${EQX.plus}Добавить оборудование</button>` : ""}</div>
+    <div class="eqs-tiles eqs-tiles5">${eqTile(EQX.box, "Всего единиц", r.total)}${eqTile('<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>', "Имущество врачей", k.doctor)}${eqTile(EQX.wrench, "Аренда", k.lease)}${eqTile(EQX.doc, "Лизинг", k.leasing)}${STK.eq_money ? eqTile(EQX.coins, "Стоимость в учёте", eqMoney(r.cost)) : eqTile(EQX.list, "Иное пользование", k.other + k.owner)}</div>
+    <div class="eqs-g3">
+      <section class="eqs-card"><h3>Структура стороннего оборудования</h3><div class="eqs-ringrow">${eqRing([{value: k.doctor, cls: "ok"}, {value: k.lease, cls: "warn"}, {value: k.leasing, cls: "c3"}, {value: k.other + k.owner, cls: "c4"}], r.total, plural(r.total, "единица", "единицы", "единиц"))}
+        <ul class="eqs-legend"><li class="ok"><span>Имущество врачей</span><b>${k.doctor} (${pc(k.doctor)})</b></li><li class="warn"><span>Аренда</span><b>${k.lease} (${pc(k.lease)})</b></li><li class="c3"><span>Лизинг</span><b>${k.leasing} (${pc(k.leasing)})</b></li><li class="c4"><span>Иное пользование</span><b>${k.other + k.owner} (${pc(k.other + k.owner)})</b></li></ul></div></section>
+      <section class="eqs-card"><h3>${EQX.cal}Ближайшие события</h3>${r.events.length ? `<div class="eqs-ev">${r.events.map(x => `<button data-e="${esc(x.id)}" class="${x.overdue ? "late" : ""}">${x.title.includes("лизинг") ? EQX.doc : EQX.cycle}<span><b>${esc(x.title)}</b><small>${esc(x.name)}</small></span><em>${x.overdue ? "окончено · " : ""}${eqShortDate(x.date)}</em></button>`).join("")}</div>` : `<div class="muted">Сроки договоров в ближайшие полгода не истекают</div>`}</section>
+      ${eqUseful([["docs", EQX.doc, "Договоры и документы", ""], ["terms", EQX.clock, "Контроль сроков", ""], ["cond", EQX.list, "Условия пользования", ""], ["print", EQX.doc, "Отчёт по стороннему оборудованию", ""]])}</div>
+    <div class="eqs-bar2"><div class="eqs-seg">${[["", `Все (${r.total})`], ["doctor", `Имущество врачей (${k.doctor})`], ["lease", `Аренда (${k.lease})`], ["leasing", `Лизинг (${k.leasing})`], ["other", `Иное (${k.other + k.owner})`]].map(([kk, t]) => `<button data-t="${kk}" class="${kk === tab ? "on" : ""}">${t}</button>`).join("")}</div>
+      <span class="grow"></span><div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="tpQ" placeholder="Поиск по наименованию, владельцу…" value="${esc(EQS.tpQ || "")}"></div></div>
+    <section class="eqs-card eqs-tcard">${rows.length ? `<table class="tbl eqs-reg" id="tpReg"><thead><tr><th>Наименование</th><th>Тип использования</th><th>Владелец / контрагент</th><th>Кабинет / место</th><th>Начало использования</th><th>Окончание</th><th>Статус</th></tr></thead><tbody>${rows.map(x => `<tr data-e="${esc(x.id)}">
+      <td><div class="sn-mat sm">${phHtml(x.photo_id)}<span><b>${esc(x.name)}</b>${x.inv_number ? `<small class="muted" style="display:block">${esc(x.inv_number)}</small>` : ""}</span></div></td><td>${chip(x)}</td>
+      <td>${esc(x.contractor || "—")}${x.contract_no ? `<small class="muted" style="display:block">договор № ${esc(x.contract_no)}</small>` : ""}</td><td>${esc(x.place || "—")}</td><td>${x.start ? fmtDateShort(x.start) : "—"}</td><td>${x.end ? fmtDateShort(x.end) : "—"}</td><td>${st(x)}</td></tr>`).join("")}</tbody></table><div class="eqs-foot muted">Показано: ${rows.length} из ${r.total}</div>`
+      : `<div class="empty"><b>Стороннего оборудования нет</b><span>В карточке укажите принадлежность: имущество врача, аренда, лизинг или иное пользование</span></div>`}</section></div>`;
+  loadThumbs(body);
+  $$("[data-e]", body).forEach(b => b.onclick = () => openEquipment(b.dataset.e));
+  $$(".eqs-bar2 .eqs-seg button", body).forEach(b => b.onclick = () => { EQS.tpTab = b.dataset.t; eqThirdTab(); });
+  let t; $("#tpQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { EQS.tpQ = e.target.value; eqThirdTab().then(() => { const i = $("#tpQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
+  const add = $("#tpAdd"); if (add) add.onclick = () => editEquipment({ownership: tab && tab !== "other" ? tab : "doctor"});
+  $$("[data-u]", body).forEach(b => b.onclick = () => ({
+    docs: () => { EQS.docKind = "contract"; stockGo("equipment", typeof eqDocsTab === "function" ? "eq_docs" : "equipment"); },
+    terms: () => { EQS.tpSort = EQS.tpSort === "end" ? "" : "end"; toast(EQS.tpSort ? "Сначала то, что заканчивается раньше" : "Обычный порядок"); eqThirdTab(); },
+    cond: () => modal(`<div class="m-h"><h3>Условия пользования</h3><button class="x" data-close>×</button></div><div class="m-b"><table class="tbl compact"><thead><tr><th>Оборудование</th><th>Тип</th><th>Владелец</th><th>Договор</th><th>Срок</th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.ownership_title)}</td><td>${esc(x.contractor || "—")}</td><td>${esc(x.contract_no || "—")}</td><td>${x.start ? fmtDateShort(x.start) : "…"} — ${x.end ? fmtDateShort(x.end) : "бессрочно"}</td></tr>`).join("")}</tbody></table><div class="muted eqs-hint">Стороннее оборудование не амортизируется (лизинг — по правилам клиники) и не попадает в выбытие в финотчёте. Платежи по аренде вносятся расходами.</div></div><div class="m-f"><span class="grow"></span><button class="btn" data-close>Закрыть</button></div>`, {wide: true}),
+    print: () => { const tb = $("#tpReg"); if (!tb) return toast("Нет данных"); $("#printArea").innerHTML = `<h2>Стороннее оборудование на ${fmtDate(iso(new Date()))}</h2>${tb.outerHTML}`; window.print(); }})[b.dataset.u]());
+}
