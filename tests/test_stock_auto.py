@@ -147,6 +147,18 @@ r = a.stock_inventory({"location_id": CAB1, "lines": [{"material_id": M2, "actua
 check("count of one place against its balance", r["diffs"] and r["diffs"][0]["book"] == 20 and bal(M2, CAB1) == 18 and bal(M2, "") == 80, r)
 refuses("a place with materials is not closed", lambda: a.stock_location_delete(CAB1), "переместите")
 
+# ------------------------------------------------------------------ 3.13: separate from Dentist Plus by default
+check("3.13: off by default", a._sauto.settings()["mode"] == "off" and a.stock_summary()["dp_link"] is False)
+check("3.13: nothing waits for a write-off", a._sauto.draft_count() == 0)
+refuses("3.13: no write-off by visits while separate", lambda: a.stock_visit_confirm(["v1"]), "отделён от Dentist Plus")
+a._sauto.tick(force=True)
+check("3.13: the tick writes nothing off", not d.q("SELECT 1 FROM stock_docs WHERE kind='visit'"))
+stock_auto.StockAuto(d, a._stock, a._acc)  # a restart does not switch it off again once the clinic switched it back on
+a.stock_auto_settings_save({"mode": "draft"})
+stock_auto.StockAuto(d, a._stock, a._acc)
+check("3.13: switched off only once", a._sauto.settings()["mode"] == "draft" and a.stock_summary()["dp_link"] is True)
+check("3.13: the tab hides by dp_link", "!!STK.dp_link" in (UI / "stock.js").read_text(encoding="utf-8"))
+
 # ------------------------------------------------------------------ the list of visits
 with d.tx() as c:  # an invoice made here for the patient of v7 on that day: the invoice wrote the materials off
     c.execute("INSERT INTO invoices(id, patient_id, items, total, status, created_at, kind) VALUES(?,?,?,?,?,?,?)",
@@ -300,6 +312,7 @@ replica.install(d)
 d2 = dbm.DB(Path(tempfile.mkdtemp()) / "b.db")
 setup(d2)
 a2 = Api(d2, W())
+a2.stock_auto_settings_save({"mode": "draft"})  # 3.13: the link to Dentist Plus is off by default
 replica.install(d2)
 replica.stamp(d, "A")
 st = replica.apply_versions(d2, replica.changes_since(d, 0, 100000), "B")
@@ -338,6 +351,7 @@ d3 = dbm.DB(Path(tempfile.mkdtemp()) / "c.db")
 setup(d3)
 d3.replace_visits(Y2, TD, VISITS)
 a3 = Api(d3, W())
+a3.stock_auto_settings_save({"mode": "draft"})
 srv = ClinicServer(a3, d3, port=PORT, host="127.0.0.1").start()
 
 

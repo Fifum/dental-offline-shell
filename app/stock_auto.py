@@ -5,6 +5,9 @@ the materials of the norms (`service_materials`, the same «техкарта» a
 visit as Dentist Plus gave it (`visits.data`: services / items / works … — the partner API does not document them), else from
 the visit's title when it is exactly the name of a service, else the user enters them («нет данных из Dentist Plus»).
 
+* 3.13 «склад отдельно»: the clinic keeps its stock only in Dental Desk, so the mode is «off» — nothing is taken from Dentist
+  Plus, the tab is hidden, the write-offs made before stay in the moves and reports. Every computer switches to «off» once on
+  updating (`split_313`); the older modes stay for the tests and in case the clinic ever wants the link back.
 * Safe by default: the visits are a list of drafts that someone with «Склад: приход, списание» confirms. The mode «сразу»
   writes them off by itself, but only visits from the day it was switched on, never older ones.
 * Never twice: one row per visit (`stock_visit_use`, id = the visit id); the document is `V-<visit>` and its moves have stable
@@ -38,7 +41,7 @@ CREATE TABLE IF NOT EXISTS service_costs(
     service_id TEXT PRIMARY KEY, lab REAL DEFAULT 0, other REAL DEFAULT 0, doctor_pct REAL, note TEXT, updated_at TEXT);
 """
 DEFAULTS = {
-    "mode": "draft",          # «draft» — a list to confirm; «auto» — written off by itself (visits from auto_since on)
+    "mode": "off",            # 3.13: «off» — not linked to Dentist Plus; «draft» — a list to confirm; «auto» — by itself
     "auto_since": "",         # the day the automatic mode was switched on
     "days": "7",              # how many days back the list of visits shows by default
     "location": "",           # the place for visits whose cabinet or branch is unknown («» — the main stock)
@@ -46,7 +49,9 @@ DEFAULTS = {
     "doctor_pct": "",         # the doctor's percent in the cost («» — the average of the doctors' pay schemes)
     "pnl_materials": "expenses",  # «expenses» — the P&L takes the purchases; «stock» — what was written off
 }
-MODES = {"draft": "Черновик — списывать после подтверждения", "auto": "Сразу — списывать автоматически"}
+MODES = {"off": "Не связан с Dentist Plus — склад только в Dental Desk", "draft": "Черновик — списывать после подтверждения",
+         "auto": "Сразу — списывать автоматически"}
+OFF_TEXT = "Склад отделён от Dentist Plus: материалы по приёмам Dentist Plus не списываются"
 PNL_MODES = {"expenses": "по закупкам (расходы «Материалы и закупки»)", "stock": "по списанию со склада"}
 STATUS = {"draft": "К списанию", "no_services": "Нет услуг", "no_norms": "Нет норм", "invoice": "Списано по счёту",
           "done": "Списано", "skipped": "Не списывать", "reverted": "Списание отменено"}
@@ -140,6 +145,11 @@ class StockAuto:
         self.db, self.stock, self.acc = db, stock, acc
         with db._lock:
             db.conn.executescript(SCHEMA)
+            # 3.13: the stock is separate from Dentist Plus — switched off once on every computer (and synced as a setting)
+            if not db.conn.execute("SELECT 1 FROM stock_settings WHERE k='split_313'").fetchone():
+                for k, v in (("mode", "off"), ("split_313", "1")):
+                    db.conn.execute("INSERT INTO stock_settings(k, v, updated_at) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET "
+                                    "v=excluded.v, updated_at=excluded.updated_at", (k, v, _now()))
             db.conn.commit()
         self._last_tick = 0.0
         self._count_cache = (0.0, None)
@@ -152,7 +162,7 @@ class StockAuto:
             if r["k"] in DEFAULTS:
                 s[r["k"]] = r["v"] if r["v"] is not None else ""
         if s["mode"] not in MODES:
-            s["mode"] = "draft"
+            s["mode"] = "off"
         if s["pnl_materials"] not in PNL_MODES:
             s["pnl_materials"] = "expenses"
         return s
@@ -169,7 +179,7 @@ class StockAuto:
         f = f if isinstance(f, dict) else {}
         cur, out = self.settings(), {}
         if "mode" in f:
-            mode = f["mode"] if f["mode"] in MODES else "draft"
+            mode = f["mode"] if f["mode"] in MODES else "off"
             out["mode"] = mode
             if mode == "auto" and cur["mode"] != "auto":
                 out["auto_since"] = date.today().isoformat()  # only visits from today on; older ones stay drafts
@@ -508,6 +518,8 @@ class StockAuto:
 
     def confirm(self, ids, login="", name="", auto=False) -> dict:
         """Write off the visits' materials. A visit already written off, billed here, without services or norms is left as it is."""
+        if self.settings()["mode"] == "off":
+            raise ValueError(OFF_TEXT)
         if isinstance(ids, (str, int)):
             ids = [ids]
         done, left = [], []
@@ -627,6 +639,8 @@ class StockAuto:
 
     def draft_count(self) -> int:
         """Visits waiting for a write-off over the days of the list (for the tab), cached for a minute."""
+        if self.settings()["mode"] == "off":
+            return 0
         at, n = self._count_cache
         if n is not None and time.time() - at < 60:
             return n

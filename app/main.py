@@ -129,7 +129,8 @@ class Api:
         from stock import EQ_STATUS, LOC_KINDS, MOVE_KINDS, UNITS
         locs = self._stock.locations()
         return {**self._stock.summary(), "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS,
-                "locations": [{"id": x["id"], "name": x["name"], "kind": x["kind"]} for x in locs], "loc_kinds": LOC_KINDS}
+                "locations": [{"id": x["id"], "name": x["name"], "kind": x["kind"]} for x in locs], "loc_kinds": LOC_KINDS,
+                "dp_link": self._sauto.settings()["mode"] != "off"}  # 3.13: the stock is separate from Dentist Plus
 
     # ------------------------------------- 3.5: places, transfers, write-off by visits, cost --
     def _stock_me(self):

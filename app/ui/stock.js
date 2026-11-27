@@ -16,7 +16,7 @@ $$("#stockTabs button").forEach(b => b.onclick = () => {
 
 function stockTabsByRights() {
   const vis = {home: canAny("stock_view", "stock_edit", "stock_ops"), balance: canAny("stock_view", "stock_edit"), docs: canAny("stock_view", "stock_edit"), moves: canAny("stock_view", "stock_edit"),
-    visits: canAny("stock_view", "stock_edit"), places: canAny("stock_view", "stock_edit"),
+    visits: canAny("stock_view", "stock_edit") && !!STK.dp_link, places: canAny("stock_view", "stock_edit"),
     equipment: canAny("equipment", "stock_view"), norms: canAny("stock_view", "stock_edit"), suppliers: can("stock_edit"),
     steril: canAny("sterilization", "equipment")};
   $$("#stockTabs button").forEach(b => b.hidden = !vis[b.dataset.k]);
@@ -28,6 +28,7 @@ async function loadStock() {
   stockTabsByRights();
   if (S.stockTab === "steril") return sterilJournal();  // the journal is also for those without stock rights
   STK = await api.stock_summary();
+  stockTabsByRights();  // 3.13: «По приёмам» only while the stock is linked to Dentist Plus (STK.dp_link)
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, equipment: stockEquipment, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces}[S.stockTab];
   await fn();
