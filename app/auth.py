@@ -311,10 +311,10 @@ METHOD_PERMS = {
     "stock_visit_confirm": "stock_edit", "stock_visit_revert": "stock_edit", "stock_visit_skip": "stock_edit",
     "stock_visit_restore": "stock_edit", "service_costs": "accounting", "service_cost_save": "accounting",
     "stock_cost_settings_save": "accounting",
-    "equipment_list": ("equipment", "stock_view"), "equipment": ("equipment", "stock_view"),
+    "equipment_list": ("equipment", "stock_view", "stock_ops"), "equipment": ("equipment", "stock_view", "stock_ops"),
     "save_equipment": "equipment", "equipment_event": "equipment", "write_off_equipment": "equipment",
     # 3.13: the equipment card (its money is cut out by the method itself without «Бухгалтерия»)
-    "equipment_card": ("equipment", "stock_view"), "equipment_next_inv": "equipment", "equipment_set": "equipment",
+    "equipment_card": ("equipment", "stock_view", "stock_ops"), "equipment_next_inv": "equipment", "equipment_set": "equipment",
     "equipment_inventory": "equipment", "equipment_replace_plan": "equipment", "equipment_dispose": "equipment",
     # 3.14: «Инвентаризация» and «ТО и ремонт» as sections of their own
     "equipment_inventory_batch": "equipment", "equipment_inventory_log": ("equipment", "stock_view", "stock_edit"),
@@ -343,6 +343,10 @@ METHOD_PERMS = {
     "equipment_moves": ("equipment", "stock_view", "equipment_approve"), "equipment_move_save": "equipment",
     "equipment_move_decide": "equipment_approve", "equipment_move_step": "equipment",
     "equipment_move_cancel": ("equipment", "equipment_approve"),
+    "equipment_requests": ("equipment", "stock_view", "equipment_approve"),
+    "equipment_request_save": ("equipment", "stock_ops", "stock_view"), "equipment_request_status": "equipment",
+    "equipment_plans": ("equipment", "stock_view"), "equipment_plan_save": "equipment", "equipment_plan_delete": "equipment",
+    "equipment_confirm": ("equipment", "stock_ops"),
     # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
     "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
     "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",
@@ -470,6 +474,9 @@ AUDITED = {
     "equipment_receipt_cancel": "Поступление оборудования отменено", "equipment_move_save": "Перемещение оборудования",
     "equipment_move_decide": "Перемещение оборудования: утверждение", "equipment_move_step": "Перемещение оборудования: этап",
     "equipment_move_cancel": "Перемещение оборудования отменено",
+    "equipment_request_save": "Заявка на ремонт или ТО оборудования", "equipment_request_status": "Заявка на ремонт или ТО: статус",
+    "equipment_plan_save": "График ТО оборудования", "equipment_plan_delete": "График ТО: строка убрана",
+    "equipment_confirm": "Наличие оборудования подтверждено",
     "material_set": "Материал: минимум, оптимум, срок поставки, поставщик", "material_label": "Наклейка материала (штрихкод)",
     "material_doc_add": "Документ материала", "material_doc_delete": "Документ материала убран",
     "material_analog_add": "Аналог материала", "material_analog_delete": "Аналог материала убран",

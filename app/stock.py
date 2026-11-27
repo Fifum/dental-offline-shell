@@ -113,7 +113,8 @@ LOC_KINDS = {"store": "Склад", "cabinet": "Кабинет", "branch": "Фи
 EQ_STATUS = {"in_use": "В работе", "repair": "В ремонте", "storage": "На складе", "written_off": "Списано"}
 EQ_EVENTS = {"service": "Обслуживание", "repair": "Ремонт", "move": "Перемещение", "note": "Заметка",
              "writeoff": "Списание", "status": "Статус", "inventory": "Инвентаризация", "replace_plan": "План замены",
-             "disposal": "Выбытие", "doc": "Документ", "condition": "Состояние", "created": "Поставлено на учёт"}
+             "disposal": "Выбытие", "doc": "Документ", "condition": "Состояние", "created": "Поставлено на учёт",
+             "diag": "Диагностика"}
 # 3.13 «карточка оборудования»
 EQ_OWNERSHIP = {"own": "Собственность клиники", "lease": "Аренда", "leasing": "Лизинг", "owner": "Имущество учредителя",
                 "doctor": "Имущество врача", "other": "Иное пользование"}   # 3.15: the doctors' own and any other use
@@ -2152,6 +2153,170 @@ class Stock:
         with self.db.tx() as c:
             c.execute("UPDATE equipment_moves SET status='cancelled', updated_at=? WHERE id=?", (_now(), m["id"]))
         return True
+
+    # ---------------------------------------------- 3.15: «Обслуживание и ремонт» --
+    def _req_row(self, r, eqs, today):
+        r = dict(r)
+        e = eqs.get(r["equipment_id"]) or {}
+        r["equipment_name"], r["inv_number"], r["photo_id"] = e.get("name") or "удалённое оборудование", e.get("inv_number") or "", e.get("photo_id") or ""
+        r["kind_title"] = REQ_KINDS.get(r["kind"], r["kind"])
+        r["priority_title"] = PRIORITY.get(r["priority"], PRIORITY["mid"])
+        r["overdue"] = r["status"] in ("new", "work") and bool(r["due"]) and r["due"] < today
+        r["status_title"] = "Просрочено" if r["overdue"] else REQ_STATUS.get(r["status"], r["status"])
+        return r
+
+    def eq_requests(self, year=None, equipment_id=None):
+        """Requests for repair, service and diagnostics with the year's figures, the service schedule (the plans and the dates of the
+        cards) and what service and repair cost this year and the year before."""
+        y = int(year or date.today().year)
+        today = date.today().isoformat()
+        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number, photo_id, next_service, status FROM equipment")}
+        sql, args = "SELECT * FROM equipment_requests WHERE status<>'cancelled'", []
+        if equipment_id:
+            sql += " AND equipment_id=?"
+            args.append(equipment_id)
+        rows = [self._req_row(r, eqs, today) for r in self.db.q(sql + " ORDER BY created_at DESC", args)]
+        period = [r for r in rows if (r["created_at"] or "")[:4] == str(y)]
+        sched = self.eq_schedule()
+        cost = lambda yy: round(self.db.one("""SELECT COALESCE(SUM(cost),0) AS v FROM equipment_events WHERE kind IN ('service','repair','diag')
+                                                AND substr(date,1,4)=?""", (str(yy),))["v"] or 0, 2)  # noqa: E731
+        now_c, prev_c = cost(y), cost(y - 1)
+        return {"year": y, "requests": rows, "total": len(period), "done": sum(1 for r in period if r["status"] == "done"),
+                "work": sum(1 for r in rows if r["status"] in ("new", "work") and not r["overdue"]),
+                "overdue": sum(1 for r in rows if r["overdue"]), "schedule": sched,
+                "next_service": next((x["date"] for x in sched if x["date"] >= today), ""),
+                "cost": now_c, "cost_prev": prev_c, "cost_change": round((now_c - prev_c) * 100 / prev_c, 1) if prev_c else None,
+                "kinds": REQ_KINDS, "priorities": PRIORITY, "statuses": REQ_STATUS}
+
+    def eq_request_save(self, f, user="", login="", report_only=False):
+        """A request: repair («Сообщить о неисправности» of a nurse is one too), service or diagnostics. A repair request marks the
+        piece «Неисправно» until it is done."""
+        f = f if isinstance(f, dict) else {}
+        e = self._eq_live(f.get("equipment_id"))
+        kind = "repair" if report_only else (f.get("kind") if f.get("kind") in REQ_KINDS else "repair")
+        text = _clean(f.get("description"), 500)
+        if not text:
+            raise ValueError("Опишите проблему или работу")
+        pr = f.get("priority") if f.get("priority") in PRIORITY else "mid"
+        due = _day(f.get("due"), "Желаемая дата выполнения")
+        plan = str(f.get("plan_id") or "") or None
+        if plan and not self.db.one("SELECT 1 AS x FROM equipment_plans WHERE id=? AND equipment_id=?", (plan, e["id"])):
+            plan = None
+        n = self.db.one("SELECT COUNT(*) AS n FROM equipment_requests WHERE kind=?", (kind,))["n"] + 1
+        rid, at = _id("RQ"), _now()
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO equipment_requests(id, number, equipment_id, kind, description, priority, due, responsible, plan_id, status,
+                         cost, created_by, created_name, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (rid, f"{REQ_PREFIX[kind]}-{n:03d}", e["id"], kind, text, pr, due, _clean(f.get("responsible"), 150), plan, "new", 0,
+                       login, user, at, at))
+            if kind == "repair" and (e["condition"] or "ok") != "faulty":
+                c.execute("UPDATE equipment SET condition='faulty' WHERE id=?", (e["id"],))
+                self._ev(c, e["id"], "condition", f"{EQ_CONDITION.get(e['condition'] or 'ok')} → {EQ_CONDITION['faulty']}: {text}", user)
+        return rid
+
+    def eq_request_status(self, rid, status, f=None, user=""):
+        """«В работу» (a repair sends the piece to «В ремонте»), «Выполнено» (the cost and the result go to the history like a service
+        or a repair; the piece is back in use and «Исправно»; a request of the schedule moves its next date on), «Отменить»."""
+        f = f if isinstance(f, dict) else {}
+        r = self.db.one("SELECT * FROM equipment_requests WHERE id=?", (str(rid or ""),))
+        if not r:
+            raise ValueError("Заявка не найдена")
+        if r["status"] in ("done", "cancelled"):
+            raise ValueError("Заявка уже закрыта")
+        if status not in ("work", "done", "cancelled"):
+            raise ValueError("Неизвестный статус")
+        e = self.db.one("SELECT * FROM equipment WHERE id=?", (r["equipment_id"],))
+        at, day = _now(), date.today().isoformat()
+        with self.db.tx() as c:
+            if status == "work":
+                c.execute("UPDATE equipment_requests SET status='work', started_at=?, updated_at=? WHERE id=?", (at, at, r["id"]))
+                if r["kind"] == "repair" and e and e["status"] == "in_use":
+                    c.execute("UPDATE equipment SET status='repair' WHERE id=?", (e["id"],))
+                    self._ev(c, e["id"], "status", f"{EQ_STATUS['in_use']} → {EQ_STATUS['repair']} ({r['number']})", user)
+            elif status == "cancelled":
+                c.execute("UPDATE equipment_requests SET status='cancelled', updated_at=? WHERE id=?", (at, r["id"]))
+            else:
+                cost = max(0, _num(f.get("cost"), "Сумма"))
+                result = _clean(f.get("result"), 500) or r["description"]
+                day = _day(f.get("date"), "Дата") or day
+                c.execute("UPDATE equipment_requests SET status='done', cost=?, result=?, done_at=?, updated_at=? WHERE id=?",
+                          (cost, result, f"{day} {at[11:]}", at, r["id"]))
+                if e:
+                    self._ev(c, e["id"], "service" if r["kind"] == "service" else "repair" if r["kind"] == "repair" else "diag",
+                             f"{r['number']}: {result}", user, day, cost)
+                    if e["status"] == "repair" or r["kind"] == "repair":
+                        c.execute("UPDATE equipment SET status=CASE WHEN status='repair' THEN 'in_use' ELSE status END, condition='ok' WHERE id=?", (e["id"],))
+                    if r["plan_id"]:
+                        p = c.execute("SELECT every_months, next_date FROM equipment_plans WHERE id=?", (r["plan_id"],)).fetchone()
+                        if p and p[0]:
+                            k = _mon(day) + int(p[0])
+                            y_, m_ = divmod(k, 12)
+                            d_ = min(int(day[8:10]), calendar.monthrange(y_, m_ + 1)[1])
+                            c.execute("UPDATE equipment_plans SET next_date=?, updated_at=? WHERE id=?", (date(y_, m_ + 1, d_).isoformat(), at, r["plan_id"]))
+                    self._sync_next_service(c, e["id"])
+        return r["id"]
+
+    def _sync_next_service(self, c, eid):
+        """The card's «Следующее ТО» is the nearest date of its schedule of service (when it has one)."""
+        nxt = c.execute("SELECT MIN(next_date) FROM equipment_plans WHERE equipment_id=? AND active=1 AND kind='service' AND COALESCE(next_date,'')<>''",
+                        (eid,)).fetchone()[0]
+        if nxt:
+            c.execute("UPDATE equipment SET next_service=? WHERE id=?", (nxt, eid))
+
+    def eq_plans(self):
+        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number, status FROM equipment")}
+        out = []
+        for p in self.db.q("SELECT * FROM equipment_plans WHERE active=1 ORDER BY next_date"):
+            e = eqs.get(p["equipment_id"])
+            if not e or e["status"] == "written_off":
+                continue
+            out.append({**p, "equipment_name": e["name"], "inv_number": e["inv_number"] or "", "kind_title": PLAN_KINDS.get(p["kind"], p["kind"])})
+        return out
+
+    def eq_schedule(self):
+        """«График технического обслуживания»: the plans (ТО, поверка, осмотр) and the cards' own next service where there is no plan."""
+        today = date.today().isoformat()
+        rows = [{"date": p["next_date"], "equipment_id": p["equipment_id"], "name": p["equipment_name"], "inv_number": p["inv_number"],
+                 "kind": p["kind"], "kind_title": p["kind_title"], "plan_id": p["id"], "every": p["every_months"]} for p in self.eq_plans() if p["next_date"]]
+        planned = {r["equipment_id"] for r in rows if r["kind"] == "service"}
+        for e in self.db.q("SELECT id, name, inv_number, next_service FROM equipment WHERE status<>'written_off' AND COALESCE(next_service,'')<>''"):
+            if e["id"] not in planned:
+                rows.append({"date": e["next_service"], "equipment_id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "",
+                             "kind": "service", "kind_title": "Плановое ТО", "plan_id": None, "every": 0})
+        for r in rows:
+            r["overdue"] = r["date"] < today
+        return sorted(rows, key=lambda r: (r["date"], r["name"]))
+
+    def eq_plan_save(self, f):
+        f = f if isinstance(f, dict) else {}
+        e = self._eq_live(f.get("equipment_id"))
+        kind = f.get("kind") if f.get("kind") in PLAN_KINDS else "service"
+        every = int(_num(f.get("every_months"), "Периодичность") or 0)
+        if not 1 <= every <= 120:
+            raise ValueError("Периодичность — от 1 до 120 месяцев")
+        nxt = _day(f.get("next_date"), "Следующая дата")
+        if not nxt:
+            raise ValueError("Укажите дату следующего ТО")
+        pid, at = str(f.get("id") or "") or _id("PL"), _now()
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO equipment_plans(id, equipment_id, kind, every_months, next_date, note, active, created_at, updated_at)
+                         VALUES(?,?,?,?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET equipment_id=excluded.equipment_id, kind=excluded.kind,
+                         every_months=excluded.every_months, next_date=excluded.next_date, note=excluded.note, active=1, updated_at=excluded.updated_at""",
+                      (pid, e["id"], kind, every, nxt, _clean(f.get("note"), 200), at, at))
+            self._sync_next_service(c, e["id"])
+        return pid
+
+    def eq_plan_delete(self, pid):
+        with self.db.tx() as c:
+            c.execute("UPDATE equipment_plans SET active=0, updated_at=? WHERE id=?", (_now(), str(pid or "")))
+        return True
+
+    def eq_confirm(self, eid, user=""):
+        """The nurse confirms the piece is in its place (a line of «Инвентаризация» without changes)."""
+        e = self._eq_live(eid)
+        with self.db.tx() as c:
+            self._ev(c, e["id"], "inventory", "Наличие подтверждено", user, data={"found": True, "diffs": [], "confirm": True})
+        return e["id"]
 
     # ------------------------------------------- 3.15: «Справочники и настройки» --
     def _setting(self, k, default):

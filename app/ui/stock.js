@@ -73,7 +73,7 @@ function stockTabsByRights() {
   const st = canAny("stock_view", "stock_edit");
   const vis = {home: canAny("stock_view", "stock_edit", "stock_ops"), balance: st, docs: st, moves: st, visits: st && !!STK.dp_link, places: st,
     norms: st, suppliers: can("stock_edit"), orders: st,
-    equipment: canAny("equipment", "stock_view"), service: canAny("equipment", "stock_view"), amort: can("accounting"),
+    equipment: canAny("equipment", "stock_view", "stock_ops"), service: canAny("equipment", "stock_view", "stock_ops"), amort: can("accounting"),
     disposed: canAny("equipment", "stock_view"), steril: canAny("sterilization", "equipment"),
     inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment"),
     inv: can("equipment"), eq_refs: canAny("equipment", "stock_view"), eq_overview: canAny("equipment", "stock_view", "equipment_approve"),
@@ -99,7 +99,7 @@ async function loadStock() {
   if (S.matOpen && ["home", "balance"].includes(S.stockTab)) return mtCard();  // 3.13: the material card is a screen of these tabs
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces, orders: stockOrders,
-    equipment: stockEquipment, service: eqServiceTab, amort: eqAmortTab, disposed: eqDisposedTab,
+    equipment: stockEquipment, service: eqRequestsTab, amort: eqAmortTab, disposed: eqDisposedTab,
     inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview, eq_receipts: eqReceiptsTab, eq_moves: eqMovesTab}[S.stockTab];
   await fn();
 }

@@ -506,6 +506,29 @@ class Api:
     def equipment_move_cancel(self, mid):
         return self._stock.eq_move_cancel(mid)
 
+    # 3.15 «Обслуживание и ремонт»: a nurse (or anyone who sees the stock) may only report a fault
+    def equipment_requests(self, year=None, equipment_id=None):
+        return self._stock.eq_requests(year, equipment_id)
+
+    def equipment_request_save(self, f):
+        perms, u = self._my_perms()
+        return self._stock.eq_request_save(f, self._who(), (u or {}).get("login") or "", report_only="equipment" not in perms)
+
+    def equipment_request_status(self, rid, status, f=None):
+        return self._stock.eq_request_status(rid, status, f, self._who())
+
+    def equipment_plans(self):
+        return self._stock.eq_plans()
+
+    def equipment_plan_save(self, f):
+        return self._stock.eq_plan_save(f)
+
+    def equipment_plan_delete(self, pid):
+        return self._stock.eq_plan_delete(pid)
+
+    def equipment_confirm(self, eid):
+        return self.equipment(self._stock.eq_confirm(eid, self._who()))
+
     def equipment_refs(self):
         """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""
         return self._stock.eq_refs()

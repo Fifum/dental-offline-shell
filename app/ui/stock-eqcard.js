@@ -63,7 +63,10 @@ async function eqCard() {
     ["docs", EQI.doc, "Документы"], ["inventory", EQI.check, "Инвентаризация"], ["history", EQI.hist, "История"]];
   const acts = c.edit ? [["photo", EQI.camera, "Добавить фотографию"], ["move", EQI.move, "Переместить оборудование"],
     e.status === "repair" ? ["fixed", EQI.wrench, "Вернуть из ремонта"] : ["repair", EQI.wrench, "Отправить на ремонт"],
-    ["inventory", EQI.check, "Провести инвентаризацию"], ["replace", EQI.cal, "Запланировать замену"], ["dispose", EQI.trash, "Оформить выбытие"]] : [];
+    ["inventory", EQI.check, "Провести инвентаризацию"], ["replace", EQI.cal, "Запланировать замену"], ["dispose", EQI.trash, "Оформить выбытие"],
+    ["request", EQI.wrench, "Заявка на ремонт или ТО"]]
+    // 3.15: a nurse (and anyone who sees the stock) reports a fault and confirms the piece is in its place; never writes off
+    : e.status === "written_off" ? [] : [["report", EQI.warn, "Сообщить о неисправности"], ...(canAny("stock_ops", "equipment") ? [["confirm", EQI.check, "Подтвердить наличие"]] : [])];
   const mainKinds = e.doc_kinds.filter(k => k.kind !== "other"), docsShown = EQ.allDocs ? mainKinds : mainKinds.slice(0, 4);
   const photos = e.photos || [];
   body.innerHTML = `<div class="eqc">
@@ -272,6 +275,8 @@ function eqAction(k) {
   const e = r.e;
   const placeOpts = cur => `<option value="">— другое место (впишите) —</option>${r.places.map(p => `<option value="${esc(p.id)}" ${p.id === cur ? "selected" : ""}>${esc(p.name)}</option>`).join("")}`;
   if (k === "photo") return eqUpload("photo");
+  if (k === "report" || k === "request") { EQS.rqPreset = e.id; S.eqOpen = null; return stockGo("equipment", "service"); }  // 3.15
+  if (k === "confirm") return api.equipment_confirm(e.id).then(() => { toast("Наличие подтверждено"); eqCard(); }).catch(x => toast(errText(x), true));
   if (k === "inventory") return eqTab("inventory");
   if (k === "fixed") return eqTab("service");
   if (k === "move" && r.places.length) { EQS.mvPreset = e.id; S.eqOpen = null; return stockGo("equipment", "eq_moves"); }  // 3.15: a move is approved

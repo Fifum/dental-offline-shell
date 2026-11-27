@@ -262,6 +262,59 @@ for part in ("Регистрация поступления", "Этапы пос
              "Журнал перемещений", "Акт перемещения", "Шаблоны оснований"):
     check(f"UI: {part}", part in sec)
 
+# ===================================== block 4: service and repair, the schedule --
+k = S.save_equipment({"name": "Компрессор КМ-001", "price": 180000, "location_id": loc})
+refuses("a request needs a description", lambda: a.equipment_request_save({"equipment_id": k}), "Опишите")
+rid = a.equipment_request_save({"equipment_id": k, "kind": "repair", "description": "Повышенный шум при работе", "priority": "high",
+                                "due": day(3), "responsible": "Менеджер"})
+rq = a.equipment_requests()
+x = next(r for r in rq["requests"] if r["id"] == rid)
+check("a repair request: Р-…, new, overdue after its day", x["number"].startswith("Р-") and x["status"] == "new" and x["overdue"]
+      and x["status_title"] == "Просрочено" and x["priority_title"] == "Высокий", x)
+check("a repair request marks the piece faulty", S.equipment(k)["condition"] == "faulty")
+check("the figures", rq["total"] >= 1 and rq["overdue"] >= 1, (rq["total"], rq["overdue"]))
+a.equipment_request_status(rid, "work")
+check("in work: the piece is in repair", S.equipment(k)["status"] == "repair")
+a.equipment_request_status(rid, "done", {"cost": 18000, "result": "Замена подшипника"})
+kk = S.equipment(k)
+check("done: back in use, fine, the history with its cost", kk["status"] == "in_use" and kk["condition"] == "ok"
+      and any(ev["kind"] == "repair" and ev["cost"] == 18000 and "Замена подшипника" in ev["text"] for ev in kk["events"]))
+refuses("a closed request is not changed", lambda: a.equipment_request_status(rid, "work"), "закрыта")
+check("the year's cost of service and repair", a.equipment_requests()["cost"] >= 18000)
+refuses("a plan needs a period", lambda: a.equipment_plan_save({"equipment_id": k, "every_months": 0, "next_date": day(-30)}), "Периодичность")
+pid = a.equipment_plan_save({"equipment_id": k, "kind": "service", "every_months": 6, "next_date": day(-30), "note": "по паспорту"})
+check("a plan sets the card's next service", S.equipment(k)["next_service"] == day(-30))
+sch = a.equipment_requests()["schedule"]
+check("the schedule has the plan (no double line of the card)", sum(1 for r in sch if r["equipment_id"] == k) == 1
+      and next(r for r in sch if r["equipment_id"] == k)["plan_id"] == pid)
+r2 = a.equipment_request_save({"equipment_id": k, "kind": "service", "description": "Плановое ТО", "plan_id": pid})
+check("a service request: ТО-…", next(r for r in a.equipment_requests()["requests"] if r["id"] == r2)["number"].startswith("ТО-"))
+a.equipment_request_status(r2, "done", {"cost": 4000, "date": day(0)})
+nxt = next(p_ for p_ in a.equipment_plans() if p_["id"] == pid)["next_date"]
+t_ = date.today()
+ym_ = t_.year * 12 + t_.month - 1 + 6
+check("done by the schedule: the next date moves by the period", nxt[:7] == f"{ym_ // 12}-{ym_ % 12 + 1:02d}", nxt)
+check("and the card follows", S.equipment(k)["next_service"] == nxt)
+a.equipment_plan_delete(pid)
+check("a plan removed", not any(p_["id"] == pid for p_ in a.equipment_plans()))
+d3 = a.equipment_request_save({"equipment_id": k, "kind": "diag", "description": "Проверка"})
+check("diagnostics: Д-…", next(r for r in a.equipment_requests()["requests"] if r["id"] == d3)["number"].startswith("Д-"))
+a.equipment_request_status(d3, "cancelled")
+check("a cancelled request leaves the journal", not any(r["id"] == d3 for r in a.equipment_requests()["requests"]))
+nr = S.eq_request_save({"equipment_id": k, "kind": "service", "description": "Не включается"}, "Медсестра", "nurse", report_only=True)
+check("a nurse may only report a fault", next(r for r in a.equipment_requests()["requests"] if r["id"] == nr)["kind"] == "repair")
+a.equipment_confirm(k)
+check("a nurse confirms the piece is in its place", S.equipment(k)["events"][0]["kind"] == "inventory" and "подтверждено" in S.equipment(k)["events"][0]["text"])
+check("the nurse sees the equipment and reports", "stock_ops" in auth.METHOD_PERMS["equipment_list"] and "stock_ops" in auth.METHOD_PERMS["equipment_request_save"]
+      and "stock_ops" in auth.METHOD_PERMS["equipment_confirm"] and auth.METHOD_PERMS["equipment_request_status"] == "equipment")
+for k_ in ("equipment_requests", "equipment_request_save", "equipment_request_status", "equipment_plans", "equipment_plan_save", "equipment_plan_delete", "equipment_confirm"):
+    check(f"{k_} has a right", k_ in auth.METHOD_PERMS)
+sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")
+card = (ROOT / "app" / "ui" / "stock-eqcard.js").read_text(encoding="utf-8")
+for part in ("Новая заявка", "График технического обслуживания", "Весь график ТО", "Расходы на обслуживание и ремонт", "Журнал неисправностей", "Настройки регламентов ТО"):
+    check(f"UI: {part}", part in sec)
+check("the card: report a fault, confirm", "Сообщить о неисправности" in card and "Подтвердить наличие" in card)
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)

@@ -390,3 +390,96 @@ async function eqMovePrint(m) {
     ${signLines([{role: "Передал", name: m.responsible || ""}, {role: "Принял", name: ""}, {role: "Утвердил", name: m.approved_name || ""}])}`;
   window.print();
 }
+
+/* ------------------------------------------------------------ «Обслуживание и ремонт» */
+async function eqRequestsTab() {
+  const body = $("#stockBody");
+  EQS.rqYear = EQS.rqYear || new Date().getFullYear();
+  const [r, list] = await Promise.all([api.equipment_requests(EQS.rqYear), api.equipment_list("", false)]);
+  const edit = can("equipment"), kind = EQS.rqKind || "", q = (EQS.rqQ || "").toLowerCase();
+  const rows = r.requests.filter(x => (!kind || x.kind === kind) && (!q || `${x.number} ${x.equipment_name} ${x.description}`.toLowerCase().includes(q)));
+  const cnt = k => r.requests.filter(x => x.kind === k).length;
+  const pill = x => x.status === "done" ? eqPill("ok", x.status_title) : x.overdue ? eqPill("late", x.status_title) : x.status === "work" ? eqPill("wait", x.status_title) : eqPill("plan", x.status_title);
+  const kcls = k => k === "repair" ? "bad" : k === "service" ? "ok" : "plan";
+  const pr = EQS.rqPr || "mid";
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Обслуживание и ремонт</h2><span class="muted">Плановые ТО, заявки на ремонт, учёт неисправностей и расходов</span></div><span class="grow"></span>
+      ${eqYearSel("rqYear", EQS.rqYear)}<button class="btn" id="rqNew">${EQX.plus}${edit ? "Создать заявку" : "Сообщить о неисправности"}</button></div>
+    <div class="eqs-tiles">${eqTile(EQX.wrench, "Всего заявок", r.total)}${eqTile(EQX.ok, "Выполнено", r.done, "ok")}${eqTile(EQX.gear, "В работе", r.work, r.work ? "warn" : "")}${eqTile(EQX.warn, "Просрочено", r.overdue, r.overdue ? "bad" : "")}${eqTile(EQX.cal, "Ближайшее ТО", r.next_service ? eqShortDate(r.next_service) : "—")}</div>
+    <div class="eqs-g2r eqs-g2r-wide"><section class="eqs-card" id="rqForm"><h3>${EQN.eq_receipts}${edit ? "Новая заявка" : "Сообщить о неисправности"}</h3>
+        <div class="eqs-form2"><label class="fl">Оборудование *<select class="input" id="rqEq"><option value="">Выберите оборудование</option>${list.map(e => `<option value="${esc(e.id)}">${esc(e.name)}${e.inv_number ? " " + esc(e.inv_number) : ""}${e.location_name ? " · " + esc(e.location_name) : ""}</option>`).join("")}</select></label>
+          <div class="fl"><span>Приоритет</span><div class="eqs-prio" id="rqPr">${Object.entries(r.priorities).map(([k, t]) => `<button type="button" data-p="${k}" class="${k} ${k === pr ? "on" : ""}">${t}</button>`).join("")}</div></div>
+          ${edit ? `<label class="fl">Тип заявки *<select class="input" id="rqKind">${Object.entries(r.kinds).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select></label>` : `<span></span>`}
+          <label class="fl">Желаемая дата выполнения<input class="input" type="date" id="rqDue"></label>
+          <label class="fl">Описание проблемы *<textarea class="input" id="rqText" rows="2" maxlength="500" placeholder="Повышенный шум при работе"></textarea></label>
+          <label class="fl">Ответственный<input class="input" id="rqResp" value="${edit ? esc(ME ? ME.name || "" : "") : ""}" placeholder="Менеджер"></label></div>
+        <div class="auth-err" id="rqErr"></div><div class="eqs-wfoot"><span class="grow"></span><button class="btn ghost" id="rqClear">Отмена</button><button class="btn" id="rqOk">Создать заявку →</button></div></section>
+      <section class="eqs-card"><h3>${EQX.cal}График технического обслуживания (ТО)</h3><span class="muted eqs-sub">Ближайшие плановые работы</span>
+        ${r.schedule.length ? `<div class="eqs-ev">${r.schedule.slice(0, 5).map(x => `<button data-e="${esc(x.equipment_id)}" class="${x.overdue ? "late" : ""}">${EQX.cal}<span><b>${esc(x.name)}${x.inv_number ? " " + esc(x.inv_number) : ""}</b><small>${esc(x.kind_title)}${x.every ? ` · раз в ${x.every} мес.` : ""}</small></span><em>${x.overdue ? "просрочено · " : ""}${eqShortDate(x.date)}</em></button>`).join("")}</div>`
+          : `<div class="muted">Плановых работ нет. Добавьте регламент ТО — «Весь график ТО».</div>`}
+        <button class="linkbtn eqs-more-l" id="rqPlans">Весь график ТО ${EQX.chev}</button></section></div>
+    <div class="eqs-g2r eqs-g2r-wide"><section class="eqs-card eqs-tcard">
+        <div class="eqs-jt"><div class="eqs-seg">${[["", `Все заявки (${r.requests.length})`], ["service", `Плановое ТО (${cnt("service")})`], ["repair", `Ремонт (${cnt("repair")})`], ["diag", `Диагностика (${cnt("diag")})`]].map(([k, t]) => `<button data-k="${k}" class="${k === kind ? "on" : ""}">${t}</button>`).join("")}</div>
+          <span class="grow"></span><div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="rqQ" placeholder="Поиск по заявкам…" value="${esc(EQS.rqQ || "")}"></div></div>
+        ${rows.length ? `<table class="tbl eqs-reg" id="rqJ"><thead><tr><th>№</th><th>Дата</th><th>Оборудование</th><th>Тип</th><th>Описание</th><th>Статус</th><th class="num">Сумма</th><th></th></tr></thead><tbody>${rows.map(x => `<tr data-rq="${esc(x.id)}">
+          <td><b>${esc(x.number)}</b></td><td>${fmtDateShort((x.done_at || x.created_at || "").slice(0, 10))}</td><td><div class="sn-mat sm">${phHtml(x.photo_id)}<span>${esc(x.equipment_name)}${x.inv_number ? `<small class="muted" style="display:block">${esc(x.inv_number)}</small>` : ""}</span></div></td>
+          <td><span class="eqs-kind ${kcls(x.kind)}">${esc(x.kind_title)}</span></td><td class="muted">${esc(x.result || x.description)}${x.due && x.status !== "done" ? `<small style="display:block">до ${fmtDateShort(x.due)} · ${esc(x.priority_title.toLowerCase())}</small>` : ""}</td>
+          <td>${pill(x)}</td><td class="num">${x.cost ? eqMoney(x.cost) : "—"}</td>
+          <td class="eqs-acts2">${edit && x.status === "new" ? `<button class="linkbtn" data-a="work">в работу</button>` : ""}${edit && ["new", "work"].includes(x.status) ? `<button class="linkbtn" data-a="done">выполнено</button><button class="linkbtn danger-t" data-a="cancel">отменить</button>` : ""}</td></tr>`).join("")}</tbody></table>`
+          : `<div class="empty"><b>Заявок нет</b><span>Создайте заявку на ремонт, ТО или диагностику</span></div>`}</section>
+      <div class="eqs-side2"><section class="eqs-card eqs-costc"><h3>${EQX.coins}Расходы на обслуживание и ремонт</h3>
+          <div class="eqs-cost"><b>${eqMoney(r.cost)}</b>${r.cost_change != null ? `<em class="${r.cost_change <= 0 ? "ok" : "bad"}">${r.cost_change > 0 ? "+" : ""}${r.cost_change.toLocaleString("ru-RU")} %<small>к ${r.year - 1} году</small></em>` : ""}</div><small class="muted">за ${r.year} год</small></section>
+        ${eqUseful([["plans", EQX.cal, "Планировать ТО", ""], ["faults", EQX.wrench, "Журнал неисправностей", ""], ["report", EQX.doc, "Отчёт по расходам", ""], ["regs", EQX.gear, "Настройки регламентов ТО", ""]])}</div></div></div>`;
+  loadThumbs(body);
+  $("#rqYear").onchange = e => { EQS.rqYear = +e.target.value; eqRequestsTab(); };
+  $("#rqNew").onclick = () => { $("#rqForm").scrollIntoView({block: "start", behavior: "smooth"}); $("#rqEq").focus(); };
+  $$("#rqPr button", body).forEach(b => b.onclick = () => { EQS.rqPr = b.dataset.p; $$("#rqPr button", body).forEach(x => x.classList.toggle("on", x === b)); });
+  $("#rqClear").onclick = () => { EQS.rqPr = null; eqRequestsTab(); };
+  $("#rqOk").onclick = async () => {
+    try { await api.equipment_request_save({equipment_id: $("#rqEq").value, kind: $("#rqKind") ? $("#rqKind").value : "repair", description: $("#rqText").value,
+      priority: EQS.rqPr || "mid", due: $("#rqDue").value, responsible: $("#rqResp").value});
+      EQS.rqPr = null; toast(edit ? "Заявка создана" : "Сообщение о неисправности отправлено"); eqRequestsTab(); } catch (e) { $("#rqErr").textContent = errText(e); }
+  };
+  if (EQS.rqPreset) { $("#rqEq").value = EQS.rqPreset; EQS.rqPreset = null; $("#rqForm").scrollIntoView({block: "start"}); $("#rqText").focus(); }
+  $$(".eqs-jt .eqs-seg button", body).forEach(b => b.onclick = () => { EQS.rqKind = b.dataset.k; eqRequestsTab(); });
+  let t; $("#rqQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { EQS.rqQ = e.target.value; eqRequestsTab().then(() => { const i = $("#rqQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
+  $$("[data-e]", body).forEach(b => b.onclick = () => openEquipment(b.dataset.e));
+  $$("tr[data-rq]", body).forEach(tr => tr.onclick = async ev => {
+    const x = r.requests.find(y => y.id === tr.dataset.rq), a = ev.target.dataset && ev.target.dataset.a;
+    if (!a) return openEquipment(x.equipment_id, "service");
+    try {
+      if (a === "done") return eqRequestDone(x);
+      if (a === "cancel" && !await ask(`Отменить заявку ${x.number}?`, {danger: true, ok: "Отменить", cancel: "Не отменять"})) return;
+      await api.equipment_request_status(x.id, a === "cancel" ? "cancelled" : a); toast("Сохранено"); eqRequestsTab();
+    } catch (e) { toast(errText(e), true); }
+  });
+  $("#rqPlans").onclick = () => eqPlansDlg(list);
+  $$("[data-u]", body).forEach(b => b.onclick = () => ({plans: () => eqPlansDlg(list), regs: () => eqPlansDlg(list), faults: () => { EQS.rqKind = "repair"; eqRequestsTab(); },
+    report: () => eqServiceTab()})[b.dataset.u]());
+}
+function eqRequestDone(x) {
+  const box = modal(`<div class="m-h"><h3>Выполнено: ${esc(x.number)}</h3><button class="x" data-close>×</button></div>
+    <div class="m-b"><div class="muted">${esc(x.equipment_name)} · ${esc(x.kind_title)}: ${esc(x.description)}</div>
+      <div class="grid3"><label class="fl">Дата<input class="input" type="date" id="rdD" value="${iso(new Date())}"></label><label class="fl">Сумма, ₽<input class="input num" type="number" min="0" step="any" id="rdC" placeholder="0"></label></div>
+      <label class="fl">Что сделано<input class="input" id="rdR" value="${esc(x.description)}"></label><div class="auth-err" id="rdE"></div>
+      <div class="muted eqs-hint">Запись попадёт в историю карточки с суммой. ${x.kind === "repair" ? "Оборудование вернётся в работу и станет «Исправно»." : x.plan_id ? "Следующая дата по графику ТО сдвинется на период." : ""}</div></div>
+    <div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="rdOk">Выполнено</button></div>`);
+  $("#rdOk", box).onclick = async () => { try { await api.equipment_request_status(x.id, "done", {date: $("#rdD").value, cost: $("#rdC").value, result: $("#rdR").value}); closeModal(); toast("Выполнено"); eqRequestsTab(); } catch (e) { $("#rdE").textContent = errText(e); } };
+}
+async function eqPlansDlg(list) {
+  const plans = await api.equipment_plans(), refs = EQS.refs || (EQS.refs = await api.equipment_refs()), edit = can("equipment");
+  const box = modal(`<div class="m-h"><h3>График ТО и регламенты</h3><button class="x" data-close>×</button></div>
+    <div class="m-b"><div class="muted eqs-hint">Плановое ТО, поверка и технический осмотр с периодичностью. «Создать заявку» по строке графика — после её выполнения следующая дата сдвинется на период.</div>
+      <table class="tbl compact"><thead><tr><th>Оборудование</th><th>Вид</th><th class="num">Раз в, мес.</th><th>Следующая дата</th><th>Примечание</th><th></th></tr></thead><tbody>${plans.map(p => `<tr data-p="${esc(p.id)}"><td>${esc(p.equipment_name)} <small class="muted">${esc(p.inv_number)}</small></td><td>${esc(p.kind_title)}</td><td class="num">${p.every_months}</td><td>${fmtDate(p.next_date)}</td><td class="muted">${esc(p.note || "")}</td>
+        <td>${edit ? `<button class="linkbtn" data-req="${esc(p.id)}">заявка</button> <button class="linkbtn danger-t" data-del="${esc(p.id)}">убрать</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Регламентов пока нет</td></tr>`}</tbody></table>
+      ${edit ? `<h4 class="sub-h">Добавить в график</h4><div class="grid3"><label class="fl">Оборудование<select class="input" id="plE">${list.map(e => `<option value="${esc(e.id)}">${esc(e.name)}${e.inv_number ? " " + esc(e.inv_number) : ""}</option>`).join("")}</select></label>
+        <label class="fl">Вид<select class="input" id="plK">${Object.entries(refs.plan_kinds).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select></label>
+        <label class="fl">Периодичность, мес.<input class="input num" type="number" min="1" max="120" id="plN" value="6"></label>
+        <label class="fl">Следующая дата<input class="input" type="date" id="plD"></label><label class="fl" style="grid-column:span 2">Примечание<input class="input" id="plC" placeholder="например: по паспорту производителя"></label></div><div class="auth-err" id="plErr"></div>` : ""}</div>
+    <div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>Закрыть</button>${edit ? `<button class="btn" id="plOk">Добавить</button>` : ""}</div>`, {wide: true});
+  const ok = $("#plOk", box); if (ok) ok.onclick = async () => { try { await api.equipment_plan_save({equipment_id: $("#plE").value, kind: $("#plK").value, every_months: $("#plN").value, next_date: $("#plD").value, note: $("#plC").value}); closeModal(); toast("Добавлено в график"); eqRequestsTab().then(() => eqPlansDlg(list)); } catch (e) { $("#plErr").textContent = errText(e); } };
+  $$("[data-del]", box).forEach(b => b.onclick = async () => { await api.equipment_plan_delete(b.dataset.del); closeModal(); eqRequestsTab().then(() => eqPlansDlg(list)); });
+  $$("[data-req]", box).forEach(b => b.onclick = async () => { const p = plans.find(x => x.id === b.dataset.req);
+    try { await api.equipment_request_save({equipment_id: p.equipment_id, kind: p.kind === "service" ? "service" : "diag", description: `${p.kind_title} по графику`, due: p.next_date, plan_id: p.id, priority: "mid"});
+      closeModal(); toast("Заявка создана"); eqRequestsTab(); } catch (e) { toast(errText(e), true); } });
+}
