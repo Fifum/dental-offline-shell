@@ -3198,6 +3198,7 @@ class Setup:
         self._host = host
         self._window = None
         self._error = ""
+        self._print = None  # printguard.PrintGuard of the main window
 
     def info(self):
         s = config.load_settings()
@@ -3325,6 +3326,10 @@ class Setup:
     def offline_forget(self, login):
         import offline_store
         return offline_store.forget(login)
+
+    def print_state(self, on, seq=0):
+        """3.15.1: the page's print preview opened (on) or closed — while it is open, the window's × closes only it."""
+        return self._print.state(on, seq) if self._print else False
 
     def set_theme(self, pref):
         """Remember the theme chosen in the app for the pages opened from files and the window background."""
@@ -3579,6 +3584,8 @@ def main():
                                    min_size=(1000, 640), background_color="#141312" if _theme_is_dark() else "#F6F6F6",
                                    minimized="--minimized" in sys.argv)
     setup._window = window
+    import printguard
+    printguard.attach(window, setup)  # 3.15.1: × over a print preview closes the preview, not the program
     webview.start(debug="--debug" in sys.argv, private_mode=False,
                   storage_path=str(config.data_dir() / "webview"))
     host.stop()

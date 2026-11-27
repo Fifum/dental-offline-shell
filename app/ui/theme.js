@@ -73,3 +73,18 @@
     setTimeout(function () { location.reload(); }, 400 * (n + 1));
   });
 })();
+
+/* 3.15.1: printing (window.print(), Ctrl+P) shows the print preview over the whole window, and the window's × above
+   it closed the whole program. The program hears when the preview opens and closes: while it is open, × closes
+   only the preview. n grows with every message, so a late «opened» never undoes a newer «closed». */
+(function () {
+  "use strict";
+  var n = 0;
+  function tell(on) {
+    var api = window.pywebview && window.pywebview.api;
+    if (!api || !api.print_state) return;
+    try { var p = api.print_state(on, ++n); if (p && p.catch) p.catch(function () {}); } catch (e) { /* no bridge */ }
+  }
+  window.addEventListener("beforeprint", function () { tell(true); });
+  window.addEventListener("afterprint", function () { tell(false); });
+})();
