@@ -273,7 +273,7 @@ check("status: expired", list(a.material(z)["status"]) == ["bad", "Просро�
 # replication and the journal
 for tb in ("stock_orders", "material_docs", "material_analogs"):
     check(f"{tb} replicated", tb in replica.BY_NAME and replica.ORDER[tb] > replica.ORDER["materials"])
-check("catch-up 3.14 with the new columns", replica.CATCHUP == "3.14" and {"number", "opt_qty", "lead_days", "supplier_id", "manufacturer"}
+check("catch-up 3.14 with the new columns", tuple(map(int, replica.CATCHUP.split("."))) >= (3, 14) and {"number", "opt_qty", "lead_days", "supplier_id", "manufacturer"}
       <= set(replica.CATCHUP_COLS["materials"]))
 NEW = ["material_set", "material_qr", "material_label", "material_doc_add", "material_doc_delete", "material_doc_open", "material_analog_add",
        "material_analog_delete", "stock_orders", "stock_order", "stock_order_save", "stock_order_cancel"]

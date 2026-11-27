@@ -456,6 +456,13 @@ class Api:
         return {"text": text, "png": crm.qr_data_uri(text), "link": text.startswith("https://"), "clinic": clinic,
                 "inv_number": e["inv_number"], "name": e["name"], "location": e["location_name"]}
 
+    def equipment_refs(self):
+        """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""
+        return self._stock.eq_refs()
+
+    def equipment_refs_save(self, f):
+        return self._stock.eq_refs_save(f)
+
     def equipment_settings_save(self, f):
         """«Бухгалтерия»: how many hours a chair works in a month (for «амортизация на кресло-час»)."""
         return {"chair_hours": self._stock.set_chair_hours((f or {}).get("chair_hours"))}

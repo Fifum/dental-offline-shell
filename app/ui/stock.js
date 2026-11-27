@@ -11,9 +11,11 @@ const STOCK_AREAS = {
       ["visits", 'По приёмам<i class="cnt" id="stVisitsCnt" hidden></i>', "Списание материалов по приёмам Dentist Plus"],
       ["places", "Места хранения", "Кабинеты, филиалы и перемещения"], ["orders", "Закупки", "Заказы поставщикам и что в пути"],
       ["norms", "Нормы списания"], ["suppliers", "Поставщики"]]},
-  equipment: {title: "Оборудование", sub: "Карточки и QR-этикетки, ТО и ремонт, выбытие и амортизация",
-    tabs: [["equipment", "Оборудование"], ["service", "ТО и ремонт"], ["amort", "Амортизация", "Видят директор и учредитель (право «Бухгалтерия»)"],
-      ["disposed", "Выбывшее"], ["steril", "Стерилизация"]]},
+  // 3.15: the bar of the mockups — the main tabs with icons and «Ещё» (stock-eqsection.js draws it)
+  equipment: {title: "Оборудование", sub: "Учёт, обслуживание и управление имуществом клиники",
+    tabs: [["equipment", "Реестр оборудования"], ["service", "Обслуживание и ремонт"],
+      ["amort", "Амортизация", "Видят директор и учредитель (право «Бухгалтерия»)"]],
+    more: [["disposed", "Выбытие и списание"], ["inv", "Инвентаризация"], ["steril", "Стерилизация"], ["eq_refs", "Справочники и настройки"]]},
   inventory: {title: "Инвентаризация", sub: "Пересчёт материалов по местам и проверка оборудования по инвентарным номерам",
     tabs: [["inv_mat", "Материалы"], ["inv_eq", "Оборудование"], ["inv_hist", "История"]]},
 };
@@ -32,8 +34,14 @@ const placeSelect = (id, cur = "", label = "Место") => hasPlaces() ? `<labe
 function stockHead(area) {
   const a = STOCK_AREAS[area];
   $("#stockTitle").textContent = a.title; $("#stockSub").textContent = a.sub;
-  $("#stockTabs").innerHTML = a.tabs.map(([k, t, tip]) => `<button data-k="${k}" ${tip ? `title="${esc(tip)}"` : ""}>${t}</button>`).join("");
-  $$("#stockTabs button").forEach(b => b.onclick = () => {
+  const tabs = $("#stockTabs");
+  tabs.classList.toggle("eqnav", !!a.more);
+  tabs.classList.toggle("seg", !a.more);  // the sliding pill of a segmented control is not for the big tabs
+  if (a.more) tabs.classList.remove("has-ind");
+  tabs.innerHTML = a.more ? eqNavHtml(a) : a.tabs.map(([k, t, tip]) => `<button data-k="${k}" ${tip ? `title="${esc(tip)}"` : ""}>${t}</button>`).join("");
+  if (a.more) eqNavWire();
+  $$("#stockTabs button[data-k]").forEach(b => b.onclick = () => {
+    if (b.dataset.k === "inv") return stockGo("inventory", "inv_eq");  // 3.15: «Ещё → Инвентаризация» is the section of its own
     stockSetTab(b.dataset.k);
     S.eqOpen = null; S.matOpen = null;  // 3.13: a tab opens its list, not the card left open
     loadStock();
@@ -41,7 +49,16 @@ function stockHead(area) {
 }
 function stockSetTab(tab) {
   S.stockTab = tab; S.stockTabs[S.stockArea || "stock"] = tab;
-  $$("#stockTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === tab));
+  $$("#stockTabs button[data-k]").forEach(x => x.classList.toggle("on", x.dataset.k === tab));
+  eqNavMark();
+}
+/** 3.15: «Ещё» shows the name of the tab opened from it. */
+function eqNavMark() {
+  const a = STOCK_AREAS[S.stockArea || "stock"], b = $("#eqMoreBtn");
+  if (!a || !a.more || !b) return;
+  const m = a.more.find(t => t[0] === S.stockTab);
+  b.classList.toggle("on", !!m); $("span", b).textContent = m ? m[1] : "Ещё";
+  const menu = $("#eqMoreMenu"); if (menu) menu.hidden = true;
 }
 /** Opens a tab of a section of the stock from anywhere (a card, a task, a scan): switches the section when needed. */
 function stockGo(area, tab) {
@@ -57,12 +74,15 @@ function stockTabsByRights() {
     norms: st, suppliers: can("stock_edit"), orders: st,
     equipment: canAny("equipment", "stock_view"), service: canAny("equipment", "stock_view"), amort: can("accounting"),
     disposed: canAny("equipment", "stock_view"), steril: canAny("sterilization", "equipment"),
-    inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment")};
-  const keys = STOCK_AREAS[S.stockArea].tabs.map(t => t[0]);
-  $$("#stockTabs button").forEach(b => b.hidden = !vis[b.dataset.k]);
+    inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment"),
+    inv: can("equipment"), eq_refs: canAny("equipment", "stock_view")};  // 3.15
+  const area = STOCK_AREAS[S.stockArea], keys = [...area.tabs, ...(area.more || [])].map(t => t[0]).filter(k => k !== "inv");
+  $$("#stockTabs button[data-k]").forEach(b => b.hidden = !vis[b.dataset.k]);
+  const mb = $("#eqMoreBtn"); if (mb) mb.parentElement.hidden = !(area.more || []).some(t => vis[t[0]]);
   if (!vis[S.stockTab] || !keys.includes(S.stockTab)) S.stockTab = keys.find(k => vis[k]) || keys[0];
   S.stockTabs[S.stockArea] = S.stockTab;
-  $$("#stockTabs button").forEach(b => b.classList.toggle("on", b.dataset.k === S.stockTab));
+  $$("#stockTabs button[data-k]").forEach(b => b.classList.toggle("on", b.dataset.k === S.stockTab));
+  eqNavMark();
 }
 
 async function loadStock() {
@@ -78,7 +98,7 @@ async function loadStock() {
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces, orders: stockOrders,
     equipment: stockEquipment, service: eqServiceTab, amort: eqAmortTab, disposed: eqDisposedTab,
-    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory}[S.stockTab];
+    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab}[S.stockTab];
   await fn();
 }
 

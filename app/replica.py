@@ -85,6 +85,12 @@ TABLES = [
     T("equipment", title="Оборудование"),
     T("equipment_events", intpk=True, title="Обслуживание оборудования"),
     T("equipment_docs", title="Документ оборудования"),  # 3.13: the documents and photos of the equipment card
+    # 3.15: the section «Оборудование» — receipts, moves, service requests, the service schedule, the purchase plan
+    T("equipment_receipts", title="Поступление оборудования"),
+    T("equipment_moves", title="Перемещение оборудования"),
+    T("equipment_requests", title="Заявка на ремонт или ТО"),
+    T("equipment_plans", title="График ТО"),
+    T("equipment_purchases", title="Закупка оборудования в плане"),
     # 3.10: the nurse's requests for materials and the write-offs waiting for a manager's approval
     T("stock_requests", title="Заявка на материалы"),
     T("stock_approvals", title="Списание на согласовании"),
@@ -211,7 +217,7 @@ def install(db):
 #  * the new columns are filled from the last synced copy of the row (sync_rows.base keeps the whole row as it came);
 #  * every peer and the cloud are asked for everything again: versions already here are skipped at once, the rows of the
 #    new tables arrive.
-CATCHUP = "3.14"
+CATCHUP = "3.15"
 CATCHUP_COLS = {"materials": ["photo_id",
                               # 3.14: the material card
                               "number", "manufacturer", "description", "form", "shelf_life", "storage", "opt_qty", "lead_days",
@@ -219,7 +225,10 @@ CATCHUP_COLS = {"materials": ["photo_id",
                 "equipment": ["photo_id", "in_service", "useful_months", "salvage", "amort_method",
                               # 3.13: the equipment card
                               "manufacturer", "ownership", "condition", "location_id", "market_value", "replace_cost",
-                              "replace_date", "reserve_monthly", "disposal_kind", "disposal_amount"],
+                              "replace_date", "reserve_monthly", "disposal_kind", "disposal_amount",
+                              # 3.15: the accounting, someone else's property, the person responsible, the quantity
+                              "accounting", "contractor", "use_start", "use_end", "contract_no", "receipt_id",
+                              "responsible_login", "qty", "disposal_responsible", "disposal_basis"],
                 "equipment_events": ["data"],
                 "users": ["phone_pin_hash", "phone_pin_at"],  # 3.13: the PIN of the stock app on a phone
                 "stock_requests": ["accepted_by", "accepted_name", "accepted_at"]}  # 3.13: «Принята»

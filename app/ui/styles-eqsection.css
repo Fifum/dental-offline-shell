@@ -1,0 +1,40 @@
+/* ===== 3.15 «Оборудование» by the clinic's mockups: the bar of the section and its screens (stock-eqsection.js).
+   The colors are the program's tokens (styles-type.css), so the light and the dark theme come from there. */
+.top:has(#stockTabs.eqnav){flex-wrap:wrap;row-gap:12px}
+#stockTabs.eqnav{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;padding:0;background:none;border:0;box-shadow:none}
+#stockTabs.eqnav>button,#stockTabs.eqnav .eqnav-mb{display:inline-flex;align-items:center;gap:9px;height:44px;padding:0 16px;border-radius:12px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:14px;font-weight:500;box-shadow:0 1px 2px rgba(16,40,44,.05);cursor:pointer}
+#stockTabs.eqnav>button svg,#stockTabs.eqnav .eqnav-mb svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;color:var(--accent)}
+#stockTabs.eqnav>button:hover,#stockTabs.eqnav .eqnav-mb:hover{background:var(--hover)}
+#stockTabs.eqnav>button.on,#stockTabs.eqnav .eqnav-mb.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+#stockTabs.eqnav>button.on svg,#stockTabs.eqnav .eqnav-mb.on svg{color:inherit}
+#stockTabs.eqnav .eqnav-more{position:relative;margin-left:auto}
+#stockTabs.eqnav .eqnav-mb svg{color:var(--ink2)}
+.eqnav-menu{position:absolute;right:0;top:50px;z-index:40;min-width:250px;padding:6px;border-radius:12px;background:var(--panel);border:1px solid var(--line);
+  box-shadow:0 12px 30px rgba(16,40,44,.16);display:flex;flex-direction:column}
+.eqnav-menu[hidden]{display:none}
+.eqnav-menu button{all:unset;cursor:pointer;padding:9px 12px;border-radius:8px;font-size:14px;color:var(--ink)}
+.eqnav-menu button:hover{background:var(--hover)}
+.eqnav-menu button.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
+
+/* the screens */
+.eqs{display:flex;flex-direction:column;gap:14px;padding:2px 2px 24px;color:var(--ink)}
+.eqs svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.eqs-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.eqs-head h2{margin:0;font-size:26px;font-weight:700;letter-spacing:-.02em}
+.eqs-head>div{display:flex;flex-direction:column;gap:2px}
+.eqs-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 3px rgba(16,40,44,.05);padding:14px 16px}
+.eqs-card h3{margin:0 0 10px;font-size:17px;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.eqs-card h3:not(:first-child){margin-top:18px}
+.eqs-grid2{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;align-items:start}
+.eqs-hint{font-size:13px;margin:0 0 10px}
+.eqs-row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.eqs-t{width:100%}
+.eqs-t .input{height:34px}
+.eqs-t td:first-child{width:62%}
+.eqs-t td:first-child .input{width:100%}
+.eqs-t td.num .input{width:90px;text-align:right}
+.eqs-dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:13.5px}
+.eqs-dl dt{font-weight:600}
+.eqs-dl dd{margin:0;color:var(--ink2)}
+@media (max-width:1100px){.eqs-grid2{grid-template-columns:1fr}}

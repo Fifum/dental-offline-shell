@@ -61,6 +61,8 @@ PERMS = [
     # 3.10: the nurse's stock — whatever she writes off waits for a manager or the director
     ("stock_ops", "Склад: заявки, приём поставки, выдача в кабинет, расход (списание — после согласования)"),
     ("stock_approve", "Склад: согласование списаний и заявок, списание без согласования"),
+    # 3.15: the purchases of equipment are agreed and its moves approved by the director and the founder
+    ("equipment_approve", "Оборудование: согласование закупок и утверждение перемещений"),
 ]
 PERM_KEYS = [k for k, _ in PERMS]
 PERM_KEYS_2_13 = PERM_KEYS[:PERM_KEYS.index("expenses_day")]   # what a permission list saved before 2.14 knew about
@@ -70,7 +72,7 @@ PERM_GROUPS = [
     ("Медкарта и документы", ["medcard_view", "medcard_edit", "docs", "lab", "sterilization"]),
     ("Деньги", ["billing", "payments", "cash_report", "fiscal", "expenses_day"]),
     ("Управление", ["reports", "accounting", "marketing", "shifts_edit", "export"]),
-    ("Склад", ["stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment"]),
+    ("Склад", ["stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment", "equipment_approve"]),
     ("Настройки", ["refs", "settings", "staff"]),
 ]
 
@@ -134,7 +136,10 @@ def roles(db=None) -> dict:
             # nurse's stock right once (as a right added later), and the built-in one is not shown twice
             default = list(dict.fromkeys(default + NURSE_STOCK))
             own_nurse = True
-        perms = _merge(_loads(r["perms"], []), _loads(r["known"], PERM_KEYS_2_13), default)
+        known = _loads(r["known"], PERM_KEYS_2_13)
+        perms = _merge(_loads(r["perms"], []), known, default)
+        if "equipment_approve" not in known and "accounting" in perms and "equipment_approve" not in perms:
+            perms = _merge(perms + ["equipment_approve"], PERM_KEYS, [])  # 3.15: the founder's own position agrees purchases
         out[key] = {"title": title, "base": base, "perms": perms,
                     "builtin": key in ROLES, "edited": True, "sort": (r["sort"] or 0) + (0 if key in ROLES else 100)}
     if own_nurse and "nurse" in out and not out["nurse"]["edited"] and not _anyone_is(db, "nurse"):
@@ -330,6 +335,8 @@ METHOD_PERMS = {
     "stock_photo_set": ("stock_edit", "stock_ops", "equipment"), "stock_photo_clear": ("stock_edit", "stock_ops", "equipment"),
     "equipment_amortization": "accounting", "amort_settings_save": "accounting",
     "equipment_capex_candidates": "accounting", "expenses_to_capex": "accounting",  # 3.14
+    # 3.15: the section «Оборудование» by the mockups
+    "equipment_refs": ("equipment", "stock_view", "stock_ops", "equipment_approve"), "equipment_refs_save": "equipment",
     # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
     "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
     "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",
@@ -452,6 +459,7 @@ AUDITED = {
     "stock_photo_set": "Фото материала или оборудования", "stock_photo_clear": "Фото материала или оборудования убрано",
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
     "expenses_to_capex": "Расходы перенесены в «Покупку оборудования»",
+    "equipment_refs_save": "Оборудование: категории и нормативы",
     "material_set": "Материал: минимум, оптимум, срок поставки, поставщик", "material_label": "Наклейка материала (штрихкод)",
     "material_doc_add": "Документ материала", "material_doc_delete": "Документ материала убран",
     "material_analog_add": "Аналог материала", "material_analog_delete": "Аналог материала убран",

@@ -78,6 +78,28 @@ CREATE TABLE IF NOT EXISTS material_docs(
 CREATE INDEX IF NOT EXISTS ix_matdocs_mat ON material_docs(material_id);
 CREATE TABLE IF NOT EXISTS material_analogs(
     id TEXT PRIMARY KEY, a TEXT, b TEXT, created_by TEXT, created_at TEXT, deleted INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS equipment_receipts(
+    id TEXT PRIMARY KEY, number TEXT, supplier_id TEXT, doc_kind TEXT, doc_number TEXT, doc_date TEXT, amount REAL DEFAULT 0,
+    comment TEXT, lines TEXT, step INTEGER DEFAULT 1, status TEXT, equipment_ids TEXT, pay TEXT, user_name TEXT,
+    created_at TEXT, updated_at TEXT, accepted_at TEXT);
+CREATE TABLE IF NOT EXISTS equipment_moves(
+    id TEXT PRIMARY KEY, number TEXT, equipment_id TEXT, from_location_id TEXT, from_text TEXT, to_location_id TEXT, date TEXT,
+    reason TEXT, responsible TEXT, comment TEXT, status TEXT, created_by TEXT, created_name TEXT, created_at TEXT,
+    approved_by TEXT, approved_name TEXT, approved_at TEXT, answer TEXT, done_at TEXT, updated_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_eqmoves_eq ON equipment_moves(equipment_id);
+CREATE TABLE IF NOT EXISTS equipment_requests(
+    id TEXT PRIMARY KEY, number TEXT, equipment_id TEXT, kind TEXT, description TEXT, priority TEXT, due TEXT,
+    responsible TEXT, plan_id TEXT, status TEXT, cost REAL DEFAULT 0, result TEXT, created_by TEXT, created_name TEXT,
+    created_at TEXT, started_at TEXT, done_at TEXT, updated_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_eqreq_eq ON equipment_requests(equipment_id);
+CREATE TABLE IF NOT EXISTS equipment_plans(
+    id TEXT PRIMARY KEY, equipment_id TEXT, kind TEXT, every_months INTEGER DEFAULT 12, next_date TEXT, note TEXT,
+    active INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS equipment_purchases(
+    id TEXT PRIMARY KEY, number TEXT, name TEXT, reason TEXT, justification TEXT, category TEXT, budget REAL DEFAULT 0,
+    year INTEGER, quarter INTEGER, priority TEXT, funding TEXT, replace_id TEXT, offers TEXT, status TEXT,
+    created_by TEXT, created_name TEXT, created_at TEXT, sent_at TEXT, decided_by TEXT, decided_name TEXT, decided_at TEXT,
+    answer TEXT, receipt_id TEXT, updated_at TEXT);
 """
 SOON_DAYS = 30          # a lot expiring within this many days is highlighted
 USAGE_DAYS = 60         # the average daily use for the purchase list is taken over this period
@@ -93,10 +115,13 @@ EQ_EVENTS = {"service": "Обслуживание", "repair": "Ремонт", "m
              "writeoff": "Списание", "status": "Статус", "inventory": "Инвентаризация", "replace_plan": "План замены",
              "disposal": "Выбытие", "doc": "Документ", "condition": "Состояние", "created": "Поставлено на учёт"}
 # 3.13 «карточка оборудования»
-EQ_OWNERSHIP = {"own": "Собственность клиники", "lease": "Аренда", "leasing": "Лизинг", "owner": "Имущество учредителя"}
+EQ_OWNERSHIP = {"own": "Собственность клиники", "lease": "Аренда", "leasing": "Лизинг", "owner": "Имущество учредителя",
+                "doctor": "Имущество врача", "other": "Иное пользование"}   # 3.15: the doctors' own and any other use
 EQ_CONDITION = {"ok": "Исправно", "service": "Требует обслуживания", "faulty": "Неисправно"}
-EQ_DISPOSAL = {"writeoff": "Списание и утилизация", "sale": "Продажа", "return": "Возврат владельцу"}
-EQ_DISPOSED = {"writeoff": "Списано", "sale": "Продано", "return": "Возвращено владельцу"}
+EQ_DISPOSAL = {"writeoff": "Списание", "utilize": "Утилизация", "sale": "Реализация (продажа)", "transfer": "Передача",
+               "return": "Возврат владельцу"}   # 3.15: utilization and a transfer as ways of their own
+EQ_DISPOSED = {"writeoff": "Списано", "utilize": "Утилизировано", "sale": "Продано", "transfer": "Передано",
+               "return": "Возвращено владельцу"}
 EQ_DOC_KINDS = {"contract": "Договор купли-продажи", "waybill": "Товарная накладная", "act": "Акт ввода в эксплуатацию",
                 "passport": "Технический паспорт", "reg": "Регистрационное удостоверение", "warranty": "Гарантийный талон",
                 "service_act": "Акты ТО", "photo": "Фотографии", "other": "Другое"}
@@ -110,9 +135,37 @@ INV_FIRST = "ОБ-001"
 UNITS = ["шт", "уп", "мл", "г", "фл", "амп", "карп", "набор", "пара", "м"]
 AMORT_METHODS = {"linear": "Линейный"}
 # 3.14: rented equipment and the founder's own property are not the clinic's assets: no depreciation and no disposal in the P&L
-OFF_BOOKS = ("lease", "owner")
+OFF_BOOKS = ("lease", "owner", "doctor", "other")
 CAPEX_DAYS = 45         # an expense this close to the purchase, of the same sum, looks like the purchase itself
 MAX_USEFUL_MONTHS = 600  # 50 years
+# 3.15 «Оборудование» by the clinic's mockups: the categories of property and the useful life usual for them (a hint in the
+# card, never put in by itself: the term is only set by hand), the way a piece is accounted for, the journals
+EQ_CATS = ["Стоматологическое оборудование", "Диагностическое оборудование", "Стерилизационное оборудование",
+           "Инженерное оборудование", "Медицинские инструменты", "Компьютерная техника", "Оргтехника", "Мебель",
+           "Бытовая техника", "Электрооборудование", "Системы безопасности", "Хозяйственный инвентарь", "Прочее имущество"]
+EQ_LIFE = {"Стоматологическое оборудование": 120, "Диагностическое оборудование": 96, "Стерилизационное оборудование": 84,
+           "Инженерное оборудование": 84, "Медицинские инструменты": 36, "Компьютерная техника": 36, "Оргтехника": 36,
+           "Мебель": 84, "Бытовая техника": 60, "Электрооборудование": 60, "Системы безопасности": 60,
+           "Хозяйственный инвентарь": 24, "Прочее имущество": 60}
+# the category never decides the accounting: a cheap instrument may be counted by quantity without depreciation
+EQ_ACCOUNTING = {"amort": "С амортизацией", "qty": "Количественный учёт без амортизации"}
+EQ_NEW_COLS_315 = ("accounting TEXT", "contractor TEXT", "use_start TEXT", "use_end TEXT", "contract_no TEXT", "receipt_id TEXT",
+                   "responsible_login TEXT", "qty INTEGER DEFAULT 1", "disposal_responsible TEXT", "disposal_basis TEXT")
+RECEIPT_DOCS = {"contract": "Договор поставки", "waybill": "Товарная накладная", "invoice": "Счёт-фактура", "upd": "УПД"}
+RECEIPT_STEPS = {1: "Документы", 2: "Оборудование", 3: "Учёт", 4: "Ввод в эксплуатацию"}
+RECEIPT_STATUS = {"process": "В процессе", "accepted": "Принято", "cancelled": "Отменено"}
+MOVE_STATUS = {"requested": "На утверждении", "approved": "Утверждено", "moving": "Перемещается", "done": "Завершено",
+               "rejected": "Отклонено", "cancelled": "Отменено"}
+MOVE_REASONS = ["Перераспределение нагрузки", "Оптимизация работы", "Ремонт кабинета", "Временное размещение",
+                "Замена рабочего места", "Ввод в эксплуатацию", "На ремонт или обслуживание"]
+REQ_KINDS = {"repair": "Ремонт", "service": "Обслуживание", "diag": "Диагностика"}
+REQ_PREFIX = {"repair": "Р", "service": "ТО", "diag": "Д"}
+REQ_STATUS = {"new": "Новая", "work": "В работе", "done": "Выполнено", "cancelled": "Отменено"}
+PRIORITY = {"low": "Низкий", "mid": "Средний", "high": "Высокий"}
+PLAN_KINDS = {"service": "Плановое ТО", "verify": "Поверка", "check": "Технический осмотр"}
+PURCHASE_STATUS = {"draft": "Черновик", "pending": "На согласовании", "approved": "Согласовано", "rejected": "Отклонено",
+                   "bought": "Куплено"}
+FUNDING = {"own": "Собственные средства", "credit": "Кредит", "leasing": "Лизинг", "other": "Другое"}
 # 3.14 «карточка материала»: its own number (МТ-0001, as the equipment's inventory number), the details of the mockup,
 # the orders to suppliers («в пути»), the documents and photos, the analogs
 MAT_FIRST = "МТ-0001"
@@ -247,6 +300,9 @@ def amortization(e, month=None):
            "salvage": round(float(e.get("salvage") or 0), 2), "in_service": e.get("in_service") or e.get("purchase_date") or "",
            "monthly": 0.0, "accumulated": 0.0, "residual": cost, "months_done": 0, "months_left": 0, "first": "", "last": "",
            "percent": 0.0, "done": False, "stopped": ""}
+    if e.get("accounting") == "qty":  # 3.15: counted by quantity, without depreciation
+        out["qty"] = True
+        return out
     if not (cost > 0 and n > 0 and start is not None):
         return out
     base = max(0.0, cost - min(out["salvage"], cost))
@@ -292,7 +348,7 @@ def amort_schedule(e):
 
 def on_books(e) -> bool:
     """3.14: the piece is the clinic's own (or in leasing) — its depreciation and disposal go into the P&L."""
-    return (e.get("ownership") or "own") not in OFF_BOOKS
+    return (e.get("ownership") or "own") not in OFF_BOOKS and e.get("accounting") != "qty"
 
 
 def amort_month(db, month):
@@ -342,6 +398,10 @@ class Stock:
             ecols = {r[1] for r in db.conn.execute("PRAGMA table_info(equipment)")}
             for col in ("photo_id TEXT", "in_service TEXT", "useful_months INTEGER", "salvage REAL DEFAULT 0", "amort_method TEXT",
                         *EQ_NEW_COLS):  # 3.13: the equipment card
+                if col.split()[0] not in ecols:
+                    db.conn.execute(f"ALTER TABLE equipment ADD COLUMN {col}")
+            ecols = {r[1] for r in db.conn.execute("PRAGMA table_info(equipment)")}
+            for col in EQ_NEW_COLS_315:  # 3.15: the accounting, someone else's property, the journals
                 if col.split()[0] not in ecols:
                     db.conn.execute(f"ALTER TABLE equipment ADD COLUMN {col}")
             if "data" not in {r[1] for r in db.conn.execute("PRAGMA table_info(equipment_events)")}:  # 3.13: inventory details
@@ -1599,7 +1659,18 @@ class Stock:
         cond = f.get("condition") if f.get("condition") in EQ_CONDITION else (o.get("condition") or "ok")
         own = f.get("ownership") if f.get("ownership") in EQ_OWNERSHIP else (o.get("ownership") or "own")
         extra = {"manufacturer": keep("manufacturer", cut(100)), "ownership": own, "condition": cond, "location_id": lid,
-                 "replace_date": keep("replace_date", lambda v: _day(v, "Плановая дата замены") if v else "")}
+                 "replace_date": keep("replace_date", lambda v: _day(v, "Плановая дата замены") if v else ""),
+                 # 3.15: the accounting, someone else's property and its contract, the person responsible, the quantity
+                 "contractor": keep("contractor", cut(200)), "contract_no": keep("contract_no", cut(60)),
+                 "use_start": keep("use_start", lambda v: _day(v, "Начало использования") if v else ""),
+                 "use_end": keep("use_end", lambda v: _day(v, "Окончание использования") if v else ""),
+                 "responsible_login": keep("responsible_login", cut(60)),
+                 "qty": max(1, int(_num(f.get("qty"), "Количество") or 1)) if "qty" in f else (o.get("qty") or 1)}
+        if money:  # the way it is accounted for changes its depreciation: only with «Бухгалтерия»
+            acc = f.get("accounting") if f.get("accounting") in EQ_ACCOUNTING else (o.get("accounting") or "amort")
+            extra["accounting"] = acc
+        elif not old:
+            extra["accounting"] = "amort"
         if money:
             for k, title in (("market_value", "Рыночная стоимость"), ("replace_cost", "Стоимость замены"),
                              ("reserve_monthly", "Резерв на обновление")):
@@ -1743,6 +1814,70 @@ class Stock:
 
     def next_inv(self):
         return self._next_inv()
+
+    # ------------------------------------------- 3.15: «Справочники и настройки» --
+    def _setting(self, k, default):
+        r = self.db.one("SELECT v FROM stock_settings WHERE k=?", (k,))
+        try:
+            v = json.loads(r["v"]) if r and r["v"] else default
+        except ValueError:
+            v = default
+        return v if isinstance(v, type(default)) else default
+
+    def _set_setting(self, c, k, v):
+        c.execute("""INSERT INTO stock_settings(k, v, updated_at) VALUES(?,?,?)
+                     ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_at=excluded.updated_at""", (k, json.dumps(v, ensure_ascii=False), _now()))
+
+    def eq_categories(self):
+        """The clinic's list of categories (by default the 13 of the mockups) and those already used in the cards."""
+        own = [str(x) for x in self._setting("eq_categories", []) if str(x).strip()] or list(EQ_CATS)
+        used = [r["category"] for r in self.db.q("SELECT DISTINCT category FROM equipment WHERE COALESCE(category,'')<>''")]
+        return list(dict.fromkeys(own + sorted(x for x in used if x not in own)))
+
+    def eq_life(self):
+        """The usual useful life by category, in months: a hint in the card (the term itself is always set by hand)."""
+        life = dict(EQ_LIFE)
+        for k, v in self._setting("eq_life", {}).items():
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= n <= MAX_USEFUL_MONTHS:
+                life[str(k)] = n
+        return {k: v for k, v in life.items() if v}
+
+    def eq_refs(self):
+        cats = self.eq_categories()
+        counts = {r["category"] or "": r["n"] for r in self.db.q(
+            "SELECT category, COUNT(*) AS n FROM equipment WHERE status<>'written_off' GROUP BY category")}
+        life = self.eq_life()
+        return {"categories": [{"name": c, "count": counts.get(c, 0), "life": life.get(c, 0)} for c in cats],
+                "ownership": EQ_OWNERSHIP, "accounting": EQ_ACCOUNTING, "conditions": EQ_CONDITION, "statuses": EQ_STATUS,
+                "disposals": EQ_DISPOSAL, "receipt_docs": RECEIPT_DOCS, "move_reasons": MOVE_REASONS, "req_kinds": REQ_KINDS,
+                "priorities": PRIORITY, "plan_kinds": PLAN_KINDS, "funding": FUNDING, "chair_hours": self.chair_hours()}
+
+    def eq_refs_save(self, f):
+        """Categories in their order and the usual useful life of each (months; 0 — none)."""
+        f = f if isinstance(f, dict) else {}
+        out_c, out_l = None, None
+        if "categories" in f:
+            cats = list(dict.fromkeys(_clean(x, 100) for x in (f.get("categories") or []) if _clean(x, 100)))
+            if not cats:
+                raise ValueError("Оставьте хотя бы одну категорию")
+            out_c = cats[:60]
+        if "life" in f:
+            out_l = {}
+            for k, v in (f.get("life") or {}).items():
+                n = int(_num(v, "Срок службы") or 0)
+                if not 0 <= n <= MAX_USEFUL_MONTHS:
+                    raise ValueError("Срок службы — от 0 до 600 месяцев")
+                out_l[_clean(k, 100)] = n
+        with self.db.tx() as c:
+            if out_c is not None:
+                self._set_setting(c, "eq_categories", out_c)
+            if out_l is not None:
+                self._set_setting(c, "eq_life", out_l)
+        return self.eq_refs()
 
     def chair_hours(self):
         try:
@@ -1960,16 +2095,16 @@ class Stock:
         kind = f.get("kind") if f.get("kind") in EQ_DISPOSAL else "writeoff"
         reason = _clean(f.get("reason"), 500)
         if not reason:
-            raise ValueError({"writeoff": "Укажите причину списания", "sale": "Укажите покупателя и основание продажи",
+            raise ValueError({"writeoff": "Укажите причину списания", "utilize": "Укажите причину утилизации",
+                              "sale": "Укажите покупателя и основание продажи", "transfer": "Укажите, кому и по какому договору передано",
                               "return": "Укажите, кому и по какому документу возвращено"}[kind])
         commission = [_clean(x, 150) for x in (f.get("commission") or []) if _clean(x)]
-        if kind == "writeoff" and len(commission) < 2:
+        if kind in ("writeoff", "utilize") and len(commission) < 2:
             raise ValueError("Укажите председателя и хотя бы одного члена комиссии")
         day = _day(f.get("date"), "Дата") if f.get("date") else date.today().isoformat()
-        act = ""
-        if kind == "writeoff":
-            n = self.db.one("SELECT COUNT(*) AS n FROM equipment WHERE status='written_off' AND COALESCE(disposal_kind,'writeoff')='writeoff'")["n"] + 1
-            act = _clean(f.get("act_number"), 30) or str(n)
+        # 3.15: every disposal has its act, numbered on among all the acts of disposal (writeoff, utilization, sale, transfer)
+        n = self.db.one("SELECT COUNT(*) AS n FROM equipment WHERE status='written_off' AND COALESCE(writeoff_act,'')<>''")["n"] + 1
+        act = _clean(f.get("act_number"), 30) or str(n) if kind in ("writeoff", "utilize", "transfer") else ""
         # 3.14: the book value is the depreciation's as of the day of the disposal (not of today — a disposal entered later)
         book = amortization({**e, "status": "written_off", "writeoff_date": day})["residual"]
         if money:
@@ -1977,12 +2112,16 @@ class Stock:
             amount = max(0, _num(f.get("amount"), "Сумма продажи")) if kind == "sale" else 0
         else:  # without «Бухгалтерия» the book value is the depreciation's, the price of a sale is not taken
             residual, amount = book, 0
-        text = {"writeoff": f"Акт № {act}: {reason}", "sale": f"Продано: {reason}", "return": f"Возвращено владельцу: {reason}"}[kind]
+        text = {"writeoff": f"Акт списания № {act}: {reason}", "utilize": f"Акт утилизации № {act}: {reason}",
+                "sale": f"Продано: {reason}", "transfer": f"Акт передачи № {act}: {reason}",
+                "return": f"Возвращено владельцу: {reason}"}[kind]
         with self.db.tx() as c:
             c.execute("""UPDATE equipment SET status='written_off', writeoff_date=?, writeoff_reason=?, writeoff_act=?,
-                         writeoff_commission=?, residual=?, disposal_kind=?, disposal_amount=? WHERE id=?""",
-                      (day, reason, act, json.dumps(commission, ensure_ascii=False), residual, kind, amount, e["id"]))
-            self._ev(c, e["id"], "writeoff" if kind == "writeoff" else "disposal", text, user, day)
+                         writeoff_commission=?, residual=?, disposal_kind=?, disposal_amount=?, disposal_responsible=?,
+                         disposal_basis=? WHERE id=?""",
+                      (day, reason, act, json.dumps(commission, ensure_ascii=False), residual, kind, amount,
+                       _clean(f.get("responsible"), 150), _clean(f.get("basis"), 200), e["id"]))
+            self._ev(c, e["id"], "writeoff" if kind in ("writeoff", "utilize") else "disposal", text, user, day)
         return e["id"]
 
     def write_off_equipment(self, f, user="", money=True):
