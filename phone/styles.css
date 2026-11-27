@@ -154,3 +154,10 @@ textarea.inp{min-height:84px;resize:vertical}
 .ev{padding:11px 14px;border-top:1px solid var(--line2)}
 .ev:first-child{border-top:0}
 .ev small{display:block;color:var(--muted);font-size:12px}
+/* small helpers instead of style="" (the CSP lets in only this file's styles) */
+.mt6{margin-top:6px!important} .mt8{margin-top:8px!important} .mt10{margin-top:10px!important} .mt16{margin-top:16px!important} .mt18{margin-top:18px!important}
+.mb10{margin-bottom:10px!important} .mb12{margin-bottom:12px!important} .my10{margin:10px 0!important}
+.c-ok{color:var(--ok)!important} .c-warn{color:var(--warn)!important} .c-bad{color:var(--bad)!important} .c-ink2{color:var(--ink2)!important} .c-brand{color:#4FC5B8!important}
+.chips{display:flex!important;gap:6px!important;flex-wrap:wrap!important;margin-top:10px!important}
+.fld.check{display:flex!important;gap:10px!important;align-items:center!important} .fld.check>span{margin:0!important} .fld.check input{width:22px!important;height:22px!important}
+.btn.short{min-height:40px!important}

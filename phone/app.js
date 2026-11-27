@@ -124,15 +124,17 @@ async function sync(loud) {
   } finally { S.syncing = false; badge(); }
 }
 
+const busy = new Set();  // ops on their way right now: a sync started meanwhile must not send them a second time
 async function flush() {
   for (const q of [...S.queue].sort((a, b) => a.at - b.at)) {
-    if (q.error) continue;
+    if (q.error || busy.has(q.op)) continue;
+    busy.add(q.op);
     try { await call("/p/op", q.body, "session"); await dropQ(q.op); }
     catch (e) {
       if (e.net || e.status === 401 || e.status >= 500) throw e;
       q.error = e.message; await idbPut("queue", [q]);
       toast(`«${q.title}» не прошло: ${e.message}`, true);
-    }
+    } finally { busy.delete(q.op); }
   }
 }
 async function dropQ(op) { S.queue = S.queue.filter((q) => q.op !== op); await idbDel("queue", [op]); badge(); }
@@ -141,7 +143,7 @@ async function dropQ(op) { S.queue = S.queue.filter((q) => q.op !== op); await i
 async function doOp(body, title) {
   body.op = opId();
   const q = { op: body.op, body, title, at: Date.now() };
-  S.queue.push(q); await idbPut("queue", [q]); badge();
+  S.queue.push(q); busy.add(q.op); await idbPut("queue", [q]); badge();
   try {
     const r = await call("/p/op", body, "session");
     await dropQ(q.op);
@@ -149,21 +151,27 @@ async function doOp(body, title) {
     sync();
     return r;
   } catch (e) {
+    // no answer: it stays in the queue with the same id, so a repeat is done once even if the cloud already did it
     if (e.net) { toast("Нет связи — операция сохранена и уйдёт сама, когда появится сеть"); return { queued: true }; }
+    if (e.status >= 500) { toast("Облако склада не ответило — операция в очереди и повторится сама"); return { queued: true }; }
     await dropQ(q.op);
     if (!signedOut(e)) throw e;
     return null;
-  }
+  } finally { busy.delete(q.op); }
 }
 
 /* ------------------------------------------------------------------------------------------------ the data */
 const idOf = (k) => { try { return JSON.parse(k)[0]; } catch { return k; } };
 function index() {
-  D = { mats: new Map(), bar: new Map(), eq: new Map(), inv: new Map(), locs: new Map(), sups: new Map(), docs: new Map(),
+  D = { mats: new Map(), bar: new Map(), num: new Map(), eq: new Map(), inv: new Map(), locs: new Map(), sups: new Map(), docs: new Map(),
     moves: [], mv: new Map(), lots: [], reqs: [], aps: [], ev: new Map(), set: new Map(), bal: new Map() };
   for (const { t, k, row } of S.rows.values()) {
     const id = idOf(k);
-    if (t === "materials") { D.mats.set(id, row); if (row.barcode && Number(row.active ?? 1)) D.bar.set(String(row.barcode), id); }
+    if (t === "materials") {
+      D.mats.set(id, row);
+      if (row.barcode && Number(row.active ?? 1)) D.bar.set(String(row.barcode), id);
+      if (row.number) D.num.set(String(row.number).toUpperCase(), id);  // 3.14: the label's number «МТ-0147»
+    }
     else if (t === "equipment") { D.eq.set(id, row); if (row.inv_number) D.inv.set(String(row.inv_number), id); }
     else if (t === "stock_locations") D.locs.set(id, row);
     else if (t === "suppliers") D.sups.set(id, row);
@@ -249,7 +257,7 @@ function page(title, body, opt = {}) {
   window.scrollTo(0, 0);
 }
 function gate(body) { stopCam(); app.className = "bare"; app.innerHTML = `<div class="gate">${body}</div>`; }
-const brand = () => `<div class="brand"><i>${ico("scan").replace('class="ico"', 'class="ico" style="color:#4FC5B8"')}</i>Склад клиники${S.clinic ? " · " + esc(S.clinic) : ""}</div>`;
+const brand = () => `<div class="brand"><i>${ico("scan").replace('class="ico"', 'class="ico c-brand"')}</i>Склад клиники${S.clinic ? " · " + esc(S.clinic) : ""}</div>`;
 const empty = (b, s = "") => `<div class="list"><div class="empty"><b>${esc(b)}</b>${esc(s)}</div></div>`;
 function sheet(html, bind) {
   const s = document.createElement("div");
@@ -294,7 +302,7 @@ async function viewWho() {
     <div class="list">${S.staff.length ? S.staff.map((u, i) => `<button class="row" data-u="${i}"><span class="t"><b>${esc(u.name || u.login)}</b>
       <small>${esc(u.role_title || "")}</small></span>›</button>`).join("") : `<div class="empty"><b>Нет сотрудников с ПИН-кодом</b>
       Задайте ПИН в программе на компьютере: Мой профиль → ПИН для телефона.</div>`}</div>
-    <p class="small muted" style="margin-top:18px">Не та клиника? <a href="#" id="other">Подключить другую</a></p>`);
+    <p class="small muted mt18">Не та клиника? <a href="#" id="other">Подключить другую</a></p>`);
   draw();
   $$("[data-u]").forEach((b) => (b.onclick = () => { S.pick = S.staff[+b.dataset.u]; go("#/pin"); }));
   $("#other").onclick = async (e) => { e.preventDefault(); await call("/p/leave", {}, "device").catch(() => {}); await forget(); route(); };
@@ -410,11 +418,14 @@ function bindCam(el, onCode) {
   $("[data-manual]", el).onclick = () => { const c = prompt("Штрихкод, инвентарный номер или код материала"); if (c && c.trim()) onCode(c.trim()); };
 }
 
-/* what a code is: a label link /e/<инв. №>, a barcode of a material, an inventory number, a code of a material */
+/* what a code is: a label link /e/<инв. №> or /m/<номер материала>, a barcode of a material, an inventory number,
+   the number or the code of a material */
 function resolve(code) {
-  const s = String(code).trim(), m = s.match(/\/e\/([^/?#\s]+)/);
+  const s = String(code).trim(), m = s.match(/\/e\/([^/?#\s]+)/), mm = s.match(/\/m\/([^/?#\s]+)/);
+  if (mm) { const n = D.num.get(decodeURIComponent(mm[1]).toUpperCase()); return n ? { t: "m", id: n } : null; }
   const inv = m ? decodeURIComponent(m[1]) : s;
   if (D.inv.has(inv)) return { t: "e", id: D.inv.get(inv) };
+  if (D.num.has(s.toUpperCase())) return { t: "m", id: D.num.get(s.toUpperCase()) };
   if (D.bar.has(s)) return { t: "m", id: D.bar.get(s) };
   const byCode = activeMats().find((x) => x.code && String(x.code).toLowerCase() === s.toLowerCase());
   if (byCode) return { t: "m", id: byCode.id };
@@ -428,6 +439,8 @@ function viewScan() {
 function found(code) {
   const r = resolve(code);
   if (r) return go(r.t === "e" ? `#/e/${encodeURIComponent(r.id)}` : `#/m/${encodeURIComponent(r.id)}`);
+  const own = `#/inv/${encodeURIComponent(code)}`;  // its own address, so a redraw after a sync keeps this screen
+  if (location.hash !== own) return go(own);
   page("Код не найден", `<div class="tag"><div class="code">${esc(code)}</div><h2>Такого кода нет в справочнике</h2>
       <p>Это не штрихкод материала и не этикетка оборудования клиники.</p></div>
     ${can("barcode") ? `<button class="btn" id="bind">Привязать к материалу</button>` : `<div class="note">Привязать штрихкод к материалу может менеджер склада.</div>`}
@@ -442,14 +455,14 @@ function found(code) {
 function matRow(m, loc) {
   const t = loc === undefined ? total(m.id) : at(m.id, loc), lowq = Number(m.min_qty) > 0 && total(m.id) < Number(m.min_qty);
   return `<a class="row" href="#/m/${encodeURIComponent(m.id)}"><span class="t"><b>${esc(m.name)}</b><small>${esc([m.code, m.category].filter(Boolean).join(" · "))}</small></span>
-    <span class="n" style="${lowq ? "color:var(--warn)" : ""}">${qty(t)} <small>${esc(m.unit || "")}</small></span></a>`;
+    <span class="n${lowq ? " c-warn" : ""}">${qty(t)} <small>${esc(m.unit || "")}</small></span></a>`;
 }
 function viewStock(qs) {
   const f = qs.get("f") || "", term = (S.term || "").toLowerCase();
   let list = f === "low" ? low() : activeMats();
   if (term) list = list.filter((m) => [m.name, m.code, m.barcode, m.category].some((x) => String(x || "").toLowerCase().includes(term)));
   page("Склад", `<input id="q" class="inp" type="search" placeholder="Название, код или штрихкод" value="${esc(S.term || "")}">
-    <div class="seg" style="margin:10px 0"><button data-f="" class="${f ? "" : "on"}">Все</button><button data-f="low" class="${f === "low" ? "on" : ""}">Ниже минимума</button>
+    <div class="seg my10"><button data-f="" class="${f ? "" : "on"}">Все</button><button data-f="low" class="${f === "low" ? "on" : ""}">Ниже минимума</button>
       <button data-f="exp">Сроки</button></div>
     ${list.length ? `<div class="list">${list.slice(0, 300).map((m) => matRow(m)).join("")}</div>` : empty(f === "low" ? "Всё выше минимума" : "Ничего не найдено", term ? "Проверьте название или отсканируйте штрихкод." : "")}`, { tab: "#/stock" });
   const q = $("#q");
@@ -468,7 +481,7 @@ function viewMaterial(id) {
   const ref = `?m=${encodeURIComponent(id)}`;
   page("Материал", `<div class="tag"><div class="code">${esc([m.code, m.barcode].filter(Boolean).join(" · ") || "без кода")}</div><h2>${esc(m.name)}</h2>
       <p>${esc([m.category, m.unit].filter(Boolean).join(" · "))}</p>
-      <div class="big"><b style="${Number(m.min_qty) > 0 && t < Number(m.min_qty) ? "color:var(--warn)" : ""}">${qty(t)}</b><span>${esc(m.unit || "")} на складе${Number(m.min_qty) > 0 ? ` · минимум ${qty(m.min_qty)}` : ""}</span></div></div>
+      <div class="big"><b class="${Number(m.min_qty) > 0 && t < Number(m.min_qty) ? "c-warn" : ""}">${qty(t)}</b><span>${esc(m.unit || "")} на складе${Number(m.min_qty) > 0 ? ` · минимум ${qty(m.min_qty)}` : ""}</span></div></div>
     <div class="acts">${can("use") ? act("#/do/use" + ref, "Расход") : ""}${can("use") ? act("#/do/writeoff" + ref, "Списать") : ""}
       ${can("receive") ? act("#/do/receive" + ref, "Приход") : ""}${can("request") ? act("#/do/request" + ref, "В заявку") : ""}
       ${can("transfer") ? act("#/do/transfer" + ref, "Выдать в кабинет") : ""}${can("barcode") ? `<button class="btn ghost" id="bar">${m.barcode ? "Заменить штрихкод" : "Привязать штрихкод"}</button>` : ""}</div>
@@ -481,7 +494,7 @@ function viewMaterial(id) {
     <div class="sec">Движение</div>
     ${mv.length ? `<div class="list">${mv.map((x) => `<div class="row"><span class="t"><b>${MOVE[x.kind] || esc(x.kind)}${x.reason && x.kind !== "receipt" ? " · " + esc(x.reason) : ""}</b>
       <small>${fmtDate((x.at || "").slice(0, 10))} · ${esc(placeName(x.location_id))} · ${esc(x.user_name || "")}</small></span>
-      <span class="n" style="color:${x.qty > 0 ? "var(--ok)" : "var(--ink2)"}">${x.qty > 0 ? "+" : ""}${qty(x.qty)}</span></div>`).join("")}</div>` : empty("Движений ещё не было")}
+      <span class="n ${x.qty > 0 ? "c-ok" : "c-ink2"}">${x.qty > 0 ? "+" : ""}${qty(x.qty)}</span></div>`).join("")}</div>` : empty("Движений ещё не было")}
     ${can("money") && m.price ? `<p class="small muted">Цена по последней закупке: ${money(m.price)}</p>` : ""}`, { back: true });
   const b = $("#bar");
   if (b) b.onclick = () => sheet(`<h3>Отсканируйте штрихкод упаковки</h3>${camHtml}<button class="btn ghost" data-close>Отмена</button>`, (el, close) =>
@@ -549,7 +562,7 @@ function viewForm(kind, qs) {
   const lineHtml = (l, i) => {
     const m = D.mats.get(l.material_id) || { name: "?", unit: "" }, have = at(l.material_id, src);
     const over = kind !== "receive" && kind !== "request" && Number(l.qty) > have;
-    return `<div class="line"><span><b>${esc(m.name)}</b><small style="${over ? "color:var(--bad)" : ""}">${kind === "receive" ? "сейчас " + qty(total(l.material_id), m.unit) : "в наличии " + qty(have, m.unit)}</small></span>
+    return `<div class="line"><span><b>${esc(m.name)}</b><small class="${over ? "c-bad" : ""}">${kind === "receive" ? "сейчас " + qty(total(l.material_id), m.unit) : "в наличии " + qty(have, m.unit)}</small></span>
       <input class="inp" inputmode="decimal" data-l="${i}" data-k="qty" value="${esc(l.qty)}" placeholder="кол-во" aria-label="Количество">
       <button class="x" data-del="${i}" aria-label="Убрать">×</button>
       ${kind === "receive" ? `<div class="more"><input class="inp" inputmode="decimal" data-l="${i}" data-k="price" value="${esc(l.price ?? "")}" placeholder="цена, ₽">
@@ -562,18 +575,18 @@ function viewForm(kind, qs) {
       .map((s) => `<option value="${esc(s.id)}" ${s.id === F.supplier_id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
       <label class="fld"><span>Номер накладной</span><input class="inp" data-f="number" value="${esc(F.number)}"></label>` : ""}
     ${kind === "writeoff" ? `<div class="fld"><span>Причина</span><div class="seg">${REASONS.map((r) => `<button data-reason="${esc(r)}" class="${F.reason === r ? "on" : ""}">${r}</button>`).join("")}</div>
-      <input class="inp" style="margin-top:8px" data-f="reason" value="${esc(F.reason)}" placeholder="или напишите свою"></div>` : ""}
+      <input class="inp mt8" data-f="reason" value="${esc(F.reason)}" placeholder="или напишите свою"></div>` : ""}
     ${kind === "request" ? `<div class="fld"><span>Срочность</span><div class="seg">${[["normal", "Обычная"], ["urgent", "Срочно"], ["critical", "Критично"]]
       .map(([v, l]) => `<button data-pr="${v}" class="${F.priority === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
       <label class="fld"><span>Нужно к дате</span><input class="inp" type="date" data-f="need_date" value="${esc(F.need_date)}"></label>` : ""}
     <div class="sec">Материалы</div>
     <div class="list">${F.lines.map(lineHtml).join("") || '<div class="empty">Добавьте материал — из списка или сканером</div>'}</div>
-    <button class="btn ghost" id="add" style="margin-top:10px">+ Добавить материал</button>
+    <button class="btn ghost mt10" id="add">+ Добавить материал</button>
     <label class="fld"><span>Комментарий</span><textarea class="inp" data-f="comment">${esc(F.comment)}</textarea></label>
     ${kind === "use" && !can("direct") ? `<div class="note">Расход уйдёт менеджеру склада на согласование и спишется после проверки.</div>` : ""}
     ${kind === "writeoff" && !can("direct") ? `<div class="note">Списание уйдёт менеджеру склада на согласование.</div>` : ""}
     <div id="ferr" class="note bad" hidden></div>
-    <button class="btn" id="send" style="margin-top:6px">${cfg.btn}</button>`, { back: true });
+    <button class="btn mt6" id="send">${cfg.btn}</button>`, { back: true });
   $$("[data-f]").forEach((el) => (el.onchange = el.oninput = () => { F[el.dataset.f] = el.value; if (el.tagName === "SELECT") viewForm(kind, new URLSearchParams()); }));
   $$("[data-l]").forEach((el) => (el.oninput = () => { F.lines[+el.dataset.l][el.dataset.k] = el.value; }));
   $$("[data-del]").forEach((b) => (b.onclick = () => { F.lines.splice(+b.dataset.del, 1); viewForm(kind, new URLSearchParams()); }));
@@ -632,12 +645,12 @@ function viewReqs() {
     const h = can("handle_requests"), op = ["new", "accepted", "partial"].includes(r.status);
     return `<div class="ev"><b>Заявка № ${esc(r.number || "—")} · ${esc(placeName(r.location_id))}</b> ${chip(RQ_ST, r.status)}${r.priority !== "normal" ? ` <span class="chip bad">${r.priority === "critical" ? "критично" : "срочно"}</span>` : ""}
       <small>${esc(r.created_name || r.created_by)} · ${when(r.created_at)}${r.need_date ? " · нужно к " + fmtDate(r.need_date) : ""}</small>
-      <div class="small" style="margin-top:6px">${lines}</div>${r.comment ? `<small>${esc(r.comment)}</small>` : ""}${r.answer ? `<small>Ответ: ${esc(r.answer)}</small>` : ""}
+      <div class="small mt6">${lines}</div>${r.comment ? `<small>${esc(r.comment)}</small>` : ""}${r.answer ? `<small>Ответ: ${esc(r.answer)}</small>` : ""}
       ${op && (h || (mine(r) && r.status === "new")) ? `<div class="acts">${h && can("transfer") ? `<a class="btn" href="#/do/transfer?new=1&rq=${encodeURIComponent(r.id)}">Выдать</a>` : ""}
         ${h && r.status === "new" ? `<button class="btn soft" data-acc="${esc(r.id)}">Принять</button>` : ""}${h ? `<button class="btn bad" data-rej="${esc(r.id)}">Отклонить</button>` : ""}
         ${mine(r) && r.status === "new" ? `<button class="btn ghost" data-can="${esc(r.id)}">Отменить</button>` : ""}</div>` : ""}</div>`;
   };
-  page(can("handle_requests") ? "Заявки из кабинетов" : "Мои заявки", `${can("request") ? `<a class="btn soft" href="#/do/request?new=1" style="margin-bottom:12px">Новая заявка</a>` : ""}
+  page(can("handle_requests") ? "Заявки из кабинетов" : "Мои заявки", `${can("request") ? `<a class="btn soft mb12" href="#/do/request?new=1">Новая заявка</a>` : ""}
     ${open.length ? `<div class="list">${open.map(card).join("")}</div>` : empty("Открытых заявок нет")}
     ${rest.length ? `<div class="sec">Недавние</div><div class="list">${rest.map(card).join("")}</div>` : ""}`, { back: true });
   const act = (sel, fn) => $$(sel).forEach((b) => (b.onclick = async () => { b.disabled = true; try { await fn(b); } catch (e) { toast(e.message, true); b.disabled = false; } }));
@@ -654,7 +667,7 @@ function viewEqList() {
   const term = (S.eterm || "").toLowerCase();
   const list = [...D.eq.values()].filter((e) => e.status !== "written_off" && (!term || [e.name, e.model, e.inv_number, e.serial, e.location].some((x) => String(x || "").toLowerCase().includes(term))))
     .sort((a, b) => String(a.inv_number || "").localeCompare(String(b.inv_number || ""), "ru", { numeric: true }));
-  page("Оборудование", `<input id="q" class="inp" type="search" placeholder="Название, инв. № или кабинет" value="${esc(S.eterm || "")}" style="margin-bottom:10px">
+  page("Оборудование", `<input id="q" class="inp mb10" type="search" placeholder="Название, инв. № или кабинет" value="${esc(S.eterm || "")}">
     ${list.length ? `<div class="list">${list.map((e) => `<a class="row" href="#/e/${encodeURIComponent(e.id)}"><span class="t"><b>${esc(e.name)}</b><small><span class="mono">${esc(e.inv_number || "")}</span> · ${esc(e.location || "место не указано")}</small></span>${chip(EQ_ST, e.status)}</a>`).join("")}</div>` : empty("Ничего не найдено")}`, { tab: "#/eq" });
   const q = $("#q");
   q.oninput = () => { S.eterm = q.value; clearTimeout(S.tq); S.tq = setTimeout(() => { viewEqList(); const n = $("#q"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
@@ -672,9 +685,9 @@ function viewEq(id) {
   const ns = e.next_service ? days(e.next_service) : null;
   page("Оборудование", `<div class="tag"><div class="code">ИНВ. № ${esc(e.inv_number || "—")}${e.serial ? " · S/N " + esc(e.serial) : ""}</div><h2>${esc(e.name)}</h2>
       <p>${esc([e.model, e.category].filter(Boolean).join(" · "))}</p>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${chip(EQ_ST, e.status)}${chip(EQ_CO, e.condition || "ok")}</div></div>
+      <div class="chips">${chip(EQ_ST, e.status)}${chip(EQ_CO, e.condition || "ok")}</div></div>
     <dl class="kv"><dt>Где</dt><dd>${esc(e.location || "—")}</dd><dt>Ответственный</dt><dd>${esc(e.responsible || "—")}</dd>
-      <dt>Следующее ТО</dt><dd style="${ns !== null && ns <= SOON ? `color:var(--${ns < 0 ? "bad" : "warn"})` : ""}">${e.next_service ? fmtDate(e.next_service) : "—"}</dd>
+      <dt>Следующее ТО</dt><dd class="${ns !== null && ns <= SOON ? (ns < 0 ? "c-bad" : "c-warn") : ""}">${e.next_service ? fmtDate(e.next_service) : "—"}</dd>
       ${can("money") && e.price ? `<dt>Стоимость</dt><dd>${money(e.price)}</dd>` : ""}</dl>
     ${ed ? `<div class="acts"><button class="btn" id="inv">На месте</button><button class="btn soft" id="state">Состояние и место</button>
       <button class="btn soft" id="svc">Записать ТО или ремонт</button><button class="btn ghost" id="lost">Не найдено</button></div>` : ""}
@@ -691,7 +704,8 @@ function viewEq(id) {
     <div class="fld"><span>Статус</span>${segs("status", EQ_ST, e.status)}</div>
     <label class="fld"><span>Где стоит</span><select class="inp" id="sl"><option value="">— как сейчас: ${esc(e.location || "не указано")} —</option>
       ${[...D.locs.values()].filter((p) => Number(p.active ?? 1)).map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></label>
-    <label class="fld"><span>Комментарий</span><input class="inp" id="st"></label><button class="btn" id="ss">Сохранить</button>`, (el, close) => {
+    <label class="fld"><span>Комментарий</span><input class="inp" id="st"></label><button class="btn" id="ss">Сохранить</button>
+    <button class="btn ghost mt8" data-close>Отмена</button>`, (el, close) => {
     bindSeg(el);
     $("#ss", el).onclick = () => { const b = { kind: "equipment_set", condition: segVal(el, "condition"), status: segVal(el, "status"), text: $("#st", el).value };
       if ($("#sl", el).value) b.location_id = $("#sl", el).value; close(); run(b, "Оборудование"); };
@@ -700,8 +714,8 @@ function viewEq(id) {
     <label class="fld"><span>Описание</span><textarea class="inp" id="et" placeholder="Например: замена фильтров, калибровка"></textarea></label>
     ${can("money") ? `<label class="fld"><span>Стоимость, ₽</span><input class="inp" id="ec" inputmode="decimal"></label>` : ""}
     <label class="fld"><span>Следующее ТО</span><input class="inp" type="date" id="en" value="${esc(e.next_service || "")}"></label>
-    ${e.status === "repair" ? `<label class="fld" style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="eb" checked style="width:22px;height:22px"><span style="margin:0">Вернуть в работу — исправно</span></label>` : ""}
-    <button class="btn" id="es">Записать</button>`, (el, close) => {
+    ${e.status === "repair" ? `<label class="fld check"><input type="checkbox" id="eb" checked><span>Вернуть в работу — исправно</span></label>` : ""}
+    <button class="btn" id="es">Записать</button><button class="btn ghost mt8" data-close>Отмена</button>`, (el, close) => {
     bindSeg(el);
     $("#es", el).onclick = () => {
       const text = $("#et", el).value.trim();
@@ -721,12 +735,12 @@ function viewMe() {
       <dt>Материалов</dt><dd>${D.mats.size}</dd><dt>Оборудования</dt><dd>${D.eq.size}</dd></dl>
     ${S.queue.length ? `<div class="sec">Очередь операций</div><div class="list">${S.queue.map((q) => `<div class="ev"><b>${esc(q.title)}</b>
       <small>${new Date(q.at).toLocaleString("ru-RU")}${q.error ? " · не прошло: " + esc(q.error) : " · ждёт связи"}</small>
-      <button class="btn ghost" data-drop="${esc(q.op)}" style="margin-top:8px;min-height:40px">Убрать из очереди</button></div>`).join("")}</div>` : ""}
-    <div class="acts" style="margin-top:16px"><button class="btn soft" id="upd">Обновить данные</button><button class="btn ghost" id="out">Выйти</button></div>
+      <button class="btn ghost mt8 short" data-drop="${esc(q.op)}">Убрать из очереди</button></div>`).join("")}</div>` : ""}
+    <div class="acts mt16"><button class="btn soft" id="upd">Обновить данные</button><button class="btn ghost" id="out">Выйти</button></div>
     <button class="btn bad" id="leave">Отключить телефон от клиники</button>
     <p class="small muted">Выйти — вернуться к выбору сотрудника и ПИН-коду. Отключить — стереть данные склада с этого телефона.</p>`, { tab: "#/me" });
   $("#upd").onclick = () => sync(true);
-  $("#out").onclick = async () => { await call("/p/logout", {}, "session").catch(() => {}); S.session = null; LS.del("session"); go("#/who"); };
+  $("#out").onclick = () => { call("/p/logout", {}, "session").catch(() => {}); S.session = null; LS.del("session"); go("#/who"); };
   $("#leave").onclick = async () => {
     if (!confirm("Отключить телефон? Данные склада на нём будут стёрты, для входа снова понадобится код клиники.")) return;
     await call("/p/leave", {}, "device").catch(() => {}); await forget(); go("#/");
@@ -737,7 +751,10 @@ function viewMe() {
 /* ------------------------------------------------------------------------------------------------ router */
 function route() {
   const h = location.hash.slice(1) || "/", [path, qstr] = h.split("?"), qs = new URLSearchParams(qstr || ""), p = path.split("/").filter(Boolean);
-  if (!S.device) return viewCode();
+  if (!S.device) {
+    if (["inv", "mat", "e", "m"].includes(p[0])) S.after = location.hash;  // a label scanned before the phone was connected
+    return viewCode();
+  }
   if (p[0] === "who") return viewWho();
   if (!S.session) {
     if (p[0] && p[0] !== "pin") S.after = location.hash;  // a label scanned before signing in opens after the PIN
@@ -752,6 +769,7 @@ function route() {
     case "m": return viewMaterial(id);
     case "e": return viewEq(id);
     case "inv": { const e = D.inv.get(id); return e ? location.replace(`#/e/${encodeURIComponent(e)}`) : found(id); }
+    case "mat": { const m = D.num.get(id.toUpperCase()); return m ? location.replace(`#/m/${encodeURIComponent(m)}`) : found(id); }
     case "eq": return viewEqList();
     case "svc": return viewSvc();
     case "exp": return viewExp();
@@ -772,6 +790,7 @@ async function boot() {
   // /e/<инв. №> from the QR label and /j#<код клиники> from the QR in the program
   const path = location.pathname;
   if (path.startsWith("/e/")) history.replaceState(null, "", "/#/inv/" + path.slice(3).split("/")[0]);
+  else if (path.startsWith("/m/")) history.replaceState(null, "", "/#/mat/" + path.slice(3).split("/")[0]);
   else if (path === "/j" || path === "/j/") {
     const code = decodeURIComponent(location.hash.slice(1)).toUpperCase().replace(/[^A-Z0-9]/g, "");
     history.replaceState(null, "", "/#/");

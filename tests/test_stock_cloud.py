@@ -333,6 +333,23 @@ def live():
     check("live: the nurse sends a request", code_ == 200 and rq.get("id", "").startswith("RQ-"), rq)
     _, again = post("/p/op", {"op": f"lt{run}-req-0001", "kind": "request", "lines": [{"material_id": m0, "qty": 2}]}, hs)
     check("live: the same operation twice is done once", again.get("repeated") and again.get("id") == rq.get("id"), again)
+    # two copies at once (a sync on the phone sent the op again while the first was still running): done once
+    import threading
+    twin = {"op": f"lt{run}-req-0002", "kind": "request", "comment": "live twin", "lines": [{"material_id": m0, "qty": 1}]}
+    twins = []
+
+    def send_twin():
+        x = requests.post(P + "/p/op", json=twin, headers=hs, timeout=60)
+        twins.append((x.status_code, x.json()))
+    ts = [threading.Thread(target=send_twin) for _ in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    _, plt = post("/p/pull", {"since": 0}, hs)
+    made = [x for x in plt.get("rows", []) if x["t"] == "stock_requests" and (x["row"] or {}).get("comment") == "live twin"]
+    check("live: two copies of an operation at once are done once",
+          len(made) == 1 and sorted(c for c, _ in twins) in ([200, 200], [200, 503]), (twins, len(made)))
     code_, use = post("/p/op", {"op": f"lt{run}-use-0001", "kind": "use", "lines": [{"material_id": m0, "qty": 1}]}, hs)
     check("live: the nurse's use waits for approval", code_ == 200 and use.get("status") == "pending", use)
     code_, no = post("/p/op", {"op": f"lt{run}-dec-0001", "kind": "decide", "id": use.get("id"), "action": "approve"}, hs)

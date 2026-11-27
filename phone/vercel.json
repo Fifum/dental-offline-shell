@@ -3,6 +3,7 @@
   "trailingSlash": false,
   "rewrites": [
     {"source": "/e/:inv*", "destination": "/index.html"},
+    {"source": "/m/:num*", "destination": "/index.html"},
     {"source": "/j", "destination": "/index.html"}
   ],
   "headers": [

@@ -1,5 +1,5 @@
 /* The app works without the network: its files are kept here, the data is in IndexedDB (app.js). */
-const V = "dd-stock-1";
+const V = "dd-stock-4";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/config.js", "/manifest.webmanifest", "/icons/icon.svg",
   "/icons/icon-192.png", "/fonts/inter-latin-400-normal.woff2", "/fonts/inter-cyrillic-400-normal.woff2",
   "/fonts/inter-latin-600-normal.woff2", "/fonts/inter-cyrillic-600-normal.woff2", "/fonts/inter-latin-700-normal.woff2",
@@ -17,10 +17,11 @@ self.addEventListener("fetch", (e) => {
         .catch(() => caches.match("/index.html")));
       return;
     }
-    e.respondWith(caches.match(r).then((hit) => {
-      const net = fetch(r).then((x) => { if (x.ok) { const c = x.clone(); caches.open(V).then((k) => k.put(r, c)); } return x; });
-      return hit || net;
-    }));
+    // the app's files: the network first (a new version works at the first open), the cache without the network;
+    // fonts and icons do not change — from the cache
+    const fresh = () => fetch(r).then((x) => { if (x.ok) { const c = x.clone(); caches.open(V).then((k) => k.put(r, c)); } return x; });
+    e.respondWith(/^\/(fonts|icons)\//.test(u.pathname) ? caches.match(r).then((hit) => hit || fresh())
+      : fresh().catch(() => caches.match(r)));
   } else if (/(^|\.)jsdelivr\.net$/.test(u.hostname)) {
     // the scanner polyfill and its wasm: versioned URLs, kept forever
     e.respondWith(caches.match(r).then((hit) => hit || fetch(r).then((x) => {

@@ -766,11 +766,21 @@ async function op(ctx: Ctx, f: any) {
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new E("Неверная операция");
   const fn = OPS[f.kind];
   if (!fn) throw new E("Неизвестная операция");
-  const [done] = await sql`select result from dd.ops where tenant_id = ${ctx.tenant.id} and id = ${id}`;
-  if (done) return { ...done.result, repeated: true };   // the phone sent it again after a lost answer
-  const res = await fn(ctx, f);
-  await sql`insert into dd.ops(tenant_id, id, login, kind, result) values (${ctx.tenant.id}, ${id}, ${ctx.user.login}, ${f.kind},
-            ${sql.json(res)}::jsonb) on conflict do nothing`;
+  // the id is claimed first (one insert wins), so two copies sent at once — a repeat while the first is still running — run once
+  const claim = await sql`insert into dd.ops(tenant_id, id, login, kind) values (${ctx.tenant.id}, ${id}, ${ctx.user.login}, ${f.kind})
+                          on conflict do nothing returning id`;
+  if (!claim.length) {
+    const [d] = await sql`select result, at < now() - interval '2 minutes' as old from dd.ops where tenant_id = ${ctx.tenant.id} and id = ${id}`;
+    if (d?.result) return { ...d.result, repeated: true };   // the phone sent it again after a lost answer
+    if (!d || !d.old) throw new E("Операция ещё выполняется — повторю позже", 503);  // (no row: the first copy failed, a retry runs it)
+    throw new E("Операция не завершилась — проверьте данные и сделайте её заново", 409);
+  }
+  let res;
+  try { res = await fn(ctx, f); } catch (e) {
+    await sql`delete from dd.ops where tenant_id = ${ctx.tenant.id} and id = ${id} and result is null`.catch(() => {});
+    throw e;
+  }
+  await sql`update dd.ops set result = ${sql.json(res ?? {})}::jsonb where tenant_id = ${ctx.tenant.id} and id = ${id}`;
   return res;
 }
 
