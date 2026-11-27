@@ -35,3 +35,26 @@ body.no-export [data-xls]{display:none!important}
 .nodoc-row .fl.inline .input{width:auto}
 .nodoc-row .muted{font-size:12px}
 .warn-t{color:var(--warn-ink,var(--warn))}
+
+/* 3.13 «Мой профиль» (menu with the name) and the phone PIN in «Сотрудники» */
+.prof{display:flex;flex-direction:column;gap:14px}
+.prof-top{display:flex;align-items:center;gap:14px}
+.prof-top .av{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);font-weight:700;font-size:17px;flex:none}
+.prof-top div{display:flex;flex-direction:column;gap:2px}
+.prof-top b{font-size:17px;font-weight:700}
+.prof-top small{font-size:13px;color:var(--ink2)}
+.prof-sec{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel2)}
+.prof-sec h4{margin:0;font-size:14.5px;font-weight:700}
+.prof-sec .hint{margin:0;font-size:13px;line-height:1.45;color:var(--ink2)}
+.prof-row{display:flex;align-items:center;gap:10px;min-height:34px;font-size:14px}
+.prof-row>span{flex:1}
+.prof-row>b{font-weight:600;color:var(--ink2)}
+.prof-ask{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
+.prof-ask label{display:flex;flex-direction:column;gap:4px;font-size:13px;flex:1;min-width:200px}
+.prof-warn{font-size:12.5px}
+.prof-pin{display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px;border-radius:12px;background:var(--panel);border:1px dashed var(--accent-line);text-align:center}
+.prof-pin small{font-size:13px;color:var(--ink2)}
+.prof-pin b{font-size:36px;font-weight:700;letter-spacing:.12em;font-variant-numeric:tabular-nums;color:var(--accent-ink)}
+.prof-pin span{font-size:12.5px;color:var(--ink2);max-width:420px}
+.se-phone{padding:8px 0 0;border-top:1px solid var(--line2)}
+.se-phone small{font-size:12px}

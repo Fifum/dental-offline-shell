@@ -86,6 +86,8 @@ ROLES = {
     "assistant": {"title": "Ассистент", "perms": ["schedule_view", "patients_view", "medcard_view", "stock_view", "sterilization", "export"]},
     # 3.10.1: the nurse's write-offs are approved by the administrator (and the director), not by the storekeeper
     "storekeeper": {"title": "Кладовщик", "perms": ["stock_view", "stock_edit", "equipment", "export"]},
+    # 3.13: the stock manager takes the cabinets' requests, checks and approves what the nurses write off, receives and counts
+    "stock_manager": {"title": "Менеджер склада", "perms": ["stock_view", "stock_edit", "stock_approve", "export"]},
     # 3.10: the nurse takes deliveries, issues to the cabinets and records what was used; a write-off waits for approval
     "nurse": {"title": "Медсестра", "perms": ["schedule_view", "patients_view", "stock_view", "stock_ops", "sterilization", "export"]},
 }
@@ -317,7 +319,7 @@ METHOD_PERMS = {
     "stock_requests": ("stock_view", "stock_edit", "stock_ops", "stock_approve"),
     "stock_request": ("stock_view", "stock_edit", "stock_ops", "stock_approve"),
     "stock_request_save": ("stock_edit", "stock_ops"), "stock_request_cancel": ("stock_edit", "stock_ops", "stock_approve"),
-    "stock_request_reject": ("stock_edit", "stock_approve"),
+    "stock_request_reject": ("stock_edit", "stock_approve"), "stock_request_accept": ("stock_edit", "stock_approve"),
     "stock_use": ("stock_edit", "stock_ops"), "stock_use_options": ("stock_edit", "stock_ops"),
     "stock_approvals": ("stock_edit", "stock_ops", "stock_approve"), "stock_approval": ("stock_edit", "stock_ops", "stock_approve"),
     "stock_approval_decide": "stock_approve", "stock_approval_cancel": ("stock_edit", "stock_ops", "stock_approve"),
@@ -434,7 +436,7 @@ AUDITED = {
     "equipment_doc_add": "Документ оборудования", "equipment_doc_delete": "Документ оборудования убран",
     "equipment_settings_save": "Часы работы кресла в месяц",
     "stock_request_save": "Заявка на выдачу материалов", "stock_request_cancel": "Заявка на материалы отменена",
-    "stock_request_reject": "Заявка на материалы отклонена", "stock_use": "Расход материалов (медсестра — на согласование)",
+    "stock_request_reject": "Заявка на материалы отклонена", "stock_request_accept": "Заявка на материалы принята", "stock_use": "Расход материалов (медсестра — на согласование)",
     "stock_approval_decide": "Согласование списания материалов", "stock_approval_cancel": "Отмена списания на согласовании",
     "stock_photo_set": "Фото материала или оборудования", "stock_photo_clear": "Фото материала или оборудования убрано",
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
@@ -487,6 +489,13 @@ SESSION_IDLE = timedelta(hours=12)
 PBKDF2_ROUNDS = 240_000
 MAX_FAILS, LOCK_SECONDS = 5, 60
 PIN_MAX_FAILS = 5
+PHONE_PIN_LEN = 6  # 3.13: the PIN of the stock app on a phone
+
+
+def _weak_pin(pin: str) -> bool:
+    """Same digits, a run up or down («123456», «987654») or a repeated pair/triple («121212», «123123»)."""
+    return (len(set(pin)) <= 2 or pin in "01234567890123" or pin in "98765432109876"
+            or pin[:3] == pin[3:] or pin[:2] * 3 == pin)
 
 
 class AuthError(Exception):
@@ -546,7 +555,8 @@ class Auth:
         _DB["db"] = db
         db.script(SCHEMA)
         have = {r[1] for r in db.conn.execute("PRAGMA table_info(users)")}
-        for col in ("pin_hash TEXT", "pin_fails INTEGER DEFAULT 0"):  # quick sign-in on a shared computer
+        for col in ("pin_hash TEXT", "pin_fails INTEGER DEFAULT 0",  # quick sign-in on a shared computer
+                    "phone_pin_hash TEXT", "phone_pin_at TEXT"):  # 3.13: the personal PIN of the stock app on a phone
             if col.split()[0] not in have:
                 db.conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
         # 3.7.2: before, «Проверка подключения» wrote the API login and password into the journal — wipe them
@@ -580,6 +590,7 @@ class Auth:
                 "role": u.get("role") or "", "role_title": (roles().get(u.get("role") or "") or {}).get("title", ""),
                 "status": u["status"], "doctor_id": u.get("doctor_id"), "custom_perms": bool(u.get("perms")),
                 "has_pin": bool(u.get("pin_hash")),
+                "has_phone_pin": bool(u.get("phone_pin_hash")), "phone_pin_at": u.get("phone_pin_at") or "",
                 "perms": self.effective_perms(u), "created_at": u.get("created_at"), "last_login": u.get("last_login")}
 
     def log(self, user, action, detail="", ip=""):
@@ -753,6 +764,37 @@ class Auth:
         with self.db.tx() as c:
             c.execute("UPDATE users SET pin_hash=NULL, pin_fails=0 WHERE id=?", (user["id"],))
         self.log(user, "ПИН-код отключён")
+        return True
+
+    # ---------------------------------------------- 3.13: the PIN of the phone --
+    def new_phone_pin(self, user, password):
+        """The personal PIN of the stock app on a phone: 6 random digits, shown once — only its hash is kept (and goes to the
+        other computers and, later, to the cloud of the stock, which checks it). A new one replaces the old one."""
+        if not check_password(str(password or ""), user["pass_hash"]):
+            raise AuthError("Пароль указан неверно", 400)
+        while True:
+            pin = f"{secrets.randbelow(10 ** PHONE_PIN_LEN):0{PHONE_PIN_LEN}d}"
+            if not _weak_pin(pin):
+                break
+        at = _now()
+        with self.db.tx() as c:
+            c.execute("UPDATE users SET phone_pin_hash=?, phone_pin_at=? WHERE id=?", (hash_password(pin), at, user["id"]))
+        self.log(user, "ПИН-код телефона " + ("изменён" if user.get("phone_pin_hash") else "создан"))
+        return {"pin": pin, "at": at}
+
+    def staff_phone_pin_reset(self, actor, uid):
+        """The director takes the phone PIN away (a lost phone, a PIN someone saw); the employee makes a new one."""
+        try:
+            u = self.db.one("SELECT * FROM users WHERE id=?", (int(uid),))
+        except (TypeError, ValueError):
+            u = None
+        if not u:
+            raise AuthError("Сотрудник не найден", 404)
+        if self._not_director(actor) and u["role"] == "director":
+            raise AuthError("ПИН-код директора может сбросить только директор", 403)
+        with self.db.tx() as c:
+            c.execute("UPDATE users SET phone_pin_hash=NULL, phone_pin_at=NULL WHERE id=?", (u["id"],))
+        self.log(actor, "Сброс ПИН-кода телефона", u["name"])
         return True
 
     def logout(self, token):

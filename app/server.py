@@ -157,6 +157,8 @@ class ClinicServer:
             return a.set_pin(user, *(list(args) + ["", ""])[:2])
         if name == "clear_pin":
             return a.clear_pin(user)
+        if name == "phone_pin_new":  # 3.13: the personal PIN of the stock app on a phone
+            return a.new_phone_pin(user, args[0] if args else "")
         if "staff" not in a.effective_perms(user):
             raise AuthError("Раздел «Сотрудники» доступен только директору", 403)
         if name == "staff_list":
@@ -167,6 +169,8 @@ class ClinicServer:
             return a.staff_reject(user, args[0])
         if name == "staff_reset_password":
             return a.staff_reset_password(user, args[0], args[1] if len(args) > 1 else "")
+        if name == "staff_phone_pin_reset":
+            return a.staff_phone_pin_reset(user, args[0] if args else 0)
         if name == "audit_list":
             return a.audit_list(*args[:3])
         if name == "roles_list":    # 2.14: positions and what each may see and do

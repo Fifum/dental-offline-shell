@@ -32,11 +32,12 @@ CREATE INDEX IF NOT EXISTS ix_sappr_status ON stock_approvals(status);
 """
 
 PRIORITY = {"normal": "Обычный", "urgent": "Срочный", "critical": "Критический"}
-REQ_STATUS = {"draft": "Черновик", "new": "Новая", "partial": "Выдана частично", "done": "Выдана", "rejected": "Отклонена",
+REQ_STATUS = {"draft": "Черновик", "new": "Новая", "accepted": "Принята", "partial": "Выдана частично", "done": "Выдана", "rejected": "Отклонена",
               "cancelled": "Отменена"}
 USE_KIND = {"consume": "Расход в лечении", "writeoff": "Списание"}
 APPR_STATUS = {"draft": "Черновик", "pending": "На согласовании", "approved": "Согласовано", "rejected": "Отклонено",
                "cancelled": "Отменено", "done": "Списано"}
+OPEN = ("new", "accepted", "partial")   # requests still to be issued (3.13: «Принята» — the manager took it into work)
 CONSUME_REASON = "Расход в лечении"
 STAT_DAYS = (7, 30, 90, 365)
 
@@ -62,6 +63,10 @@ class StockFlow:
         self.db, self.stock, self.files = db, stock, files
         with db._lock:
             db.conn.executescript(SCHEMA)
+            have = {r[1] for r in db.conn.execute("PRAGMA table_info(stock_requests)")}
+            for col in ("accepted_by TEXT", "accepted_name TEXT", "accepted_at TEXT"):  # 3.13: who took the request into work
+                if col.split()[0] not in have:
+                    db.conn.execute(f"ALTER TABLE stock_requests ADD COLUMN {col}")
             db.conn.commit()
 
     # ------------------------------------------------------------ helpers --
@@ -129,7 +134,7 @@ class StockFlow:
         """Requests, the open ones first. `status`: 'open' (new + partial), one status, or all; `mine_login` — only one's own."""
         sql, args = "SELECT * FROM stock_requests WHERE 1=1", []
         if status == "open":
-            sql += " AND status IN ('new','partial')"
+            sql += " AND status IN ('new','accepted','partial')"
         elif status:
             sql += " AND status=?"
             args.append(status)
@@ -138,7 +143,7 @@ class StockFlow:
             args.append(mine_login)
         else:
             sql += " AND status<>'draft'"  # someone else's draft is not a request yet
-        sql += """ ORDER BY CASE status WHEN 'new' THEN 0 WHEN 'partial' THEN 1 WHEN 'draft' THEN 2 ELSE 3 END,
+        sql += """ ORDER BY CASE status WHEN 'new' THEN 0 WHEN 'accepted' THEN 1 WHEN 'partial' THEN 2 WHEN 'draft' THEN 3 ELSE 4 END,
                    CASE priority WHEN 'critical' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END, COALESCE(sent_at, created_at) DESC LIMIT ?"""
         mats, names = self._mats(), self.stock._loc_names()
         return [self._req_row(r, mats, names) for r in self.db.q(sql, (*args, int(limit)))]
@@ -199,8 +204,9 @@ class StockFlow:
             raise ValueError("Заявка не найдена")
         if r["created_by"] != login and not may_any:
             raise ValueError("Отменить можно только свою заявку")
-        if r["status"] not in ("draft", "new"):
-            raise ValueError(f"Заявка уже {REQ_STATUS.get(r['status'], r['status']).lower()} — отменить её нельзя")
+        if r["status"] not in (("draft", "new", "accepted") if may_any else ("draft", "new")):
+            raise ValueError(f"Заявка уже {REQ_STATUS.get(r['status'], r['status']).lower()} — отменить её нельзя"
+                             + (". Попросите менеджера склада" if r["status"] == "accepted" else ""))
         with self.db.tx() as c:
             c.execute("UPDATE stock_requests SET status='cancelled', updated_at=? WHERE id=?", (_now(), r["id"]))
         return self.request(r["id"])
@@ -209,14 +215,30 @@ class StockFlow:
         r = self.db.one("SELECT * FROM stock_requests WHERE id=?", (str(rid or ""),))
         if not r:
             raise ValueError("Заявка не найдена")
-        if r["status"] not in ("new", "partial"):
-            raise ValueError("Отклонить можно только новую заявку")
+        if r["status"] not in OPEN:
+            raise ValueError("Отклонить можно только заявку, которая ещё не выдана")
         answer = _clean(answer, 300)
         if not answer:
             raise ValueError("Напишите причину — медсестра увидит её в своих заявках")
         with self.db.tx() as c:
             c.execute("""UPDATE stock_requests SET status='rejected', decided_by=?, decided_name=?, decided_at=?, answer=?, updated_at=?
                          WHERE id=?""", (login, name, _now(), answer, _now(), r["id"]))
+        return self.request(r["id"])
+
+    def accept_request(self, rid, login="", name=""):
+        """3.13 «Принята»: the stock manager took a new request into work — the nurse sees it, and it can no longer be cancelled
+        by her alone. Issuing it later («Выдать в кабинет») makes it «выдана» as before."""
+        r = self.db.one("SELECT * FROM stock_requests WHERE id=?", (str(rid or ""),))
+        if not r:
+            raise ValueError("Заявка не найдена")
+        if r["status"] == "accepted":
+            return self.request(r["id"])
+        if r["status"] != "new":
+            raise ValueError(f"Заявка уже {REQ_STATUS.get(r['status'], r['status']).lower()} — принять её нельзя")
+        now = _now()
+        with self.db.tx() as c:
+            c.execute("""UPDATE stock_requests SET status='accepted', accepted_by=?, accepted_name=?, accepted_at=?, updated_at=?
+                         WHERE id=? AND status='new'""", (login, name, now, now, r["id"]))
         return self.request(r["id"])
 
     def issued(self, request_ids, doc_id, lines):
@@ -229,7 +251,7 @@ class StockFlow:
         out = []
         for rid in list(dict.fromkeys(str(x) for x in request_ids or [] if x)):
             r = self.db.one("SELECT * FROM stock_requests WHERE id=?", (rid,))
-            if not r or r["status"] not in ("new", "partial"):
+            if not r or r["status"] not in OPEN:
                 continue
             issued, docs = _loads(r["issued"], {}), _loads(r["doc_ids"], [])
             for ln in _loads(r["lines"], []):
@@ -419,7 +441,7 @@ class StockFlow:
     def counts(self, login=None, approver=False, issuer=False):
         """Numbers for the badges: what waits for this person — approvals for a manager, requests for whoever issues."""
         one = lambda sql, *a: self.db.one(sql, a)["n"]  # noqa: E731
-        out = {"my_requests": one("SELECT COUNT(*) AS n FROM stock_requests WHERE created_by=? AND status IN ('new','partial')", login or ""),
+        out = {"my_requests": one("SELECT COUNT(*) AS n FROM stock_requests WHERE created_by=? AND status IN ('new','accepted','partial')", login or ""),
                "my_pending": one("SELECT COUNT(*) AS n FROM stock_approvals WHERE created_by=? AND status='pending'", login or ""),
                "my_drafts": one("SELECT COUNT(*) AS n FROM stock_requests WHERE created_by=? AND status='draft'", login or "")
                + one("SELECT COUNT(*) AS n FROM stock_approvals WHERE created_by=? AND status='draft'", login or ""),
@@ -428,7 +450,8 @@ class StockFlow:
         if approver:
             out["to_approve"] = one("SELECT COUNT(*) AS n FROM stock_approvals WHERE status='pending'")
         if approver or issuer:
-            out["to_issue"] = one("SELECT COUNT(*) AS n FROM stock_requests WHERE status IN ('new','partial')")
+            out["to_issue"] = one("SELECT COUNT(*) AS n FROM stock_requests WHERE status IN ('new','accepted','partial')")
+            out["to_accept"] = one("SELECT COUNT(*) AS n FROM stock_requests WHERE status='new'")
         return out
 
     # ========================================================== home screen --
@@ -476,7 +499,8 @@ class StockFlow:
         if cnt.get("to_approve"):
             tasks.append({"key": "approve", "title": "Согласовать списания", "sub": f"ждут решения: {cnt['to_approve']}", "count": cnt["to_approve"]})
         if cnt.get("to_issue"):
-            tasks.append({"key": "issue", "title": "Выдать по заявкам", "sub": f"заявок из кабинетов: {cnt['to_issue']}", "count": cnt["to_issue"]})
+            tasks.append({"key": "issue", "title": "Выдать по заявкам", "count": cnt["to_issue"],
+                          "sub": f"заявок из кабинетов: {cnt['to_issue']}" + (f", новых: {cnt['to_accept']}" if cnt.get("to_accept") else "")})
         if ops and any(x["state"] == "expired" for x in soon):
             n = len({x["material_id"] for x in soon if x["state"] == "expired"})
             tasks.append({"key": "expired", "title": "Убрать просроченное", "sub": f"материалов с истёкшим сроком: {n}", "count": n})

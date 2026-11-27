@@ -406,6 +406,11 @@ class Api:
         _, login, _, _, all_ = self._stock_rights()
         return self._sflow.cancel_request(rid, login, all_)
 
+    def stock_request_accept(self, rid):
+        """3.13: the stock manager takes a new request into work («Принята»)."""
+        _, login, name, _, _ = self._stock_rights()
+        return self._sflow.accept_request(rid, login, name)
+
     def stock_request_reject(self, rid, answer=""):
         _, login, name, _, _ = self._stock_rights()
         return self._sflow.reject_request(rid, answer, login, name)

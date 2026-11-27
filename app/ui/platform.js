@@ -9,7 +9,7 @@ const PL_FIELDS = {comment: "Комментарий", phone: "Телефон", n
   text: "Текст", discount: "Скидка", doctor_id: "Врач", patient_id: "Пациент", detail: "Карточка пациента", data: "Данные",
   method: "Способ оплаты", qty: "Количество", date: "Дата", body: "Текст шаблона", html: "Текст документа", work: "Работа",
   teeth: "Зубы", shade: "Цвет", due_date: "Срок", min_qty: "Минимальный остаток", chair: "Кресло", plan_status: "Статус плана",
-  role: "Роль", perms: "Права", pass_hash: "Пароль", pin_hash: "ПИН-код", position: "Должность", active: "Активен"};
+  role: "Роль", perms: "Права", pass_hash: "Пароль", pin_hash: "ПИН-код", phone_pin_hash: "ПИН телефона", phone_pin_at: "ПИН телефона создан", position: "Должность", active: "Активен"};
 const plField = f => PL_FIELDS[f] || f;
 
 function loadPlatformSettings() { loadCloudPanel(); loadUpdatePanel(); loadImportPanel(); }
@@ -387,6 +387,43 @@ $("#ucPin").onclick = () => {
   const off = $("#pnOff", box);
   if (off) off.onclick = async () => { await authApi.clear_pin(); ME.has_pin = false; closeModal(); toast("Вход по ПИН-коду отключён"); };
 };
+/* 3.13 «Мой профиль»: who I am, how I sign in here, and my personal PIN of the stock app on a phone (shown once) */
+const STOCK_PERMS = ["stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment"];
+$("#ucProfile").onclick = () => openMyProfile();
+async function openMyProfile() {
+  try { const st = await authApi.state(); if (st.user) ME = {...ME, ...st.user}; } catch (e) { /* the menu works with what it has */ }
+  const u = ME || {}, stockUser = (u.perms || []).some(p => STOCK_PERMS.includes(p));
+  const box = modal(`<div class="m-h"><h3>Мой профиль</h3><button class="x" data-close>×</button></div>
+    <div class="m-b prof">
+      <div class="prof-top"><span class="av">${esc(initials(u.name))}</span><div><b>${esc(u.name || "")}</b><small>${esc([u.role_title, u.position].filter(Boolean).join(" · "))}</small><small class="muted">Логин: ${esc(u.login || "")}</small></div></div>
+      <section class="prof-sec"><h4>Вход в программу</h4>
+        <div class="prof-row"><span>Пароль</span><b></b><button class="btn ghost small" id="pfPass">Сменить пароль</button></div>
+        <div class="prof-row"><span>ПИН-код на общем компьютере</span><b>${u.has_pin ? "включён" : "не задан"}</b><button class="btn ghost small" id="pfPin">${u.has_pin ? "Изменить" : "Включить"}</button></div></section>
+      <section class="prof-sec"><h4>Телефон: склад и сканер</h4>
+        <p class="hint">Личный ПИН из 6 цифр — для входа в приложение склада на телефоне${stockUser ? "" : " (нужен тем, у кого есть права склада)"}. Программа придумает его сама и покажет один раз: запишите или запомните. Сменить можно в любой момент; если телефон потерян — директор сбросит ПИН в «Сотрудниках».</p>
+        <div class="prof-row"><span>ПИН телефона</span><b id="pfPhoneSt">${u.has_phone_pin ? "создан " + esc(fmtDT(u.phone_pin_at)) : "не создан"}</b><button class="btn small" id="pfPhone">${u.has_phone_pin ? "Сменить ПИН" : "Создать ПИН"}</button></div>
+        <div id="pfPhoneBox"></div></section></div>
+    <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Закрыть</button></div>`);
+  $("#pfPass", box).onclick = () => { closeModal(); $("#ucPass").onclick(); };
+  $("#pfPin", box).onclick = () => { closeModal(); $("#ucPin").onclick(); };
+  $("#pfPhone", box).onclick = () => {
+    const pb = $("#pfPhoneBox", box);
+    pb.innerHTML = `<div class="prof-ask"><label>Ваш пароль от программы<input class="input" type="password" id="pfPw" autocomplete="current-password"></label>
+      <button class="btn" id="pfGo">${u.has_phone_pin ? "Сменить и показать" : "Создать и показать"}</button></div>
+      ${u.has_phone_pin ? `<div class="muted prof-warn">Старый ПИН перестанет работать сразу.</div>` : ""}<div class="auth-err" id="pfErr"></div>`;
+    const pw = $("#pfPw", box); pw.focus();
+    const go = async () => {
+      try {
+        const r = await authApi.phone_pin_new(pw.value);
+        ME.has_phone_pin = true; ME.phone_pin_at = r.at;
+        $("#pfPhoneSt", box).textContent = "создан " + fmtDT(r.at); $("#pfPhone", box).textContent = "Сменить ПИН";
+        pb.innerHTML = `<div class="prof-pin" aria-live="polite"><small>Ваш ПИН телефона</small><b>${esc(r.pin.slice(0, 3))}&nbsp;${esc(r.pin.slice(3))}</b>
+          <span>Он показан один раз — программа хранит только его отпечаток и не сможет показать снова. Закройте окно, когда запомните.</span></div>`;
+      } catch (e) { $("#pfErr", box).textContent = errText(e); }
+    };
+    $("#pfGo", box).onclick = go; pw.onkeydown = e => { if (e.key === "Enter") go(); };
+  };
+}
 $("#ucSwitch").onclick = async () => {
   try { await authApi.logout(); } catch (e) {}
   ME = null; TOKEN = ""; sessionStorage.removeItem(SESSION_KEY);

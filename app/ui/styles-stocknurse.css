@@ -192,6 +192,13 @@ h4 .cnt{margin-left:6px}
 .sn-info dt{color:var(--ink2)}
 .sn-info dd{margin:0;text-align:right;font-weight:600}
 .sn-note{margin-top:8px;font-size:12.5px;color:var(--blue)}
+/* 3.13: a nurse's consumption goes through the stock manager — said at the top of the screen */
+.sn-flow{display:flex;align-items:center;gap:8px 18px;flex-wrap:wrap;padding:11px 16px;border-radius:12px;background:var(--accent-soft);border:1px solid var(--accent-line);font-size:13.5px;color:var(--ink)}
+.sn-flow>b{font-weight:700}
+.sn-flow ol{display:flex;gap:6px 16px;flex-wrap:wrap;margin:0;padding:0;list-style:none}
+.sn-flow li{display:flex;align-items:center;gap:7px}
+.sn-flow li i{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--accent);color:var(--on-graphite,#fff);font-style:normal;font-size:11.5px;font-weight:700;flex:none}
+.sn-flow small{color:var(--ink2);font-size:12.5px}
 .sn-acts{display:flex;flex-direction:column;gap:8px}
 .sn-acts.row{flex-direction:row;justify-content:center;flex-wrap:wrap;margin-top:12px}
 .sn-acts .btn{justify-content:center;height:40px}

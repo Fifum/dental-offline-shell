@@ -213,7 +213,9 @@ CATCHUP_COLS = {"materials": ["photo_id"],
                               # 3.13: the equipment card
                               "manufacturer", "ownership", "condition", "location_id", "market_value", "replace_cost",
                               "replace_date", "reserve_monthly", "disposal_kind", "disposal_amount"],
-                "equipment_events": ["data"]}
+                "equipment_events": ["data"],
+                "users": ["phone_pin_hash", "phone_pin_at"],  # 3.13: the PIN of the stock app on a phone
+                "stock_requests": ["accepted_by", "accepted_name", "accepted_at"]}  # 3.13: «Принята»
 
 
 def _catch_up(conn):
@@ -385,7 +387,7 @@ def _txt(v):
     return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
 
 
-SECRET_COLS = {"pass_hash", "pin_hash", "key_hash", "token_hash"}
+SECRET_COLS = {"pass_hash", "pin_hash", "phone_pin_hash", "key_hash", "token_hash"}
 
 
 def log_conflict(conn, t, k, row, items, other_device, kind="field"):

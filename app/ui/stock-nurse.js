@@ -218,7 +218,7 @@ async function snLotsSub(el) {
 }
 
 /* ------------------------------------------- requests and approvals */
-const REQ_PILL = {draft: "", new: "st-new", partial: "st-come", done: "st-ok", rejected: "st-cancel", cancelled: "st-done"};
+const REQ_PILL = {draft: "", new: "st-new", accepted: "st-come", partial: "st-come", done: "st-ok", rejected: "st-cancel", cancelled: "st-done"};
 const APPR_PILL = {draft: "", pending: "st-come", approved: "st-ok", done: "st-ok", rejected: "st-cancel", cancelled: "st-done"};
 async function snRequestsSub(el) {
   const c = snCan(), all = c.approve || c.edit;
@@ -226,7 +226,7 @@ async function snRequestsSub(el) {
   const myDrafts = all ? [...drafts, ...(await api.stock_requests({mine: true, status: "draft"}))] : [];
   const pend = aps.filter(x => x.status === "pending");
   el.innerHTML = `<div class="sn-panel">
-    ${all ? "" : `<div class="note-box">Расход и списание материалов уходят на согласование менеджеру или директору — остатки изменятся после согласования. Заявки выдаёт кладовщик через «Выдать в кабинет».</div>`}
+    ${all ? "" : `<div class="note-box">Расход и списание материалов уходят на согласование менеджеру склада или директору — остатки изменятся только после согласования. Заявку менеджер сначала принимает («Принята»), потом выдаёт в кабинет.</div>`}
     <h4 class="sn-h">${all ? "Списания на согласовании" : "Мои расходы и списания"}${pend.length ? ` <i class="cnt">${pend.length}</i>` : ""}</h4>
     ${aps.length ? `<table class="tbl sn-tbl compact"><thead><tr><th>Когда</th><th>Что и где</th><th>Материалы</th><th class="num">Сумма</th><th>Статус</th>${c.approve ? "<th></th>" : ""}</tr></thead><tbody>${aps.slice(0, 60).map(x => `<tr data-ap="${esc(x.id)}">
         <td class="nowrap">${fmtDT(x.sent_at || x.created_at)}${all ? `<small class="muted" style="display:block">${esc(x.created_name || x.created_by)}</small>` : ""}</td>
@@ -240,7 +240,7 @@ async function snRequestsSub(el) {
         <td><b>${x.number ? "№ " + esc(x.number) : "—"}</b><small class="muted" style="display:block">${fmtDT(x.sent_at || x.created_at)}</small></td><td>${esc(x.location_name)}</td><td>${x.need_date ? fmtDateShort(x.need_date) : "—"}</td>
         <td><span class="sn-pri ${x.priority}">${esc(x.priority_title)}</span></td><td class="num">${x.positions}</td>${all ? `<td class="muted">${esc(x.created_name || x.created_by)}</td>` : ""}
         <td><span class="pill ${REQ_PILL[x.status] || ""}">${esc(x.status_title)}</span>${x.answer && x.status === "rejected" ? `<small class="bad-t" style="display:block">${esc(x.answer)}</small>` : ""}</td>
-        <td class="nowrap">${["new", "partial"].includes(x.status) && c.issue && all ? `<button class="btn small" data-iss="${esc(x.id)}">Выдать</button>` : ""}</td></tr>`).join("")}</tbody></table>`
+        <td class="nowrap">${x.status === "new" && all ? `<button class="btn ghost small" data-acc="${esc(x.id)}">Принять</button>` : ""}${["new", "accepted", "partial"].includes(x.status) && c.issue && all ? `<button class="btn small" data-iss="${esc(x.id)}">Выдать</button>` : ""}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>Заявок нет</b><span>${c.request ? "«Создать заявку» — запросить материалы со склада в кабинет" : ""}</span></div>`}
     ${myDrafts.length ? `<h4 class="sn-h">Мои черновики</h4><div class="chips">${myDrafts.map(x => `<button class="chip" data-draft="${esc(x.id)}" data-dk="${x.kind ? "use" : "req"}">${x.kind ? esc(x.kind_title) : "Заявка"} · ${esc(x.location_name)} · ${fmtDT(x.updated_at || x.created_at)}</button>`).join("")}</div>` : ""}
   </div>`;
@@ -249,11 +249,17 @@ async function snRequestsSub(el) {
   $$("[data-ok]", el).forEach(b => b.onclick = () => busy(b, () => decideApproval(b.dataset.ok, "approve")));
   $$("[data-no]", el).forEach(b => b.onclick = () => busy(b, () => decideApproval(b.dataset.no, "reject")));
   $$("[data-iss]", el).forEach(b => b.onclick = () => openIssueScreen({requests: [b.dataset.iss]}));
+  $$("[data-acc]", el).forEach(b => b.onclick = () => busy(b, () => acceptRequest(b.dataset.acc)));
   $$("[data-draft]", el).forEach(b => b.onclick = async () => b.dataset.dk === "use" ? openUseScreen({draft: await api.stock_approval(b.dataset.draft)}) : openRequestScreen({draft: await api.stock_request(b.dataset.draft)}));
   if (!all) {  // a nurse's own drafts are in her lists already: open them from there
     $$("tr[data-ap]", el).forEach(tr => { const x = aps.find(a => a.id === tr.dataset.ap); if (x && x.status === "draft") tr.onclick = async () => openUseScreen({draft: await api.stock_approval(x.id)}); });
     $$("tr[data-rq]", el).forEach(tr => { const x = reqs.find(a => a.id === tr.dataset.rq); if (x && x.status === "draft") tr.onclick = async () => openRequestScreen({draft: await api.stock_request(x.id)}); });
   }
+}
+/** 3.13 «Принята»: the stock manager takes a new request into work — the nurse sees it in her requests. */
+async function acceptRequest(id) {
+  try { const r = await api.stock_request_accept(id); toast(`Заявка${r.number ? " № " + r.number : ""} принята`); closeModal(); refreshStatus(); if (S.stockTab === "home") stockHome(); }
+  catch (e) { toast(errText(e), true); }
 }
 async function decideApproval(id, action) {
   let answer = "";
@@ -293,17 +299,19 @@ async function openRequestView(id) {
     <div class="m-b">
       <dl class="kv eq-kv">${[["Статус", `<span class="pill ${REQ_PILL[x.status] || ""}">${esc(x.status_title)}</span>`], ["Нужно к", x.need_date ? fmtDateShort(x.need_date) : ""],
         ["Приоритет", `<span class="sn-pri ${x.priority}">${esc(x.priority_title)}</span>`], ["Кто", esc(x.created_name || x.created_by)], ["Отправлена", fmtDT(x.sent_at)],
+        ["Принята", x.accepted_at ? `${esc(x.accepted_name || x.accepted_by)}, ${fmtDT(x.accepted_at)}` : ""],
         ["Комментарий", esc(x.comment)], ["Ответ", esc(x.answer)]].filter(r => r[1] && String(r[1]).trim() && r[1] !== "—").map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join("")}</dl>
       <table class="tbl sn-tbl compact"><thead><tr><th>Материал</th><th class="num">Нужно</th><th class="num">Выдано</th>${all ? '<th class="num">На складе</th><th class="num">В кабинете</th>' : ""}</tr></thead><tbody>${x.lines.map(l => `<tr>
         <td><div class="sn-mat">${phHtml(l.photo_id)}<span><b>${esc(l.name)}</b><small>${l.code ? "Арт. " + esc(l.code) : ""}</small></span></div></td><td class="num"><b>${qtyFmt(l.qty, l.unit)}</b></td>
         <td class="num ${l.issued >= l.qty ? "ok-t" : ""}">${l.issued ? qtyFmt(l.issued, l.unit) : "—"}</td>${all ? `<td class="num ${l.at_main < l.qty - l.issued ? "bad-t" : ""}">${qtyFmt(l.at_main, l.unit)}</td><td class="num">${qtyFmt(l.at_place, l.unit)}</td>` : ""}</tr>`).join("")}</tbody></table></div>
     <div class="m-f">${["draft", "new"].includes(x.status) && x.created_by === (ME && ME.login) ? `<button class="btn ghost small danger" id="rqCancel">Отменить заявку</button>` : ""}<span class="muted"></span>
       <button class="btn ghost" data-close>Закрыть</button>${x.status === "draft" ? `<button class="btn" id="rqEdit">Продолжить</button>` : ""}
-      ${["new", "partial"].includes(x.status) && all ? `<button class="btn ghost" id="rqNo">Отклонить</button>${c.issue ? `<button class="btn" id="rqIss">Выдать</button>` : ""}` : ""}</div>`, {wide: true});
+      ${["new", "accepted", "partial"].includes(x.status) && all ? `<button class="btn ghost" id="rqNo">Отклонить</button>${x.status === "new" ? `<button class="btn ghost" id="rqAcc">Принять</button>` : ""}${c.issue ? `<button class="btn" id="rqIss">Выдать</button>` : ""}` : ""}</div>`, {wide: true});
   loadThumbs(box);
   const on = (s, fn) => { const b = $(s, box); if (b) b.onclick = () => busy(b, fn); };
   on("#rqEdit", () => { closeModal(); openRequestScreen({draft: x}); });
   on("#rqIss", () => { closeModal(); openIssueScreen({requests: [x.id]}); });
+  on("#rqAcc", () => acceptRequest(x.id));
   on("#rqNo", async () => { const v = await askInput("Отклонить заявку", [{label: "Причина — медсестра увидит её", value: ""}], {ok: "Отклонить", danger: true}); if (!v) return;
     try { await api.stock_request_reject(x.id, v[0]); closeModal(); toast("Заявка отклонена"); stockHome(); } catch (e) { toast(errText(e), true); } });
   on("#rqCancel", async () => { if (!(await ask("Отменить заявку?", {danger: true, ok: "Отменить", cancel: "Не отменять"}))) return; await api.stock_request_cancel(x.id); closeModal(); toast("Заявка отменена"); stockHome(); });
@@ -457,7 +465,7 @@ async function openUseScreen(preset = {}) {
   const load = async () => { st.rows = await api.materials("", false, false, hasPlaces() ? st.location_id : null); st.byId = Object.fromEntries(st.rows.map(m => [m.id, m])); };
   await load();
   const pat = c.patients;
-  snScreen("use", "Зафиксировать расход", c.direct ? "Учёт использования материалов в лечении" : "Учёт использования материалов в лечении · списание после согласования менеджером", `<div class="sn-cols">
+  snScreen("use", "Зафиксировать расход", c.direct ? "Учёт использования материалов в лечении" : "Учёт использования материалов в лечении · списание после согласования менеджером", `${c.direct ? "" : snFlowHtml()}<div class="sn-cols">
     <div class="sn-c1"><section class="sn-card">${snStep(1, "Контекст расхода")}
       <div class="seg sn-kind" id="usKind"><button data-k="consume" title="Материалы, использованные при лечении">Расход</button><button data-k="writeoff" title="Брак, разбитая ампула, истёк срок">Списание</button></div>
       <div class="grid2"><label class="fl">Дата<input class="input" type="date" id="usDate" value="${esc(st.date)}"></label><label class="fl">Время<input class="input" type="time" id="usTime" value="${esc(st.time)}"></label></div>
@@ -520,6 +528,13 @@ async function openUseScreen(preset = {}) {
   };
   $("#usOk").onclick = e => busy(e.currentTarget, send(false));
   $("#usDraft").onclick = e => busy(e.currentTarget, send(true));
+}
+
+/** 3.13: how a nurse's consumption and write-off go — nothing leaves the stock until the stock manager checks it. */
+function snFlowHtml() {
+  return `<div class="sn-flow" role="note"><b>Списание через согласование</b>
+    <ol><li><i>1</i><span>Вы отправляете расход или списание</span></li><li><i>2</i><span>Менеджер склада проверяет, что списано правомерно</span></li>
+      <li><i>3</i><span>Только после согласования материал уходит со склада</span></li></ol><small>Отклонённое вернётся к вам с причиной — во вкладке «Мои заявки».</small></div>`;
 }
 
 /* ---------------------------------------------------- «Выдать в кабинет» */
