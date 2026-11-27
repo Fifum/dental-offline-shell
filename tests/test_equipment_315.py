@@ -407,6 +407,34 @@ for part in ("Планирование закупок", "Исполнение б
              "Стороннее оборудование", "Структура стороннего оборудования", "Контроль сроков", "Условия пользования"):
     check(f"UI: {part}", part in sec)
 
+# ===================================== block 7: documents, analytics, the log --
+a.equipment_doc_add(u["id"], "passport", "Паспорт.pdf", PDF)
+a.equipment_doc_add(u["id"], "contract", "Договор.pdf", PDF)
+dd = a.equipment_all_docs()
+check("every document in one list", sum(1 for x in dd["docs"] if x["equipment_id"] == u["id"]) == 2 and dd["counts"]["passport"] >= 1
+      and dd["docs"][0]["equipment_name"], dd["counts"])
+check("a piece with a passport and a contract is not missing them", not any(m["id"] == u["id"] for m in dd["missing"]))
+check("a piece without them is", any(m["id"] == k and "Технический паспорт" in m["lack"] for m in dd["missing"]))
+check("a warranty that ends within a month", any(w["id"] == e_old and not w["ended"] for w in dd["warranty"]), dd["warranty"])
+an = a.equipment_analytics(ya)
+check("analytics: the year's keep by month", an["keep"] == round(sum(m["service"] + m["repair"] + m["diag"] for m in an["by_month"]), 2) and an["keep"] >= 18000 + 4000)
+check("repairs and works counted", an["repairs"] >= 1 and an["works"] >= 2)
+check("the most expensive to keep first", an["top"] and an["top"][0]["cost"] == max(g["cost"] for g in an["top"]))
+check("the age of the fleet adds up", sum(x["count"] for x in an["ages"]) == sum(1 for x in S.equipment_list("", False)))
+check("money: the year's depreciation and the chair hour", an["amort"] >= 0 and an["chair_hour"] > 0 and abs(an["total"] - an["amort"] - an["keep"]) < 0.02)
+check("without «Бухгалтерия» no depreciation", "amort" not in S.eq_analytics(ya, money=False) and all("amort" not in c for c in S.eq_analytics(ya, money=False)["by_category"]))
+lg = a.equipment_log()
+check("the log of every piece", lg["rows"] and {"move", "repair", "inventory"} <= {x["kind"] for x in lg["rows"]})
+check("the log by kind", all(x["kind"] == "move" for x in a.equipment_log({"kind": "move"})["rows"]))
+check("the log by date", all(x["date"] >= day(1) for x in a.equipment_log({"from": day(1)})["rows"]))
+for k_ in ("equipment_all_docs", "equipment_analytics", "equipment_log"):
+    check(f"{k_} has a right", k_ in auth.METHOD_PERMS)
+sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")
+js = (ROOT / "app" / "ui" / "stock.js").read_text(encoding="utf-8")
+for part in ("Не хватает документов", "Гарантии", "Стоимость содержания по месяцам", "Возраст парка", "Дороже всего в содержании", "Журнал действий"):
+    check(f"UI: {part}", part in sec)
+check("«Ещё» has every section of the mockups", all(t in js for t in ('"eq_purchases"', '"eq_third"', '"disposed"', '"inv"', '"eq_docs"', '"eq_analytics"', '"eq_log"', '"eq_refs"', '"steril"')))
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)

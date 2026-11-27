@@ -2539,6 +2539,113 @@ class Stock:
         return {"rows": rows, "total": len(rows), "kinds": kinds, "titles": {k: EQ_OWNERSHIP[k] for k in self.THIRD},
                 "cost": round(sum(r["price"] for r in rows), 2), "events": ev[:6]}
 
+    # ---------------------------------------------------------- 3.15: «Документы» --
+    def eq_all_docs(self):
+        """Every document of the equipment in one list (passports, contracts, acts, warranties), the warranties that end within a
+        month or have ended, and the pieces without a technical passport or a contract."""
+        t = date.today()
+        today, soon = t.isoformat(), (t + timedelta(days=30)).isoformat()
+        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number, status, warranty_until, photo_id FROM equipment")}
+        docs = []
+        for d in self.db.q("""SELECT d.*, f.ext, f.size FROM equipment_docs d LEFT JOIN patient_files f ON f.id = d.file_id
+                              WHERE d.deleted=0 ORDER BY d.created_at DESC"""):
+            e = eqs.get(d["equipment_id"]) or {}
+            docs.append({**d, "kind_title": EQ_DOC_KINDS.get(d["kind"], d["kind"]), "equipment_name": e.get("name") or "удалённое оборудование",
+                         "inv_number": e.get("inv_number") or "", "image": (d.get("ext") or "") in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")})
+        have = {}
+        for d in docs:
+            have.setdefault(d["equipment_id"], set()).add(d["kind"])
+        live = [e for e in eqs.values() if e["status"] != "written_off"]
+        warr = sorted(({"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "", "date": e["warranty_until"],
+                        "ended": e["warranty_until"] < today} for e in live if e["warranty_until"] and e["warranty_until"] <= soon),
+                      key=lambda x: x["date"])
+        missing = [{"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "",
+                    "lack": [EQ_DOC_KINDS[k] for k in ("passport", "contract") if k not in have.get(e["id"], set())]} for e in live]
+        return {"docs": docs, "kinds": EQ_DOC_KINDS, "counts": {k: sum(1 for d in docs if d["kind"] == k) for k in EQ_DOC_KINDS},
+                "warranty": warr, "missing": [m for m in missing if m["lack"]]}
+
+    # ------------------------------------------------------ 3.15: «Аналитика» --
+    def eq_analytics(self, year=None, money=True):
+        """What the equipment costs to keep: service, repair and diagnostics by month and by category, the most expensive pieces to
+        maintain, the age of the fleet, the depreciation of the year and per chair hour (money only with «Бухгалтерия»)."""
+        t = date.today()
+        y = int(year or t.year)
+        eqs = {e["id"]: e for e in self.db.q("SELECT * FROM equipment")}
+        ev = self.db.q("""SELECT equipment_id, kind, date, cost FROM equipment_events WHERE kind IN ('service','repair','diag')
+                          AND substr(date,1,4)=?""", (str(y),))
+        by_m = [{"month": f"{y}-{m:02d}", "service": 0.0, "repair": 0.0, "diag": 0.0} for m in range(1, 13)]
+        cats, top = {}, {}
+        for x in ev:
+            mi = int(x["date"][5:7]) - 1
+            by_m[mi][x["kind"]] = round(by_m[mi][x["kind"]] + (x["cost"] or 0), 2)
+            e = eqs.get(x["equipment_id"]) or {}
+            c = cats.setdefault(e.get("category") or "Без категории", {"name": e.get("category") or "Без категории", "count": 0, "keep": 0.0,
+                                                                        "repairs": 0, "amort": 0.0})
+            c["keep"] = round(c["keep"] + (x["cost"] or 0), 2)
+            c["repairs"] += 1 if x["kind"] == "repair" else 0
+            g = top.setdefault(x["equipment_id"], {"id": x["equipment_id"], "name": e.get("name") or "—", "inv_number": e.get("inv_number") or "",
+                                                   "cost": 0.0, "repairs": 0, "works": 0})
+            g["cost"] = round(g["cost"] + (x["cost"] or 0), 2)
+            g["works"] += 1
+            g["repairs"] += 1 if x["kind"] == "repair" else 0
+        ages = {"до 2 лет": 0, "3–5 лет": 0, "6–10 лет": 0, "больше 10 лет": 0, "дата не указана": 0}
+        months = [f"{y}-{m:02d}" for m in range(1, 13)]
+        amort_y = 0.0
+        for e in eqs.values():
+            if e["status"] == "written_off":
+                continue
+            c = cats.setdefault(e["category"] or "Без категории", {"name": e["category"] or "Без категории", "count": 0, "keep": 0.0, "repairs": 0, "amort": 0.0})
+            c["count"] += 1
+            if on_books(e):
+                a_ = round(sum(amort_charge(e, m) for m in months), 2)
+                c["amort"] = round(c["amort"] + a_, 2)
+                amort_y += a_
+            d0 = e.get("in_service") or e.get("purchase_date")
+            if not d0:
+                ages["дата не указана"] += 1
+            else:
+                yrs = (t - date.fromisoformat(d0[:10])).days / 365.25
+                ages["до 2 лет" if yrs < 3 else "3–5 лет" if yrs < 6 else "6–10 лет" if yrs < 11 else "больше 10 лет"] += 1
+        keep = round(sum(m["service"] + m["repair"] + m["diag"] for m in by_m), 2)
+        out = {"year": y, "by_month": by_m, "keep": keep, "service": round(sum(m["service"] for m in by_m), 2),
+               "repair": round(sum(m["repair"] for m in by_m), 2), "diag": round(sum(m["diag"] for m in by_m), 2),
+               "repairs": sum(1 for x in ev if x["kind"] == "repair"), "works": len(ev),
+               "by_category": sorted(cats.values(), key=lambda c: (-c["keep"], -c["count"])), "top": sorted(top.values(), key=lambda g: -g["cost"])[:8],
+               "ages": [{"name": k, "count": v} for k, v in ages.items() if v or k != "дата не указана"]}
+        if money:
+            hours = self.chair_hours()
+            out.update(amort=round(amort_y, 2), total=round(amort_y + keep, 2), chair_hours=hours,
+                       chair_hour=round((self.amort_month(t.strftime("%Y-%m")) + keep / 12) / hours, 2) if hours else 0.0)
+        else:
+            for c in out["by_category"]:
+                c.pop("amort", None)
+        return out
+
+    # ------------------------------------------------------ 3.15: «Журнал действий» --
+    def eq_log(self, f=None):
+        """Every event of every piece (put on the books, moved, serviced, repaired, counted, disposed, documents): who and when."""
+        f = f if isinstance(f, dict) else {}
+        sql = """SELECT ev.*, e.name, e.inv_number FROM equipment_events ev LEFT JOIN equipment e ON e.id = ev.equipment_id WHERE 1=1"""
+        args = []
+        if f.get("kind") in EQ_EVENTS:
+            sql += " AND ev.kind=?"
+            args.append(f["kind"])
+        if f.get("from"):
+            sql += " AND ev.date >= ?"
+            args.append(_day(f["from"], "С"))
+        if f.get("to"):
+            sql += " AND ev.date <= ?"
+            args.append(_day(f["to"], "По"))
+        if f.get("user"):
+            sql += " AND ev.user_name=?"
+            args.append(_clean(f["user"], 100))
+        rows = self.db.q(sql + " ORDER BY ev.date DESC, ev.id DESC LIMIT 500", args)
+        for r in rows:
+            r["kind_title"] = EQ_EVENTS.get(r["kind"], r["kind"])
+            r["data"] = None
+        users = [r["u"] for r in self.db.q("SELECT DISTINCT user_name AS u FROM equipment_events WHERE COALESCE(user_name,'')<>'' ORDER BY u")]
+        return {"rows": rows, "kinds": EQ_EVENTS, "users": users}
+
     # ------------------------------------------- 3.15: «Справочники и настройки» --
     def _setting(self, k, default):
         r = self.db.one("SELECT v FROM stock_settings WHERE k=?", (k,))

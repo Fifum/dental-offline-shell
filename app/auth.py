@@ -352,6 +352,8 @@ METHOD_PERMS = {
     "equipment_purchase_status": ("equipment", "equipment_approve"), "equipment_purchase_offer_add": "equipment",
     "equipment_purchase_offer_open": ("equipment", "equipment_approve", "accounting"),
     "equipment_third_party": ("equipment", "stock_view", "equipment_approve"),
+    "equipment_all_docs": ("equipment", "stock_view", "equipment_approve"), "equipment_analytics": ("equipment", "equipment_approve", "accounting"),
+    "equipment_log": ("equipment", "equipment_approve", "staff"),
     # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
     "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
     "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",

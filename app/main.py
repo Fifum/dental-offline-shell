@@ -567,6 +567,15 @@ class Api:
     def equipment_third_party(self):
         return self._stock.eq_third_party()
 
+    def equipment_all_docs(self):
+        return self._stock.eq_all_docs()
+
+    def equipment_analytics(self, year=None):
+        return self._stock.eq_analytics(year, money=self._eq_money())
+
+    def equipment_log(self, f=None):
+        return self._stock.eq_log(f)
+
     def equipment_refs(self):
         """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""
         return self._stock.eq_refs()

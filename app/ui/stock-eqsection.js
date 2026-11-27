@@ -703,3 +703,73 @@ async function eqThirdTab() {
     cond: () => modal(`<div class="m-h"><h3>Условия пользования</h3><button class="x" data-close>×</button></div><div class="m-b"><table class="tbl compact"><thead><tr><th>Оборудование</th><th>Тип</th><th>Владелец</th><th>Договор</th><th>Срок</th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.ownership_title)}</td><td>${esc(x.contractor || "—")}</td><td>${esc(x.contract_no || "—")}</td><td>${x.start ? fmtDateShort(x.start) : "…"} — ${x.end ? fmtDateShort(x.end) : "бессрочно"}</td></tr>`).join("")}</tbody></table><div class="muted eqs-hint">Стороннее оборудование не амортизируется (лизинг — по правилам клиники) и не попадает в выбытие в финотчёте. Платежи по аренде вносятся расходами.</div></div><div class="m-f"><span class="grow"></span><button class="btn" data-close>Закрыть</button></div>`, {wide: true}),
     print: () => { const tb = $("#tpReg"); if (!tb) return toast("Нет данных"); $("#printArea").innerHTML = `<h2>Стороннее оборудование на ${fmtDate(iso(new Date()))}</h2>${tb.outerHTML}`; window.print(); }})[b.dataset.u]());
 }
+
+/* ------------------------------------------------------------ «Документы» */
+async function eqDocsTab() {
+  const body = $("#stockBody");
+  const r = await api.equipment_all_docs(), kind = EQS.docKind || "", q = (EQS.docQ || "").toLowerCase();
+  const rows = r.docs.filter(d => (!kind || d.kind === kind) && (!q || `${d.title} ${d.equipment_name} ${d.inv_number}`.toLowerCase().includes(q)));
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Документы</h2><span class="muted">Паспорта, договоры, акты, гарантии — все документы оборудования клиники</span></div></div>
+    <div class="eqs-tiles">${eqTile(EQX.doc, "Документов", r.docs.length)}${eqTile(EQX.list, "Паспортов", r.counts.passport || 0)}${eqTile(EQX.doc, "Договоров", r.counts.contract || 0)}${eqTile(EQX.warn, "Гарантия истекает", r.warranty.filter(w => !w.ended).length, r.warranty.some(w => !w.ended) ? "warn" : "")}</div>
+    <div class="eqs-g2r"><div class="eqs-col"><div class="eqs-bar2"><div class="eqs-seg eqs-wrap">${[["", `Все (${r.docs.length})`], ...Object.entries(r.kinds).filter(([k]) => r.counts[k]).map(([k, t]) => [k, `${t} (${r.counts[k]})`])].map(([k, t]) => `<button data-k="${k}" class="${k === kind ? "on" : ""}">${esc(t)}</button>`).join("")}</div>
+        <span class="grow"></span><div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="docQ" placeholder="Документ или оборудование" value="${esc(EQS.docQ || "")}"></div></div>
+      <section class="eqs-card eqs-tcard">${rows.length ? `<table class="tbl eqs-reg"><thead><tr><th>Документ</th><th>Вид</th><th>Оборудование</th><th>Добавлен</th><th>Кто</th></tr></thead><tbody>${rows.map(d => `<tr data-d="${esc(d.id)}">
+          <td><button class="linkbtn" data-open="${esc(d.id)}">${d.image ? EQI.ph : EQI.doc}${esc(d.title)}</button></td><td><span class="eqs-cat">${esc(d.kind_title)}</span></td>
+          <td><button class="linkbtn" data-e="${esc(d.equipment_id)}">${esc(d.equipment_name)}</button>${d.inv_number ? ` <small class="muted">${esc(d.inv_number)}</small>` : ""}</td><td>${fmtDT(d.created_at)}</td><td class="muted">${esc(d.created_by || "")}</td></tr>`).join("")}</tbody></table>`
+        : `<div class="empty"><b>Документов нет</b><span>Загружайте их в карточке оборудования, вкладка «Документы»</span></div>`}</section></div>
+      <div class="eqs-side2"><section class="eqs-card"><h3>${EQX.warn}Гарантии</h3>${r.warranty.length ? `<div class="eqs-ev">${r.warranty.map(w => `<button data-e="${esc(w.id)}" class="${w.ended ? "late" : ""}">${EQX.cal}<span><b>${esc(w.name)}</b><small>${esc(w.inv_number)}</small></span><em>${w.ended ? "истекла · " : "до "}${eqShortDate(w.date)}</em></button>`).join("")}</div>` : `<div class="muted">Гарантии в ближайший месяц не истекают</div>`}</section>
+        <section class="eqs-card"><h3>${EQX.doc}Не хватает документов</h3>${r.missing.length ? `<div class="eqs-ev">${r.missing.slice(0, 8).map(m => `<button data-e="${esc(m.id)}">${EQX.doc}<span><b>${esc(m.name)}</b><small>нет: ${esc(m.lack.join(", ").toLowerCase())}</small></span>${EQX.chev}</button>`).join("")}</div>${r.missing.length > 8 ? `<div class="muted eqs-hint">И ещё ${r.missing.length - 8}</div>` : ""}` : `<div class="muted">У всего оборудования есть техпаспорт и договор</div>`}</section></div></div></div>`;
+  $$(".eqs-bar2 .eqs-seg button", body).forEach(b => b.onclick = () => { EQS.docKind = b.dataset.k; eqDocsTab(); });
+  let t; $("#docQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { EQS.docQ = e.target.value; eqDocsTab().then(() => { const i = $("#docQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
+  $$("[data-e]", body).forEach(b => b.onclick = ev => { ev.stopPropagation(); openEquipment(b.dataset.e, "docs"); });
+  $$("[data-open]", body).forEach(b => b.onclick = async ev => { ev.stopPropagation(); try { eqOpenFile(await api.equipment_doc_open(b.dataset.open)); } catch (x) { toast(errText(x), true); } });
+}
+
+/* ------------------------------------------------------------ «Аналитика и отчёты» */
+async function eqAnalyticsTab() {
+  const body = $("#stockBody");
+  EQS.anYear = EQS.anYear || new Date().getFullYear();
+  const r = await api.equipment_analytics(EQS.anYear), mon = r.amort !== undefined;
+  const ms = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+  const top = Math.max(1, ...r.by_month.map(m => m.service + m.repair + m.diag)), maxA = Math.max(1, ...r.ages.map(a => a.count));
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Аналитика и отчёты</h2><span class="muted">Стоимость содержания и эффективность оборудования</span></div><span class="grow"></span>${eqYearSel("anYear", r.year)}
+      <button class="btn ghost" id="anPrint">${EQX.doc}Печать отчёта</button></div>
+    <div class="eqs-tiles eqs-tiles5">${eqTile(EQX.wrench, "Содержание за год", eqMoney(r.keep))}${eqTile(EQX.gear, "Ремонтов", r.repairs, r.repairs ? "warn" : "")}${eqTile(EQX.check, "Работ всего", r.works)}
+      ${mon ? eqTile(EQN.amort, "Амортизация за год", eqMoney(r.amort)) + eqTile(EQX.clock, "Кресло-час (амортизация и содержание)", eqMoney(r.chair_hour)) : eqTile(EQX.coins, "ТО", eqMoney(r.service))}</div>
+    <div class="eqs-g2"><section class="eqs-card"><h3>Стоимость содержания по месяцам</h3><div class="mtc-bars eqs-anbars">${r.by_month.map((m, i) => { const s = m.service + m.repair + m.diag;
+        return `<div class="mtc-bar" title="${ms[i]}: ${eqMoney(s)} — ТО ${eqMoney(m.service)}, ремонт ${eqMoney(m.repair)}, диагностика ${eqMoney(m.diag)}"><i>${["service", "repair", "diag"].map(k => m[k] ? `<u class="${k === "repair" ? "writeoff" : k === "diag" ? "treatment" : "service"}" style="height:${m[k] / top * 100}%"></u>` : "").join("")}</i><b>${s ? eqShortMoney(s).replace(" ₽", "") : ""}</b><small>${ms[i].toLowerCase()}</small></div>`; }).join("")}</div>
+        <div class="mtc-legend"><span class="service">ТО</span><span class="writeoff">Ремонт</span><span class="treatment">Диагностика</span></div></section>
+      <section class="eqs-card"><h3>Возраст парка</h3><div class="eqs-bars">${r.ages.map(a => `<div class="eqs-bar"><span>${esc(a.name)}</span><i><u style="width:${a.count / maxA * 100}%"></u></i><b>${a.count} шт.</b></div>`).join("")}</div>
+        <h3>Дороже всего в содержании</h3>${r.top.length ? `<div class="eqs-ev">${r.top.slice(0, 5).map(g => `<button data-e="${esc(g.id)}">${EQX.wrench}<span><b>${esc(g.name)}</b><small>${esc([g.inv_number, `работ: ${g.works}`, g.repairs ? `ремонтов: ${g.repairs}` : ""].filter(Boolean).join(" · "))}</small></span><em>${eqMoney(g.cost)}</em></button>`).join("")}</div>` : `<div class="muted">Работ с суммой за год не было</div>`}</section></div>
+    <section class="eqs-card eqs-tcard"><h3 class="eqs-tch">${EQX.list}По категориям</h3><table class="tbl eqs-reg" id="anCat"><thead><tr><th>Категория</th><th class="num">Единиц</th><th class="num">Работ (ремонтов)</th><th class="num">Содержание за год</th>${mon ? '<th class="num">Амортизация за год</th><th class="num">Итого затрат</th>' : ""}</tr></thead><tbody>${r.by_category.map(c => `<tr>
+      <td><b>${esc(c.name)}</b></td><td class="num">${c.count}</td><td class="num">${c.repairs}</td><td class="num">${eqMoney(c.keep)}</td>${mon ? `<td class="num">${eqMoney(c.amort)}</td><td class="num"><b>${eqMoney(c.keep + c.amort)}</b></td>` : ""}</tr>`).join("")}</tbody></table></section></div>`;
+  $("#anYear").onchange = e => { EQS.anYear = +e.target.value; eqAnalyticsTab(); };
+  $$("[data-e]", body).forEach(b => b.onclick = () => openEquipment(b.dataset.e));
+  $("#anPrint").onclick = () => { $("#printArea").innerHTML = `<h2>Оборудование: стоимость содержания за ${r.year} год</h2><p>Содержание: ${eqMoney(r.keep)} (ТО ${eqMoney(r.service)}, ремонт ${eqMoney(r.repair)}, диагностика ${eqMoney(r.diag)})${mon ? `; амортизация: ${eqMoney(r.amort)}` : ""}</p>${$("#anCat").outerHTML}`; window.print(); };
+}
+
+/* ------------------------------------------------------------ «Журнал действий» */
+async function eqLogTab() {
+  const body = $("#stockBody");
+  const f = EQS.logF = EQS.logF || {};
+  const r = await api.equipment_log(f);
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Журнал действий</h2><span class="muted">История операций сотрудников с оборудованием</span></div><span class="grow"></span>
+      <button class="btn ghost" data-xls="#logT" data-xls-name="Журнал действий с оборудованием">${EQX.down}Excel</button></div>
+    <section class="eqs-card eqs-filters">
+      <label class="eqs-f"><span>Событие</span><select class="input" id="lgK"><option value="">Все события</option>${Object.entries(r.kinds).map(([k, t]) => `<option value="${k}" ${k === f.kind ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
+      <label class="eqs-f"><span>С</span><input class="input" type="date" id="lgF" value="${esc(f.from || "")}"></label><label class="eqs-f"><span>По</span><input class="input" type="date" id="lgT" value="${esc(f.to || "")}"></label>
+      <label class="eqs-f"><span>Сотрудник</span><select class="input" id="lgU"><option value="">Все</option>${r.users.map(u => `<option ${u === f.user ? "selected" : ""}>${esc(u)}</option>`).join("")}</select></label>
+      <button class="linkbtn eqs-reset" id="lgX" ${Object.values(f).some(Boolean) ? "" : "hidden"}>${EQX.x}Сбросить</button></section>
+    <section class="eqs-card eqs-tcard">${r.rows.length ? `<table class="tbl eqs-reg" id="logT"><thead><tr><th>Дата</th><th>Оборудование</th><th>Событие</th><th>Описание</th><th class="num">Сумма</th><th>Сотрудник</th></tr></thead><tbody>${r.rows.map(x => `<tr data-e="${esc(x.equipment_id)}">
+        <td>${fmtDateShort(x.date)}</td><td><b>${esc(x.name || "—")}</b>${x.inv_number ? ` <small class="muted">${esc(x.inv_number)}</small>` : ""}</td><td><span class="eqs-cat">${esc(x.kind_title)}</span></td>
+        <td class="muted eqs-wraptd">${esc(x.text || "")}</td><td class="num">${x.cost ? eqMoney(x.cost) : "—"}</td><td>${esc(x.user_name || "—")}</td></tr>`).join("")}</tbody></table><div class="eqs-foot muted">Показано: ${r.rows.length}${r.rows.length >= 500 ? " (последние 500)" : ""}</div>`
+      : `<div class="empty"><b>Событий нет</b><span>Измените фильтры</span></div>`}</section></div>`;
+  const set = (k, v) => { f[k] = v; eqLogTab(); };
+  $("#lgK").onchange = e => set("kind", e.target.value); $("#lgF").onchange = e => set("from", e.target.value);
+  $("#lgT").onchange = e => set("to", e.target.value); $("#lgU").onchange = e => set("user", e.target.value);
+  $("#lgX").onclick = () => { EQS.logF = {}; eqLogTab(); };
+  $$("tr[data-e]", body).forEach(tr => tr.onclick = () => openEquipment(tr.dataset.e, "history"));
+}

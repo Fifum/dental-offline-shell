@@ -301,3 +301,10 @@
 #puJ .eqs-cat{white-space:normal}
 #puJ td:nth-child(5),#puJ td:nth-child(4){white-space:nowrap}
 #puJ td:nth-child(2){max-width:130px;white-space:normal}
+
+/* documents, analytics, the log */
+.eqs-seg.eqs-wrap{flex-wrap:wrap}
+.eqs-anbars{height:200px}
+.eqs-wraptd{white-space:normal;max-width:360px}
+.eqs-reg td .linkbtn{display:inline-flex;align-items:center;gap:6px}
+.eqs-reg td .linkbtn svg{width:15px;height:15px}
