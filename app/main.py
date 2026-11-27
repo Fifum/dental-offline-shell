@@ -529,6 +529,14 @@ class Api:
     def equipment_confirm(self, eid):
         return self.equipment(self._stock.eq_confirm(eid, self._who()))
 
+    def equipment_amort_year(self, year=None):
+        """3.15 «Амортизация» (only «Бухгалтерия», by the method map)."""
+        from stock_auto import amort_in_pnl
+        return {**self._stock.eq_amort_year(year), "in_pnl": amort_in_pnl(self._db)}
+
+    def equipment_disposals(self, year=None):
+        return self._stock.eq_disposals(year, money=self._eq_money())
+
     def equipment_refs(self):
         """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""
         return self._stock.eq_refs()

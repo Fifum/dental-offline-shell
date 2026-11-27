@@ -339,19 +339,19 @@ function eqDispose(e) {
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="dsOk">Оформить</button></div>`, {wide: true});
   const draw = () => {
     $$("#dsK button", box).forEach(b => b.classList.toggle("on", b.dataset.k === kind));
-    $("#dsCom", box).hidden = $("#dsNW", box).hidden = kind !== "writeoff";
+    $("#dsCom", box).hidden = $("#dsNW", box).hidden = !["writeoff", "utilize"].includes(kind);  // 3.15: utilization has its commission too
     const aw = $("#dsAW", box); if (aw) aw.hidden = kind !== "sale";
-    $("#dsWT", box).textContent = {writeoff: "Причина списания*", sale: "Покупатель и основание*", return: "Кому возвращено, по какому документу*"}[kind];
-    $("#dsW", box).placeholder = {writeoff: "например: неисправность, ремонт нецелесообразен", sale: "ООО «…», договор № …", return: "арендодателю по акту № …"}[kind];
-    $("#dsW", box).setAttribute("list", kind === "writeoff" ? "dsWo" : "");
-    $("#dsOk", box).textContent = kind === "writeoff" ? "Списать и распечатать акт" : "Оформить";
+    $("#dsWT", box).textContent = {writeoff: "Причина списания*", utilize: "Причина утилизации*", transfer: "Кому передано, по какому договору*", sale: "Покупатель и основание*", return: "Кому возвращено, по какому документу*"}[kind];
+    $("#dsW", box).placeholder = {writeoff: "например: неисправность, ремонт нецелесообразен", sale: "ООО «…», договор № …", return: "арендодателю по акту № …", utilize: "например: непригодно к эксплуатации", transfer: "партнёру, договор № …"}[kind];
+    $("#dsW", box).setAttribute("list", ["writeoff", "utilize"].includes(kind) ? "dsWo" : "");
+    $("#dsOk", box).textContent = ["writeoff", "utilize", "transfer"].includes(kind) ? "Оформить и распечатать акт" : "Оформить";
   };
   $$("#dsK button", box).forEach(b => b.onclick = () => { kind = b.dataset.k; draw(); }); draw();
   $("#dsOk", box).onclick = async () => {
     const f = {id: e.id, kind, date: $("#dsD", box).value, reason: $("#dsW", box).value, act_number: $("#dsN", box).value,
       commission: [$("#dsC0", box).value, $("#dsC1", box).value, $("#dsC2", box).value]};
     if (m) { f.residual = $("#dsR", box).value; if ($("#dsA", box)) f.amount = $("#dsA", box).value; }
-    try { const x = await api.equipment_dispose(f); closeModal(); toast(x.status_title); eqCard(); if (kind === "writeoff") printEquipmentAct(x); }
+    try { const x = await api.equipment_dispose(f); closeModal(); toast(x.status_title); eqCard(); if (["writeoff", "utilize", "transfer"].includes(kind)) printEquipmentAct(x); }
     catch (err) { $("#dsE", box).textContent = errText(err); }
   };
 }

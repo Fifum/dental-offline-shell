@@ -2318,6 +2318,81 @@ class Stock:
             self._ev(c, e["id"], "inventory", "Наличие подтверждено", user, data={"found": True, "diffs": [], "confirm": True})
         return e["id"]
 
+    # ------------------------------------------------------ 3.15: «Амортизация» --
+    def eq_amort_year(self, year=None):
+        """The screen «Амортизация» of a year: the cost, the book value, the accumulated depreciation and the wear of the clinic's
+        own equipment at the end of the year (today for this one), the depreciation by month with the running total, the cost by
+        category, the key figures and the register split into «с амортизацией», «полностью амортизировано», «без амортизации»."""
+        t = date.today()
+        y = int(year or t.year)
+        last = _mon(t.isoformat()) if y == t.year else _mon(f"{y}-12")
+        months = [f"{y}-{m:02d}" for m in range(1, 13)]
+        rows, cats = [], {}
+        for e in self.db.q("SELECT * FROM equipment ORDER BY category, name"):
+            if e["status"] == "written_off" and (e["writeoff_date"] or "")[:4] < str(y):
+                continue
+            self._eq_titles(e)
+            am = amortization(e, _mon_str(last))
+            own = on_books(e)
+            why = ("Стороннее имущество" if e["ownership"] in OFF_BOOKS else "Количественный учёт" if e["accounting"] == "qty"
+                   else "" if am["on"] else "Не указан срок" if (e["price"] or 0) > 0 else "Не указана стоимость")
+            grp = "off" if why else "on" if not am["done"] else "done"  # someone else's property is never the clinic's depreciation
+            r = {"id": e["id"], "inv_number": e["inv_number"] or "", "name": e["name"], "category": e["category"] or "", "photo_id": e.get("photo_id") or "",
+                 "cost": am["cost"], "useful_months": am["useful_months"], "first": am["first"], "accumulated": am["accumulated"],
+                 "residual": am["residual"] if am["on"] else (e["price"] or 0), "percent": am["percent"] if am["on"] else 0.0,
+                 "monthly": am["monthly"] if am["on"] and not am["done"] else 0.0, "group": grp, "why": why, "own": own,
+                 "status": e["status"], "status_title": e["status_title"], "values": [amort_charge(e, m) if own else 0.0 for m in months]}
+            rows.append(r)
+            if own and e["status"] != "written_off":
+                g = cats.setdefault(e["category"] or "Без категории", {"name": e["category"] or "Без категории", "cost": 0.0, "count": 0})
+                g["cost"] = round(g["cost"] + am["cost"], 2)
+                g["count"] += 1
+        live = [r for r in rows if r["own"] and r["status"] != "written_off"]
+        on = [r for r in live if r["group"] != "off"]
+        cost = round(sum(r["cost"] for r in live), 2)
+        acc = round(sum(r["accumulated"] for r in on), 2)
+        charge = [round(sum(r["values"][i] for r in rows), 2) for i in range(12)]
+        running, cum = [], 0.0
+        start = round(sum(r["accumulated"] for r in rows if r["own"]) - sum(charge), 2)  # what was accumulated before the year
+        for v in charge:
+            cum = round(cum + v, 2)
+            running.append(round(start + cum, 2))
+        tot = sum(g["cost"] for g in cats.values())
+        by_cat = sorted(({**g, "share": round(g["cost"] * 100 / tot, 1) if tot else 0.0} for g in cats.values()), key=lambda g: -g["cost"])
+        return {"year": y, "months": months, "charge": charge, "running": running, "upto": _mon_str(last) if y >= t.year else f"{y}-12",
+                "cost": cost, "residual": round(cost - acc, 2), "accumulated": acc,
+                "monthly": round(sum(amort_charge(r_e, t.strftime("%Y-%m")) for r_e in self.db.q("SELECT * FROM equipment") if on_books(r_e)), 2),
+                "wear": round(acc * 100 / cost, 1) if cost else 0.0, "by_category": by_cat,
+                "count_on": len(on), "count_done": sum(1 for r in live if r["group"] == "done"), "count_running": sum(1 for r in live if r["group"] == "on"),
+                "count_off": sum(1 for r in rows if r["group"] == "off" and r["status"] != "written_off"),
+                "avg_life": round(sum(r["useful_months"] for r in on) / len(on) / 12, 1) if on else 0.0,
+                "avg_wear": round(sum(r["percent"] for r in on) / len(on), 1) if on else 0.0,
+                "rows": [r for r in rows if r["status"] != "written_off"], "this_month": self.amort_month(t.strftime("%Y-%m"))}
+
+    # ------------------------------------------------- 3.15: «Выбытие и списание» --
+    def eq_disposals(self, year=None, money=True):
+        y = str(year or date.today().year)
+        names = self._loc_names()
+        rows = []
+        for e in self.db.q("SELECT * FROM equipment WHERE status='written_off' ORDER BY writeoff_date DESC, name"):
+            self._eq_titles(e)
+            kind = e.get("disposal_kind") or "writeoff"
+            book = e["residual"] if e["residual"] is not None else amortization(e)["residual"]
+            r = {"id": e["id"], "inv_number": e["inv_number"] or "", "name": e["name"], "photo_id": e.get("photo_id") or "", "date": e["writeoff_date"] or "",
+                 "kind": kind, "kind_title": EQ_DISPOSAL.get(kind, kind), "status_title": e["status_title"], "act": e["writeoff_act"] or "",
+                 "doc": ({"writeoff": "Акт списания", "utilize": "Акт утилизации", "transfer": "Акт передачи"}.get(kind, "") + (f" № {e['writeoff_act']}" if e["writeoff_act"] else "")) if kind in ("writeoff", "utilize", "transfer") else EQ_DISPOSAL.get(kind, kind),
+                 "reason": e["writeoff_reason"] or "", "responsible": e.get("disposal_responsible") or "", "basis": e.get("disposal_basis") or "",
+                 "location": names.get(e.get("location_id")) if e.get("location_id") else (e["location"] or "")}
+            if money:
+                r.update(cost=round(e["price"] or 0, 2), residual=round(book or 0, 2), amount=round(e["disposal_amount"] or 0, 2))
+            rows.append(r)
+        period = [r for r in rows if r["date"][:4] == y]
+        out = {"year": int(y), "rows": rows, "count": len(period), "kinds": EQ_DISPOSAL,
+               **{k: sum(1 for r in period if r["kind"] == k) for k in EQ_DISPOSAL}}
+        if money:
+            out["sum"] = round(sum(r["residual"] for r in period), 2)
+        return out
+
     # ------------------------------------------- 3.15: «Справочники и настройки» --
     def _setting(self, k, default):
         r = self.db.one("SELECT v FROM stock_settings WHERE k=?", (k,))

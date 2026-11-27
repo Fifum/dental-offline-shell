@@ -99,7 +99,7 @@ async function loadStock() {
   if (S.matOpen && ["home", "balance"].includes(S.stockTab)) return mtCard();  // 3.13: the material card is a screen of these tabs
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces, orders: stockOrders,
-    equipment: stockEquipment, service: eqRequestsTab, amort: eqAmortTab, disposed: eqDisposedTab,
+    equipment: stockEquipment, service: eqRequestsTab, amort: eqAmortYear, disposed: eqDisposalTab,
     inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview, eq_receipts: eqReceiptsTab, eq_moves: eqMovesTab}[S.stockTab];
   await fn();
 }
@@ -656,7 +656,7 @@ async function printEquipmentAct(e) {
   const com = (() => { try { return JSON.parse(e.writeoff_commission || "[]"); } catch (x) { return []; } })();
   $("#printArea").innerHTML = `${await clinicHead()}
     <div class="pr-approve">УТВЕРЖДАЮ<br>Руководитель ____________ ${esc(c.director || "")}<br>«___» ____________ 20__ г.</div>
-    <h2 style="text-align:center">АКТ № ${esc(e.writeoff_act || "")}<br>о списании объекта основных средств</h2>
+    <h2 style="text-align:center">АКТ № ${esc(e.writeoff_act || "")}<br>${{utilize: "об утилизации объекта основных средств", transfer: "о передаче объекта основных средств"}[e.disposal_kind] || "о списании объекта основных средств"}</h2>
     <p style="text-align:center">от ${fmtDate(e.writeoff_date)}</p>
     <p>Комиссия в составе: председатель — ${esc(com[0] || "")}; члены комиссии — ${esc(com.slice(1).join("; "))} — осмотрела указанный ниже объект и установила, что он подлежит списанию.</p>
     <table><tr><th>Наименование</th><th>Инв. №</th><th>Модель / серийный №</th><th>Дата покупки</th><th>Стоимость</th><th>Остаточная стоимость</th></tr>

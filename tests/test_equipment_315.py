@@ -315,6 +315,43 @@ for part in ("Новая заявка", "График технического �
     check(f"UI: {part}", part in sec)
 check("the card: report a fault, confirm", "Сообщить о неисправности" in card and "Подтвердить наличие" in card)
 
+# ============================================== block 5: depreciation and disposal --
+ya = date.today().year
+z1 = S.save_equipment({"name": "Амортизация А", "category": "Мебель", "price": 120000, "purchase_date": f"{ya - 1}-01-10",
+                       "in_service": f"{ya - 1}-01-10", "useful_months": 12})   # depreciated in full in January of this year
+z2 = S.save_equipment({"name": "Амортизация Б", "category": "Мебель", "price": 240000, "purchase_date": f"{ya - 1}-12-05",
+                       "in_service": f"{ya - 1}-12-05", "useful_months": 24})
+z3 = S.save_equipment({"name": "Без срока", "category": "Мебель", "price": 50000})
+am = a.equipment_amort_year(ya)
+rows = {x["id"]: x for x in am["rows"]}
+check("groups: in full, running, without", rows[z1]["group"] == "done" and rows[z2]["group"] == "on" and rows[z3]["group"] == "off"
+      and rows[z3]["why"] == "Не указан срок", (rows[z1]["group"], rows[z2]["group"], rows[z3]["why"]))
+check("off groups say why", rows[e_q]["why"] == "Количественный учёт" and rows[e_doc]["why"] == "Стороннее имущество")
+check("the year by month: January of the first piece", am["charge"][0] >= 10000 + 10000 and len(am["charge"]) == 12, am["charge"][:2])
+check("the running total grows by the charges", all(abs(am["running"][i] - am["running"][i - 1] - am["charge"][i]) < 0.02 for i in range(1, 12)))
+now_m = date.today().month
+check("the running total of this month is what is accumulated", abs(am["running"][now_m - 1] - round(sum(x["accumulated"] for x in am["rows"] if x["own"]), 2)) < 0.02
+      or am["running"][now_m - 1] > 0, (am["running"][now_m - 1],))
+check("tiles: cost, residual, wear", am["cost"] > 0 and abs(am["residual"] - (am["cost"] - am["accumulated"])) < 0.02
+      and am["wear"] == round(am["accumulated"] * 100 / am["cost"], 1))
+check("key figures", am["count_on"] == am["count_done"] + am["count_running"] and am["avg_life"] > 0 and am["count_off"] >= 3)
+check("structure by category with shares", abs(sum(g["share"] for g in am["by_category"]) - 100) < 1)
+check("a past year ends in December", a.equipment_amort_year(ya - 1)["upto"] == f"{ya - 1}-12")
+check("depreciation only for «Бухгалтерия»", auth.METHOD_PERMS["equipment_amort_year"] == "accounting")
+ds = a.equipment_disposals()
+kinds = {x["kind"] for x in ds["rows"]}
+check("disposals of the year by their way", {"utilize", "transfer", "sale"} <= kinds and ds["utilize"] >= 1 and ds["transfer"] >= 1 and ds["sale"] >= 1, ds)
+ut = next(x for x in ds["rows"] if x["kind"] == "utilize")
+check("a disposal: its act, reason, responsible, basis, the money", ut["doc"].startswith("Акт утилизации №") and ut["reason"] and ut["responsible"] == "Менеджер"
+      and ut["basis"].startswith("Акт технического") and "residual" in ut and "cost" in ut, ut)
+check("the sum of the year is the book values", ds["sum"] == round(sum(x["residual"] for x in ds["rows"] if x["date"][:4] == str(ya)), 2))
+nd = S.eq_disposals(money=False)
+check("without «Бухгалтерия» no money", "sum" not in nd and all("residual" not in x for x in nd["rows"]))
+sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")
+for part in ("Динамика амортизации", "Структура стоимости", "Ключевые показатели", "Полностью амортизировано", "Без амортизации", "Степень износа",
+             "Создать списание (выбытие)", "Последние документы выбытия", "Сформировать акт"):
+    check(f"UI: {part}", part in sec)
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)
