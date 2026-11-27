@@ -330,6 +330,16 @@ class Api:
     def equipment_inventory(self, f):
         return self.equipment(self._stock.equipment_inventory(f if isinstance(f, dict) else {}, self._who()))
 
+    def equipment_inventory_batch(self, lines):
+        """3.14 «Инвентаризация → Оборудование»: the rows that were checked, in one go."""
+        return self._stock.equipment_inventory_batch(lines if isinstance(lines, list) else [], self._who())
+
+    def equipment_inventory_log(self):
+        return self._stock.equipment_inventory_log()
+
+    def equipment_service_log(self, day_from=None, day_to=None):
+        return self._stock.equipment_service_log(day_from, day_to)
+
     def equipment_replace_plan(self, f):
         return self.equipment(self._stock.equipment_replace_plan(f if isinstance(f, dict) else {}, self._who(), self._eq_money()))
 
@@ -1955,6 +1965,10 @@ class Api:
                 st["stock_low"] = sum(1 for m in mats if m["low"] or m["balance"] < 0)
                 st["stock_exp"] = sum(1 for m in mats if m["exp_state"])
                 st["stock_alerts"] = sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"])
+            if u is None or {"equipment", "stock_view"} & set(Auth.effective_perms(u)):  # 3.14: the badge of «Оборудование»
+                today = date.today().isoformat()
+                st["eq_due"] = self._db.one("""SELECT COUNT(*) AS n FROM equipment WHERE status<>'written_off'
+                                               AND COALESCE(next_service,'')<>'' AND next_service <= ?""", (today,))["n"]
             sp = set(Auth.effective_perms(u)) if u else {"stock_approve", "stock_edit"}
             if {"stock_approve", "stock_ops", "stock_edit"} & sp:  # 3.10: what waits for the manager, the storekeeper, the nurse
                 c = self._sflow.counts((u or {}).get("login") or "", "stock_approve" in sp, "stock_edit" in sp)

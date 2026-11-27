@@ -203,17 +203,23 @@ const S = {view: "schedule", day: iso(new Date()), branch: "", mode: "grid", set
 
 /* ---------------------------------------------------------------- views */
 const VIEW_PERM = {schedule: "schedule_view", patients: "patients_view", patient: "patients_view", cash: ["cash_report", "expenses_day"],
-  journal: ["transfer", "reports", "medcard_edit"], refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "stock_ops", "equipment", "sterilization"],
+  journal: ["transfer", "reports", "medcard_edit"], refs: "refs", settings: "settings", staff: "staff", stock: ["stock_view", "stock_edit", "stock_ops"],
+  equipment: ["equipment", "stock_view", "sterilization"], inventory: ["stock_edit", "equipment"],  // 3.14: three sections
   reports: "reports", accounting: "accounting", marketing: "marketing", shifts: ["schedule_view", "shifts_edit", "staff"],
   lab: ["lab", "accounting"], director: "reports"};
 const canView = v => { const p = VIEW_PERM[v]; return !p || (Array.isArray(p) ? canAny(...p) : can(p)); };
-function firstView() { return ["schedule", "patients", "cash", "director", "reports", "accounting", "marketing", "shifts", "lab", "stock", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
+function firstView() { return ["schedule", "patients", "cash", "director", "reports", "accounting", "marketing", "shifts", "lab", "stock", "equipment", "inventory", "journal", "refs", "staff", "settings"].find(canView) || "none"; }
+// 3.14: «Склад и материалы», «Оборудование» and «Инвентаризация» are three sections of the menu on one screen (#view-stock)
+const VIEW_HOST = {equipment: "stock", inventory: "stock"};
 function show(view) {
   if (!canView(view)) view = firstView();
+  const again = S.view === view;
   S.view = view;
-  document.body.dataset.view = view;  // 3.13: the stock and its dialogs take the teal palette (styles-type.css)
+  const host = VIEW_HOST[view] || view;
+  document.body.dataset.view = host;  // 3.13: the stock and its dialogs take the teal palette (styles-type.css)
   if (view === "none") { $$(".view").forEach(v => v.hidden = true); toast("Для вашей учётной записи пока не назначены разделы. Обратитесь к директору.", true); return; }
-  $$(".view").forEach(v => v.hidden = v.id !== "view-" + view);
+  $$(".view").forEach(v => v.hidden = v.id !== "view-" + host);
+  if (again && host === "stock") { S.eqOpen = null; S.matOpen = null; }  // the menu item again: back to the list from a card
   $$(".nav").forEach(b => b.classList.toggle("active", b.dataset.view === view || (view === "patient" && b.dataset.view === "patients")));
   if (view === "schedule") loadDay();
   if (view === "patients") { searchPatients(); setTimeout(() => $("#patSearch").focus(), 30); }
@@ -222,7 +228,7 @@ function show(view) {
   if (view === "journal") loadJournal();
   if (view === "refs") loadRefs();
   if (view === "staff") loadStaff();
-  if (view === "stock") loadStock();
+  if (host === "stock") loadStock();
   if (view === "reports") loadReports();
   if (view === "director" && typeof loadDirector === "function") loadDirector();
   if (view === "accounting") loadAccounting();
@@ -262,8 +268,9 @@ async function refreshStatus() {
   } else { dot.classList.add("on"); title.textContent = "Онлайн";
     sub.textContent = `Обновлено ${ago(st.last_ok)}` + (st.dp_main && st.dp_main.role === "follower" ? ` · через «${st.dp_main.name}»` : ""); }
   $("#syncBtn").disabled = !!st.running;
-  const sb = $("#stockBadge"); if (sb) { const n = (st.stock_alerts ?? st.stock_low ?? 0) + (st.stock_wait || 0);  // 3.10: + what waits for approval sb.hidden = !n; sb.textContent = n || "";
+  const sb = $("#stockBadge"); if (sb) { const n = (st.stock_alerts ?? st.stock_low ?? 0) + (st.stock_wait || 0); sb.hidden = !n; sb.textContent = n || "";  // 3.10: + what waits for approval
     sb.title = [st.stock_low ? `Заканчиваются: ${st.stock_low}` : "", st.stock_exp ? `Истекает срок: ${st.stock_exp}` : ""].filter(Boolean).join(" · "); }
+  const eb = $("#eqBadge"); if (eb) { const n = st.eq_due || 0; eb.hidden = !n; eb.textContent = n || ""; eb.title = n ? "Пора на ТО: " + n : ""; }  // 3.14
   const lb = $("#labBadge"); if (lb) { lb.hidden = !st.lab_due; lb.textContent = st.lab_due || ""; }
   if (typeof platformStatus === "function") platformStatus(st);
   if (typeof addonStatus === "function") addonStatus(st);

@@ -20,14 +20,12 @@ const mtQty = (n, u) => qtyFmt(n, u);
 async function openMaterial(id, tab) {
   if ($("#modal") && !$("#modal").hidden) closeModal();
   document.querySelectorAll(".sn-menu,.eqc-menu").forEach(x => x.remove());
-  if (!["home", "balance"].includes(S.stockTab)) {  // from another tab (a scan, a task): the card belongs to «Остатки»
-    S.stockTab = canAny("stock_view", "stock_edit") ? "balance" : "home";
-    $$("#stockTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === S.stockTab));
-  }
   S.eqOpen = null;
   MT.tab = tab || (MT.id === id ? MT.tab : "main") || "main"; MT.id = id;
   S.matOpen = id;
-  if (!$("#view-stock") || $("#view-stock").hidden) { if (typeof show === "function") show("stock"); }
+  // 3.14: the card belongs to «Склад и материалы» (its home screen or «Остатки»); from elsewhere — a scan, a task, another section
+  if (S.view !== "stock" || $("#view-stock").hidden || !["home", "balance"].includes(S.stockTab))
+    return stockGo("stock", ["home", "balance"].includes(S.stockTabs.stock) ? S.stockTabs.stock : canAny("stock_view", "stock_edit") ? "balance" : "home");
   return mtCard();
 }
 function mtClose() { S.matOpen = null; MT.id = null; MT.data = null; loadStock(); }
@@ -151,7 +149,7 @@ function mtPane() {
   if (MT.tab === "norms") {
     el.innerHTML = `<h3>Списывается по услугам</h3>${m.norms.length ? `<table class="tbl compact mtc-t"><thead><tr><th>Услуга</th><th>Код</th><th class="num">На одну услугу</th></tr></thead><tbody>${m.norms.map(n => `<tr><td>${esc(n.title)}</td><td class="muted">${esc(n.code || "")}</td><td class="num"><b>${mtQty(n.qty, u)}</b></td></tr>`).join("")}</tbody></table>`
       : `<div class="muted">Не привязан к услугам.</div>`}<div class="muted eqc-hint">Нормы задаются во вкладке «Нормы списания»${c.edit ? ` <button class="linkbtn" id="mtNorms">открыть</button>` : ""}.</div>`;
-    const n = $("#mtNorms", el); if (n) n.onclick = () => { S.matOpen = null; S.stockTab = "norms"; $$("#stockTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === "norms")); loadStock(); };
+    const n = $("#mtNorms", el); if (n) n.onclick = () => { S.matOpen = null; stockGo("stock", "norms"); };
     return;
   }
   el.innerHTML = `<h3>Движение</h3>${movesTable(m.moves, false)}`;

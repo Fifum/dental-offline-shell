@@ -406,7 +406,7 @@ js = (UI / "stock-auto.js").read_text(encoding="utf-8") if (UI / "stock-auto.js"
 check("version 3.5.0 or later", tuple(map(int, config.VERSION.split("."))) >= (3, 5, 0), config.VERSION)
 check("stock-auto.js with the cache tag", f'<script src="stock-auto.js?v={config.VERSION}"></script>' in html)
 check("no old cache tags", "?v=3.4.0" not in html)
-check("stock tabs", all(f'data-k="{k}"' in html for k in ("visits", "places")))
+check("stock tabs", all(f'["{k}", ' in (UI / "stock.js").read_text(encoding="utf-8") for k in ("visits", "places")))  # 3.14: STOCK_AREAS
 check("cost tab in «Бухгалтерия»", 'data-k="cost"' in html)
 check("screens", all(f"function {f}" in js for f in ("stockVisits", "editVisitServices", "stockPlaces", "editPlace", "openTransfer", "accCost",
                                                      "editServiceCost", "visitSettings")))

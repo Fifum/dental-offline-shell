@@ -209,7 +209,7 @@ async function stockPlaces() {
   on("#plNew", () => editPlace({kind: "cabinet"}));
   on("#plMove", () => openTransfer());
   $$("#stockBody tr[data-pl]").forEach(tr => tr.onclick = () => { const l = locs.find(x => x.id === tr.dataset.pl); if (l && l.kind !== "main" && edit) editPlace(l); });
-  $$("#stockBody [data-pl-bal]").forEach(b => b.onclick = e => { e.stopPropagation(); S.stockLoc = b.dataset.plBal; S.stockTab = "balance"; loadStock(); });
+  $$("#stockBody [data-pl-bal]").forEach(b => b.onclick = e => { e.stopPropagation(); S.stockLoc = b.dataset.plBal; stockGo("stock", "balance"); });
   $$("#stockBody tr[data-d]").forEach(tr => tr.onclick = () => openStockDocView(tr.dataset.d));
 }
 

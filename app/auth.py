@@ -298,7 +298,7 @@ METHOD_PERMS = {
     "delete_supplier": "stock_edit", "stock_receive": ("stock_edit", "stock_ops"), "stock_write_off": "stock_edit",
     "stock_inventory": "stock_edit", "save_norms": "stock_edit",
     "stock_lots": ("stock_view", "stock_edit", "stock_ops"), "stock_expired": ("stock_view", "stock_edit"),
-    "purchase_list": ("stock_view", "stock_edit"), "stock_scan": ("stock_view", "stock_edit", "stock_ops"),
+    "purchase_list": ("stock_view", "stock_edit"), "stock_scan": ("stock_view", "stock_edit", "stock_ops", "equipment"),
     # 3.5: places and transfers, write-off by Dentist Plus visits, the cost of services
     "stock_locations": ("stock_view", "stock_edit", "stock_ops"), "stock_location_save": "stock_edit", "stock_location_delete": "stock_edit",
     "stock_transfer": ("stock_edit", "stock_ops"), "stock_auto_settings": ("stock_view", "stock_edit"), "stock_auto_settings_save": "stock_edit",
@@ -311,6 +311,9 @@ METHOD_PERMS = {
     # 3.13: the equipment card (its money is cut out by the method itself without «Бухгалтерия»)
     "equipment_card": ("equipment", "stock_view"), "equipment_next_inv": "equipment", "equipment_set": "equipment",
     "equipment_inventory": "equipment", "equipment_replace_plan": "equipment", "equipment_dispose": "equipment",
+    # 3.14: «Инвентаризация» and «ТО и ремонт» as sections of their own
+    "equipment_inventory_batch": "equipment", "equipment_inventory_log": ("equipment", "stock_view", "stock_edit"),
+    "equipment_service_log": ("equipment", "stock_view"),
     "equipment_doc_add": "equipment", "equipment_doc_delete": "equipment", "equipment_doc_open": ("equipment", "stock_view"),
     "equipment_settings_save": "accounting", "equipment_qr": ("equipment", "stock_view"),
     # 3.10: the nurse's stock — requests, consumption waiting for approval, photos, depreciation of equipment.
@@ -432,6 +435,7 @@ AUDITED = {
     "save_equipment": "Оборудование", "equipment_event": "Обслуживание оборудования",
     "write_off_equipment": "Списание оборудования",
     "equipment_set": "Оборудование: место, состояние, ремонт", "equipment_inventory": "Инвентаризация оборудования",
+    "equipment_inventory_batch": "Инвентаризация оборудования списком",
     "equipment_replace_plan": "Замена оборудования запланирована", "equipment_dispose": "Выбытие оборудования",
     "equipment_doc_add": "Документ оборудования", "equipment_doc_delete": "Документ оборудования убран",
     "equipment_settings_save": "Часы работы кресла в месяц",

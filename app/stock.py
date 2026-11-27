@@ -1010,6 +1010,7 @@ class Stock:
                 "alerts": sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"]),
                 "value": round(sum(m["value"] for m in mats if m["balance"] > 0), 2),
                 "equipment": sum(1 for e in eq if e["status"] != "written_off"),
+                "eq_repair": sum(1 for e in eq if e["status"] == "repair"),  # 3.14
                 "eq_residual": round(sum(e["amort"]["residual"] for e in eq if e["status"] != "written_off"), 2),  # 3.10
                 "eq_cost": round(sum(e["price"] or 0 for e in eq if e["status"] != "written_off"), 2),
                 "service_due": sum(1 for e in eq if e["status"] != "written_off" and e["next_service"] and e["next_service"] <= today)}
@@ -1042,8 +1043,11 @@ class Stock:
     def equipment_list(self, q="", show_written_off=False, money=True):
         rows = self.db.q("SELECT * FROM equipment ORDER BY CASE status WHEN 'written_off' THEN 1 ELSE 0 END, location, name")
         today = date.today().isoformat()
+        last = {r["equipment_id"]: r["d"] for r in self.db.q(  # 3.14: «Инвентаризация → Оборудование»
+            "SELECT equipment_id, MAX(date) AS d FROM equipment_events WHERE kind='inventory' GROUP BY equipment_id")}
         for r in rows:
             self._eq_titles(r, today)
+            r["last_inventory_date"] = last.get(r["id"], "")
         if not show_written_off:
             rows = [r for r in rows if r["status"] != "written_off"]
         q = (q or "").strip().lower()
@@ -1372,6 +1376,67 @@ class Stock:
                 c.execute(f"UPDATE equipment SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), e["id"]))
             self._ev(c, e["id"], "inventory", text, user, day, data=data)
         return e["id"]
+
+    def equipment_inventory_batch(self, lines, user=""):
+        """3.14 «Инвентаризация → Оборудование»: several pieces checked in one go (only the rows that were looked at)."""
+        out = {"done": 0, "diffs": 0, "not_found": 0}
+        for ln in lines or []:
+            if not isinstance(ln, dict) or not ln.get("id"):
+                continue
+            self.equipment_inventory(ln, user)
+            ev = self.db.one("SELECT data FROM equipment_events WHERE equipment_id=? AND kind='inventory' ORDER BY id DESC LIMIT 1", (ln["id"],))
+            data = json.loads((ev or {}).get("data") or "{}")
+            out["done"] += 1
+            if not data.get("found", True):
+                out["not_found"] += 1
+            elif data.get("diffs"):
+                out["diffs"] += 1
+        if not out["done"]:
+            raise ValueError("Отметьте, что найдено и что не найдено")
+        return out
+
+    def equipment_inventory_log(self, limit=300):
+        """3.14 «Инвентаризация → История»: every check of the equipment, the newest first."""
+        rows = self.db.q("""SELECT ev.id, ev.equipment_id, ev.date, ev.text, ev.user_name, ev.data, e.name, e.inv_number
+                            FROM equipment_events ev JOIN equipment e ON e.id = ev.equipment_id
+                            WHERE ev.kind='inventory' ORDER BY ev.date DESC, ev.id DESC LIMIT ?""", (int(limit),))
+        for r in rows:
+            try:
+                d = json.loads(r.pop("data") or "{}") or {}
+            except ValueError:
+                d = {}
+            r["found"], r["diffs"] = bool(d.get("found", True)), d.get("diffs") or []
+        return rows
+
+    def equipment_service_log(self, day_from=None, day_to=None):
+        """3.14 «Оборудование → ТО и ремонт»: what is due for service (overdue and within 60 days), and every service and repair
+        of the period with its cost."""
+        today = date.today()
+        a = _day(day_from, "С") if day_from else (today - timedelta(days=365)).isoformat()
+        b = _day(day_to, "По") if day_to else today.isoformat()
+        a, b = min(a, b), max(a, b)
+        soon = (today + timedelta(days=60)).isoformat()
+        eq = [e for e in self.equipment_list(money=False) if e["status"] != "written_off"]
+        names = self._loc_names()
+        due = []
+        for e in eq:
+            if e["next_service"] and e["next_service"] <= soon:
+                due.append({"id": e["id"], "inv_number": e["inv_number"], "name": e["name"], "next_service": e["next_service"],
+                            "days": (date.fromisoformat(e["next_service"]) - today).days, "due": e["service_due"],
+                            "status": e["status"], "status_title": e["status_title"],
+                            "location": names.get(e.get("location_id") or "", "") if e.get("location_id") else e["location"] or ""})
+        due.sort(key=lambda x: x["next_service"])
+        events = self.db.q("""SELECT ev.id, ev.equipment_id, ev.kind, ev.date, ev.text, ev.cost, ev.user_name, e.name, e.inv_number
+                              FROM equipment_events ev JOIN equipment e ON e.id = ev.equipment_id
+                              WHERE ev.kind IN ('service','repair') AND ev.date >= ? AND ev.date <= ?
+                              ORDER BY ev.date DESC, ev.id DESC""", (a, b))
+        for ev in events:
+            ev["kind_title"] = EQ_EVENTS.get(ev["kind"], ev["kind"])
+        return {"from": a, "to": b, "due": due, "events": events,
+                "in_repair": [{"id": e["id"], "inv_number": e["inv_number"], "name": e["name"]} for e in eq if e["status"] == "repair"],
+                "cost": round(sum(ev["cost"] or 0 for ev in events), 2),
+                "cost_service": round(sum(ev["cost"] or 0 for ev in events if ev["kind"] == "service"), 2),
+                "cost_repair": round(sum(ev["cost"] or 0 for ev in events if ev["kind"] == "repair"), 2)}
 
     def equipment_replace_plan(self, f, user="", money=True):
         """«Запланировать замену»: the date; with «Бухгалтерия» also the market value, the cost of a new one and the monthly

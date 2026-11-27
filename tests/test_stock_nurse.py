@@ -361,7 +361,7 @@ html = (ROOT / "app" / "ui" / "index.html").read_text(encoding="utf-8")
 js = (ROOT / "app" / "ui" / "stock-nurse.js").read_text(encoding="utf-8")
 check("screen file loaded with the cache tag", f'<script src="stock-nurse.js?v={config.VERSION}"></script>' in html)
 check("styles loaded", f'styles-stocknurse.css?v={config.VERSION}' in html)
-check("home tab", 'data-k="home"' in html)
+check("home tab", '["home", "Главная"]' in (ROOT / "app" / "ui" / "stock.js").read_text(encoding="utf-8"))  # 3.14: the tabs live in STOCK_AREAS
 for fn in ("stockHome", "openRequestScreen", "openUseScreen", "openIssueScreen", "openReceiveScreen", "openApprovals", "photoPick"):
     check(f"screen: {fn}", f"function {fn}" in js)
 check("tiles", all(t in js for t in ("Принять поставку", "Выдать в кабинет", "Зафиксировать расход", "Создать заявку")))

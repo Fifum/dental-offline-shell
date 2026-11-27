@@ -133,13 +133,13 @@
   };
 
   /* ------------------------------------------------------------ the keys */
-  const SECTION_KEYS = ["schedule", "patients", "cash", "marketing", "lab", "stock"];
+  const SECTION_KEYS = ["schedule", "patients", "cash", "marketing", "lab", "stock", "equipment", "inventory"];
   function keysHelp() {
     const rows = [
       ["Ctrl K", "Поиск: пациент, раздел или действие («записать», «оплата»)"],
       ["F2", "Записать пациента на приём"],
       ["F4", "Новый пациент"],
-      ["Alt 1 … 6", "Расписание, Пациенты, Касса, CRM, Лаборатория, Склад"],
+      ["Alt 1 … 8", "Расписание, Пациенты, Касса, CRM, Лаборатория, Склад и материалы, Оборудование, Инвентаризация"],
       ["← →", "Предыдущий и следующий день в расписании"],
       ["Home", "Сегодня в расписании"],
       ["↑ ↓ Enter", "Выбор в списке поиска"],
@@ -161,7 +161,7 @@
     if (modalOpen()) return;
     if (e.key === "F2") { e.preventDefault(); newVisit(); return; }
     if (e.key === "F4") { e.preventDefault(); if (can("patients_edit")) openNewPatient(); return; }
-    if (e.altKey && !e.ctrlKey && /^Digit[1-6]$/.test(e.code)) {
+    if (e.altKey && !e.ctrlKey && /^Digit[1-8]$/.test(e.code)) {
       const v = SECTION_KEYS[+e.code.slice(5) - 1];
       if (v && canView(v)) { e.preventDefault(); show(v); }
     }

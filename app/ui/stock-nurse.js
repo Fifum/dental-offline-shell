@@ -141,7 +141,7 @@ function snTask(t) {
   if (k === "issue") return openIssueScreen();
   if (k === "expired") return can("stock_edit") ? writeOffExpired() : (SN.sub = "lots", stockHome());
   if (k === "order") return can("stock_edit") ? openPurchase() : (SN.low = true, SN.sub = "balance", stockHome());
-  if (k === "service") { S.stockTab = "equipment"; $$("#stockTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === "equipment")); return loadStock(); }
+  if (k === "service") return stockGo("equipment", "service");  // 3.14: «ТО и ремонт» of «Оборудование»
 }
 async function stockHomeSub() {
   const el = $("#snBody"); if (!el) return;
@@ -544,7 +544,7 @@ async function openIssueScreen(preset = {}) {
     snScreen("issue", "Выдать в кабинет", "Перемещение материалов из центрального склада в кабинет", `<div class="sn-card"><div class="empty"><b>Кабинеты ещё не заведены</b>
       <span>${can("stock_edit") ? "Добавьте кабинеты во вкладке «Места хранения» — и выдавайте материалы со склада в кабинет." : "Попросите кладовщика или администратора добавить кабинеты."}</span>
       ${can("stock_edit") ? `<button class="btn" id="isPlaces">Открыть «Места хранения»</button>` : ""}</div></div>`);
-    const b = $("#isPlaces"); if (b) b.onclick = () => { S.stockTab = "places"; $$("#stockTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === "places")); loadStock(); };
+    const b = $("#isPlaces"); if (b) b.onclick = () => stockGo("stock", "places");
     return;
   }
   const st = {step: 1, from: "", to: defaultCabinet(), req: new Set(), lines: {}, comment: "", rows: [], reqs: [], doc: null};
@@ -697,7 +697,7 @@ async function openReceiveScreen() {
 }
 
 /* ----------------------------------------------- approvals tab helper */
-function openApprovals() { SN.sub = "requests"; S.stockTab = "home"; $$("#stockTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === "home")); return stockHome(); }
+function openApprovals() { SN.sub = "requests"; return stockGo("stock", "home"); }
 
 /* ------------------------------------------------- equipment: depreciation */
 function amortBlock(e) {
@@ -714,22 +714,28 @@ function amortBlock(e) {
       sch.map(x => `<tr class="${x.month <= iso(new Date()).slice(0, 7) ? "" : "muted-row"}"><td>${monthTitle(x.month)}</td><td class="num">${money(x.charge)}</td><td class="num">${money(x.accumulated)}</td><td class="num">${money(x.residual)}</td></tr>`).join("")}</tbody></table></details>` : ""}`;
 }
 const monthTitle = m => { if (!m) return ""; const [y, mo] = m.split("-").map(Number); return `${["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"][mo - 1]} ${y}`; };
-async function openAmortReport(from, to) {
-  const r = await api.equipment_amortization(from, to);
+/** 3.14: the depreciation is a tab of «Оборудование» (it was a dialog). */
+function openAmortReport() { return stockGo("equipment", "amort"); }
+async function eqAmortTab() {
+  const f = S.amortF || {};
+  const r = await api.equipment_amortization(f.from || null, f.to || null);
   const short = m => { const [y, mo] = m.split("-"); return `${mo}.${y.slice(2)}`; };
-  const box = modal(`<div class="m-h"><h3>Амортизация оборудования</h3><button class="x" data-close>×</button></div>
-    <div class="m-b"><div class="stat-row"><div class="stat"><span>Стоимость</span><b>${money(r.cost)}</b></div><div class="stat"><span>Накоплено</span><b>${money(r.accumulated)}</b></div>
+  const body = $("#stockBody");
+  body.innerHTML = `<div class="eq-amort">
+    <div class="stat-row"><div class="stat"><span>Стоимость</span><b>${money(r.cost)}</b></div><div class="stat"><span>Накоплено</span><b>${money(r.accumulated)}</b></div>
       <div class="stat ok"><span>Остаточная стоимость</span><b>${money(r.residual)}</b></div><div class="stat"><span>За этот месяц</span><b>${money(r.this_month)}</b></div></div>
-      <div class="tab-tools"><label class="fl inline">С<input class="input" type="month" id="amF" value="${r.months[0]}"></label><label class="fl inline">по<input class="input" type="month" id="amT" value="${r.months[r.months.length - 1]}"></label>
-        <span class="grow"></span>${r.can_pnl ? `<label class="switch-row" style="margin:0" title="Амортизация попадёт в «Бухгалтерия → ОПиУ» отдельной строкой постоянных расходов"><input type="checkbox" id="amPnl" ${r.in_pnl ? "checked" : ""}><span class="sw"></span>Учитывать в ОПиУ</label>` : ""}</div>
-      ${r.without_life ? `<div class="warn-line">У ${r.without_life} ед. оборудования со стоимостью не указан срок полезного использования — они не амортизируются.</div>` : ""}
-      ${r.rows.length ? `<div class="sn-amort-wrap"><table class="tbl compact"><thead><tr><th>Оборудование</th><th class="num">Стоимость</th>${r.months.map(m => `<th class="num">${short(m)}</th>`).join("")}<th class="num">Итого</th><th class="num">Остаточная</th></tr></thead><tbody>${
-        r.rows.map(x => `<tr data-e="${esc(x.id)}" class="${x.status === "written_off" ? "muted-row" : ""}"><td class="lnk"><b>${esc(x.name)}</b><small class="muted" style="display:block">инв. № ${esc(x.inv_number)}${x.done ? " · самортизировано" : ""}</small></td><td class="num">${money(x.cost)}</td>${x.values.map(v => `<td class="num">${v ? money(v) : '<span class="muted">—</span>'}</td>`).join("")}<td class="num"><b>${money(x.total)}</b></td><td class="num">${money(x.residual)}</td></tr>`).join("")}
-        <tr class="sn-tot"><td><b>Итого</b></td><td class="num">${money(r.cost)}</td>${r.totals.map(v => `<td class="num"><b>${money(v)}</b></td>`).join("")}<td class="num"><b>${money(r.total)}</b></td><td class="num"><b>${money(r.residual)}</b></td></tr></tbody></table></div>`
-        : `<div class="empty"><b>Амортизация пока не считается</b><span>Откройте оборудование → «Изменить» и укажите дату ввода в эксплуатацию и срок полезного использования</span></div>`}</div>
-    <div class="m-f"><span class="muted">Линейный способ: (стоимость − ликвидационная) / срок, с месяца после ввода в эксплуатацию</span><button class="btn ghost" data-close>Закрыть</button></div>`, {wide: true});
-  const re = () => openAmortReport($("#amF").value, $("#amT").value);
-  $("#amF", box).onchange = re; $("#amT", box).onchange = re;
-  const p = $("#amPnl", box); if (p) p.onchange = async () => { try { await api.amort_settings_save({in_pnl: p.checked}); toast(p.checked ? "Амортизация учитывается в ОПиУ" : "Амортизация убрана из ОПиУ"); } catch (e) { toast(errText(e), true); p.checked = !p.checked; } };
-  $$("tr[data-e]", box).forEach(tr => tr.onclick = () => openEquipment(tr.dataset.e));
+    <div class="tab-tools"><label class="fl inline">С<input class="input" type="month" id="amF" value="${r.months[0]}"></label><label class="fl inline">по<input class="input" type="month" id="amT" value="${r.months[r.months.length - 1]}"></label>
+      <span class="grow"></span>${r.can_pnl ? `<label class="switch-row" style="margin:0" title="Амортизация попадёт в «Бухгалтерия → ОПиУ» отдельной строкой постоянных расходов"><input type="checkbox" id="amPnl" ${r.in_pnl ? "checked" : ""}><span class="sw"></span>Учитывать в ОПиУ</label>` : ""}</div>
+    <div id="amCapex"></div>
+    ${r.without_life ? `<div class="warn-line">У ${r.without_life} ед. оборудования со стоимостью не указан срок полезного использования — они не амортизируются. Срок указывают в карточке → «Редактировать».</div>` : ""}
+    ${r.rows.length ? `<div class="sn-amort-wrap"><table class="tbl compact"><thead><tr><th>Оборудование</th><th class="num">Стоимость</th>${r.months.map(m => `<th class="num">${short(m)}</th>`).join("")}<th class="num">Итого</th><th class="num">Остаточная</th></tr></thead><tbody>${
+      r.rows.map(x => `<tr data-e="${esc(x.id)}" class="${x.status === "written_off" ? "muted-row" : ""}"><td class="lnk"><b>${esc(x.name)}</b><small class="muted" style="display:block">инв. № ${esc(x.inv_number)}${x.done ? " · самортизировано" : ""}${x.status === "written_off" ? " · выбыло" : ""}</small></td><td class="num">${money(x.cost)}</td>${x.values.map(v => `<td class="num">${v ? money(v) : '<span class="muted">—</span>'}</td>`).join("")}<td class="num"><b>${money(x.total)}</b></td><td class="num">${money(x.residual)}</td></tr>`).join("")}
+      <tr class="sn-tot"><td><b>Итого</b></td><td class="num">${money(r.cost)}</td>${r.totals.map(v => `<td class="num"><b>${money(v)}</b></td>`).join("")}<td class="num"><b>${money(r.total)}</b></td><td class="num"><b>${money(r.residual)}</b></td></tr></tbody></table></div>`
+      : `<div class="empty"><b>Амортизация пока не считается</b><span>Откройте оборудование → «Редактировать» и укажите дату ввода в эксплуатацию и срок полезного использования</span></div>`}
+    <div class="muted eqc-hint">Линейный способ: (стоимость − ликвидационная) / срок, с месяца после ввода в эксплуатацию. В ОПиУ покупка оборудования не идёт целиком в расходы месяца — каждый месяц идёт амортизация, а при выбытии — остаточная стоимость.</div></div>`;
+  const re = () => { S.amortF = {from: $("#amF").value, to: $("#amT").value}; eqAmortTab(); };
+  $("#amF").onchange = re; $("#amT").onchange = re;
+  const p = $("#amPnl"); if (p) p.onchange = async () => { try { await api.amort_settings_save({in_pnl: p.checked}); toast(p.checked ? "Амортизация учитывается в ОПиУ" : "Амортизация убрана из ОПиУ"); } catch (e) { toast(errText(e), true); p.checked = !p.checked; } };
+  $$("tr[data-e]", body).forEach(tr => tr.onclick = () => openEquipment(tr.dataset.e, "finance"));
+  if (typeof eqCapexBox === "function") eqCapexBox($("#amCapex"));
 }

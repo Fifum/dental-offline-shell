@@ -42,7 +42,9 @@
       <h6 class="nav-g">Клиника</h6>
       <button data-view="marketing" data-perm="marketing" class="nav" title="CRM: задачи, заявки, обзвон, рассылки, отзывы (Alt+4)"><svg viewBox="0 0 24 24"><path d="M4 10v4h3l8 4.5v-13L7 10z"/><path d="M18.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M7 14l1.2 5h2.3l-1-4.6"/></svg><span>CRM</span><i class="badge" id="crmBadge" hidden></i></button>
       <button data-view="lab" data-perm-any="lab,accounting" class="nav" title="Зуботехническая лаборатория: заказ-наряды (Alt+5)"><svg viewBox="0 0 24 24"><path d="M8 3.5h8M10 3.5v5.2L5 18a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-5-9.3V3.5"/><path d="M7.5 14.5h9"/></svg><span>Лаборатория</span><i class="badge" id="labBadge" hidden></i></button>
-      <button data-view="stock" data-perm-any="stock_view,stock_edit,stock_ops,equipment,sterilization" class="nav" title="Склад и оборудование (Alt+6)"><svg viewBox="0 0 24 24"><path d="M3.5 8.5 12 4l8.5 4.5v11h-17z"/><path d="M7.5 19.5v-6h9v6M7.5 16.5h9"/></svg><span>Склад</span><i class="badge" id="stockBadge" hidden></i></button>
+      <button data-view="stock" data-perm-any="stock_view,stock_edit,stock_ops" class="nav" title="Склад и материалы: поставки, выдача в кабинеты, расход, закупки (Alt+6)"><svg viewBox="0 0 24 24"><path d="M3.5 7.5 12 3.5l8.5 4v9L12 20.5l-8.5-4z"/><path d="M3.5 7.5 12 11.5l8.5-4M12 11.5v9"/></svg><span>Склад и материалы</span><i class="badge" id="stockBadge" hidden></i></button>
+      <button data-view="equipment" data-perm-any="equipment,stock_view,sterilization" class="nav" title="Оборудование: карточки, ТО и ремонт, выбытие, амортизация (Alt+7)"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16v4"/></svg><span>Оборудование</span><i class="badge" id="eqBadge" hidden></i></button>
+      <button data-view="inventory" data-perm-any="stock_edit,equipment" class="nav" title="Инвентаризация материалов и оборудования (Alt+8)"><svg viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16" rx="2.5"/><path d="M9 3v3h6V3M8.5 13l2.5 2.5 4.5-5"/></svg><span>Инвентаризация</span></button>
       <button data-view="journal" data-perm-any="transfer,reports,medcard_edit" class="nav" title="Перенос в Dentist Plus"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m15 17 2 2 4-4"/></svg><span>Перенос в DP</span><i class="badge" id="pendingBadge" hidden></i></button>
       <h6 class="nav-g">Управление</h6>
       <button data-view="director" data-perm="reports" class="nav" title="Экран директора: сегодня, месяц, план и прогноз" hidden><svg viewBox="0 0 24 24"><path d="M4 13.5a8 8 0 0 1 16 0"/><path d="m12 13.5 3.8-3.8"/><circle cx="12" cy="13.5" r="1.3"/><path d="M4 18.5h16"/></svg><span>Директор</span></button>
@@ -232,8 +234,8 @@
     <!-- ===================== STOCK ===================== -->
     <section class="view" id="view-stock" hidden>
       <header class="top">
-        <div class="title-block"><h1>Склад</h1><span class="muted">Поставки, выдача в кабинеты, расход, заявки, оборудование и амортизация</span></div>
-        <div class="seg" id="stockTabs"><button data-k="home" class="on">Главная</button><button data-k="balance">Остатки</button><button data-k="docs">Документы</button><button data-k="moves">Движение</button><button data-k="visits" title="Списание материалов по приёмам Dentist Plus">По приёмам<i class="cnt" id="stVisitsCnt" hidden></i></button><button data-k="places" title="Кабинеты, филиалы и перемещения">Места хранения</button><button data-k="equipment">Оборудование</button><button data-k="norms">Нормы списания</button><button data-k="suppliers">Поставщики</button><button data-k="steril">Стерилизация</button></div>
+        <div class="title-block"><h1 id="stockTitle">Склад и материалы</h1><span class="muted" id="stockSub"></span></div>
+        <div class="seg" id="stockTabs"></div>
       </header>
       <div class="card-scroll" id="stockBody"></div>
     </section>
