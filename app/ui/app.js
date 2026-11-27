@@ -211,6 +211,7 @@ function firstView() { return ["schedule", "patients", "cash", "director", "repo
 function show(view) {
   if (!canView(view)) view = firstView();
   S.view = view;
+  document.body.dataset.view = view;  // 3.13: the stock and its dialogs take the teal palette (styles-type.css)
   if (view === "none") { $$(".view").forEach(v => v.hidden = true); toast("Для вашей учётной записи пока не назначены разделы. Обратитесь к директору.", true); return; }
   $$(".view").forEach(v => v.hidden = v.id !== "view-" + view);
   $$(".nav").forEach(b => b.classList.toggle("active", b.dataset.view === view || (view === "patient" && b.dataset.view === "patients")));
