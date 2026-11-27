@@ -354,6 +354,10 @@ METHOD_PERMS = {
     "equipment_third_party": ("equipment", "stock_view", "equipment_approve"),
     "equipment_all_docs": ("equipment", "stock_view", "equipment_approve"), "equipment_analytics": ("equipment", "equipment_approve", "accounting"),
     "equipment_log": ("equipment", "equipment_approve", "staff"),
+    # 3.16 «Справочники и настройки», the bell of the service dates
+    "equipment_ref_save": "equipment", "equipment_module_save": "equipment", "equipment_place_chair": "equipment", "equipment_refs_export": ("equipment", "equipment_approve"),
+    "equipment_refs_import": "equipment", "equipment_due": ("equipment", "stock_view", "equipment_approve", "stock_ops"),
+    "equipment_rights": ("staff", "equipment_approve"), "equipment_integrations": ("equipment", "equipment_approve", "settings"),
     # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
     "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
     "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",
@@ -477,6 +481,9 @@ AUDITED = {
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
     "expenses_to_capex": "Расходы перенесены в «Покупку оборудования»",
     "equipment_refs_save": "Оборудование: категории и нормативы",
+    "equipment_ref_save": "Оборудование: справочник", "equipment_module_save": "Оборудование: настройки модуля",
+    "equipment_place_chair": "Оборудование: кресло кабинета",
+    "equipment_refs_import": "Оборудование: импорт справочников",
     "equipment_receipt_save": "Поступление оборудования", "equipment_receipt_accept": "Оборудование введено в эксплуатацию",
     "equipment_receipt_cancel": "Поступление оборудования отменено", "equipment_move_save": "Перемещение оборудования",
     "equipment_move_decide": "Перемещение оборудования: утверждение", "equipment_move_step": "Перемещение оборудования: этап",

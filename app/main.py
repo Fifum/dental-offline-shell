@@ -135,7 +135,8 @@ class Api:
             summ.pop("eq_cost", None)
         return {**summ, "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS, "eq_money": self._eq_money(),
                 "locations": [{"id": x["id"], "name": x["name"], "kind": x["kind"]} for x in locs], "loc_kinds": LOC_KINDS,
-                "dp_link": self._sauto.settings()["mode"] != "off"}  # 3.13: the stock is separate from Dentist Plus
+                "dp_link": self._sauto.settings()["mode"] != "off",  # 3.13: the stock is separate from Dentist Plus
+                "eq_module": self._stock.eq_module()}  # 3.16: the rounding of sums, «Учёт стороннего оборудования»
 
     # ------------------------------------- 3.5: places, transfers, write-off by visits, cost --
     def _stock_me(self):
@@ -382,8 +383,8 @@ class Api:
                 "disposals": EQ_DISPOSAL, "can": {"edit": "equipment" in perms and e["status"] != "written_off",
                                                    "money": "accounting" in perms}}
 
-    def equipment_next_inv(self):
-        return self._stock.next_inv()
+    def equipment_next_inv(self, category=""):
+        return self._stock.next_inv(category)
 
     def save_equipment(self, f):
         """3.14: a new piece with its cost may write its payment down at once — into «Покупка оборудования» (not a cost of the
@@ -581,11 +582,74 @@ class Api:
         return self._stock.eq_refs()
 
     def equipment_refs_save(self, f):
-        return self._stock.eq_refs_save(f)
+        return self._stock.eq_refs_save(f, self._who())
 
     def equipment_settings_save(self, f):
         """«Бухгалтерия»: how many hours a chair works in a month (for «амортизация на кресло-час»)."""
         return {"chair_hours": self._stock.set_chair_hours((f or {}).get("chair_hours"))}
+
+    # 3.16 «Справочники и настройки» (mockup 10)
+    def equipment_ref_save(self, key, rows):
+        return self._stock.eq_ref_save(str(key or ""), rows, self._who())
+
+    def equipment_place_chair(self, lid, chair):
+        return self._stock.eq_place_chair(lid, chair, self._who())
+
+    def equipment_module_save(self, f):
+        """The module's settings; the depreciation (its method, the P&L) only with «Бухгалтерия»."""
+        return self._stock.eq_module_save(f, self._who(), money=self._eq_money())
+
+    def equipment_refs_export(self):
+        return self._stock.eq_refs_export()
+
+    def equipment_refs_import(self, data):
+        return self._stock.eq_refs_import(data, self._who())
+
+    def equipment_due(self):
+        """«Контроль сроков ТО»: what the bell of the section and the badge of the menu show."""
+        return self._stock.eq_due()
+
+    def equipment_rights(self):
+        """«Пользователи и права»: who and in what position has the rights of the equipment (they are changed in «Сотрудники»)."""
+        from auth import Auth, roles
+        keys = ["equipment", "equipment_approve", "stock_ops", "stock_view", "accounting"]
+        rl = roles(self._db)
+        users = []
+        try:
+            rows = self._db.q("SELECT * FROM users WHERE COALESCE(status,'')='active' ORDER BY name")
+        except Exception:  # noqa: BLE001 — no logins in this clinic yet
+            rows = []
+        for u in rows:
+            p = set(Auth.effective_perms(u))
+            if p & set(keys):
+                users.append({"name": u["name"] or u["login"], "login": u["login"],
+                              "position": u.get("position") or (rl.get(u.get("role") or "") or {}).get("title", ""),
+                              "perms": {k: k in p for k in keys}, "own": bool(u.get("perms"))})
+        pos = [{"key": k, "title": r["title"], "perms": {x: x in r["perms"] for x in keys}} for k, r in rl.items()]
+        pos.insert(0, {"key": "director", "title": "Директор", "perms": {x: True for x in keys}})
+        from auth import PERMS
+        return {"keys": keys, "titles": {k: t for k, t in PERMS if k in keys}, "users": users,
+                "positions": [x for x in pos if any(x["perms"].values())]}
+
+    def equipment_integrations(self):
+        """«Интеграции»: what the section takes from and gives to the rest of the program, and whether it is set up."""
+        import daily
+        import stock_auto
+        d = date.today()
+        since = (d - timedelta(days=30)).isoformat()
+        va = self._db.one("SELECT COUNT(*) AS n, COUNT(DISTINCT NULLIF(chair,'')) AS c FROM visits_archive WHERE substr(start,1,10)>=?", (since,))
+        places = self._db.q("SELECT name, chair FROM stock_locations WHERE active=1")
+        try:
+            capex = self._db.one("SELECT COUNT(*) AS n FROM expenses WHERE category=?", (__import__("accounting").CAPEX,))["n"]
+        except Exception:  # noqa: BLE001
+            capex = 0
+        ds = daily.public_settings()
+        return {"dp": {"visits": va["n"] or 0, "chairs": va["c"] or 0, "places": len(places),
+                       "linked": sum(1 for p in places if p["chair"]), "configured": bool(config.load_settings().get("login"))},
+                "pnl": {"amort": stock_auto.amort_in_pnl(self._db), "capex": capex},
+                "report": {"channels": daily.channels(), "to_report": self._stock.eq_module()["to_report"]},
+                "phone": {"url": self._stock.phone_url()},
+                "excel": "export" in self._my_perms()[0], "report_on": bool(ds.get("enabled") or ds.get("tg_on"))}
 
     # ------------------------------------------- 3.10: the nurse's stock --
     def _stock_rights(self):
@@ -2185,9 +2249,9 @@ class Api:
                 st["stock_exp"] = sum(1 for m in mats if m["exp_state"])
                 st["stock_alerts"] = sum(1 for m in mats if m["low"] or m["balance"] < 0 or m["exp_state"])
             if u is None or {"equipment", "stock_view"} & set(Auth.effective_perms(u)):  # 3.14: the badge of «Оборудование»
-                today = date.today().isoformat()
-                st["eq_due"] = self._db.one("""SELECT COUNT(*) AS n FROM equipment WHERE status<>'written_off'
-                                               AND COALESCE(next_service,'')<>'' AND next_service <= ?""", (today,))["n"]
+                due = self._stock.eq_due()  # 3.16: «Контроль сроков ТО»: overdue and due within the set days
+                st["eq_due"] = len(due["items"])
+                st["eq_overdue"] = due["overdue"]
             sp = set(Auth.effective_perms(u)) if u else {"stock_approve", "stock_edit"}
             if {"stock_approve", "stock_ops", "stock_edit"} & sp:  # 3.10: what waits for the manager, the storekeeper, the nurse
                 c = self._sflow.counts((u or {}).get("login") or "", "stock_approve" in sp, "stock_edit" in sp)

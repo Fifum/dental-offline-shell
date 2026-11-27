@@ -331,7 +331,8 @@ function eqDispose(e) {
       <div class="grid3"><label class="fl">Дата<input class="input" type="date" id="dsD" value="${iso(new Date())}"></label><label class="fl" id="dsNW">Номер акта<input class="input" id="dsN" placeholder="присвоится сам"></label>
         ${m ? `<label class="fl">Остаточная стоимость, ₽<input class="input" type="number" min="0" step="any" id="dsR" placeholder="${e.amort && e.amort.on ? "по амортизации на дату выбытия" : money(e.price || 0)}" title="Пусто — посчитается по амортизации на дату выбытия"></label>` : ""}</div>
       <label class="fl" id="dsWL"><span id="dsWT">Причина списания*</span><input class="input" id="dsW" list="dsWo"></label>
-      <datalist id="dsWo"><option value="Физический износ, ремонт экономически нецелесообразен"><option value="Неисправность, не подлежит восстановлению"><option value="Моральный износ, замена на новое"><option value="Повреждение в результате аварии"></datalist>
+      <datalist id="dsWo">${((EQS.refs && EQS.refs.disp_reasons) || []).map(x => `<option value="${esc(x.name)}">`).join("") || '<option value="Физический износ, ремонт экономически нецелесообразен"><option value="Неисправность, не подлежит восстановлению"><option value="Моральный износ, замена на новое"><option value="Повреждение в результате аварии">'}</datalist>
+      <label class="fl">Документ-основание${EQS.refs && EQS.refs.module && EQS.refs.module.no_doc_disposal ? "*" : ""}<input class="input" id="dsB" maxlength="200" placeholder="Акт технического состояния № …, договор купли-продажи № …"></label>
       ${m ? `<label class="fl" id="dsAW" hidden>Сумма продажи, ₽<input class="input" type="number" min="0" step="any" id="dsA"></label>` : ""}
       <div id="dsCom"><label class="fl">Председатель комиссии*<input class="input" id="dsC0" placeholder="ФИО, должность"></label>
         <div class="grid2"><label class="fl">Член комиссии*<input class="input" id="dsC1" placeholder="ФИО, должность"></label><label class="fl">Член комиссии<input class="input" id="dsC2" placeholder="ФИО, должность"></label></div></div>
@@ -349,7 +350,7 @@ function eqDispose(e) {
   $$("#dsK button", box).forEach(b => b.onclick = () => { kind = b.dataset.k; draw(); }); draw();
   $("#dsOk", box).onclick = async () => {
     const f = {id: e.id, kind, date: $("#dsD", box).value, reason: $("#dsW", box).value, act_number: $("#dsN", box).value,
-      commission: [$("#dsC0", box).value, $("#dsC1", box).value, $("#dsC2", box).value]};
+      commission: [$("#dsC0", box).value, $("#dsC1", box).value, $("#dsC2", box).value], basis: $("#dsB", box).value};
     if (m) { f.residual = $("#dsR", box).value; if ($("#dsA", box)) f.amount = $("#dsA", box).value; }
     try { const x = await api.equipment_dispose(f); closeModal(); toast(x.status_title); eqCard(); if (["writeoff", "utilize", "transfer"].includes(kind)) printEquipmentAct(x); }
     catch (err) { $("#dsE", box).textContent = errText(err); }
@@ -381,7 +382,9 @@ async function editEquipment(e) {
   places = (places || []).filter(p => p.id);
   let refs = EQS.refs;  // 3.15: categories with the usual useful life, ownership, the ways of accounting
   if (!refs) { try { refs = EQS.refs = await api.equipment_refs(); } catch (x) { refs = null; } }
-  const R = refs ? {ownerships: refs.ownership, conditions: refs.conditions, accounting: refs.accounting}
+  const third = !(refs && refs.module && refs.module.third_party === false);
+  const ownOf = o => third ? o : Object.fromEntries(Object.entries(o).filter(([k]) => ["own", "leasing"].includes(k) || k === e.ownership));
+  const R = refs ? {ownerships: ownOf(refs.ownership), conditions: refs.conditions, accounting: refs.accounting}
     : {ownerships: {own: "Собственность клиники", lease: "Аренда", leasing: "Лизинг", owner: "Имущество учредителя", doctor: "Имущество врача", other: "Иное пользование"},
       conditions: {ok: "Исправно", service: "Требует обслуживания", faulty: "Неисправно"}, accounting: {amort: "С амортизацией", qty: "Количественный учёт без амортизации"}};
   const cats = refs ? refs.categories : [], lifeOf = c => (cats.find(x => x.name === c) || {}).life || 0;
@@ -391,8 +394,9 @@ async function editEquipment(e) {
       <div class="grid3"><label class="fl" style="grid-column:span 2">Наименование*<input class="input" id="eN" value="${esc(e.name || "")}" autofocus placeholder="Стоматологическая установка"></label>
         <label class="fl">Инвентарный номер<input class="input" id="eInv" value="${esc(e.inv_number || "")}" placeholder="${esc(nextInv ? nextInv + " — присвоится сам" : "присвоится сам")}"></label></div>
       <div class="grid3"><label class="fl">Категория<input class="input" id="eC" value="${esc(e.category || "")}" list="eCats" placeholder="Медицинское оборудование"></label>
-        <label class="fl">Производитель<input class="input" id="eMf" value="${esc(e.manufacturer || "")}"></label><label class="fl">Модель<input class="input" id="eM" value="${esc(e.model || "")}"></label></div>
+        <label class="fl">Производитель<input class="input" id="eMf" value="${esc(e.manufacturer || "")}" list="eMfs"></label><label class="fl">Модель<input class="input" id="eM" value="${esc(e.model || "")}" list="eMds"></label></div>
       <datalist id="eCats">${cats.map(x => `<option value="${esc(x.name)}">`).join("")}</datalist>
+      <datalist id="eMfs">${(refs ? refs.manufacturers : []).map(x => `<option value="${esc(x)}">`).join("")}</datalist><datalist id="eMds"></datalist>
       <div class="grid3"><label class="fl">Серийный номер<input class="input" id="eS" value="${esc(e.serial || "")}"></label>
         <label class="fl">Местонахождение<select class="input" id="eLoc"><option value="">— другое (впишите ниже) —</option>${places.map(p => `<option value="${esc(p.id)}" ${p.id === e.location_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
         <label class="fl" id="eLW">Место текстом<input class="input" id="eL" value="${esc(e.location_id ? "" : e.location || "")}" placeholder="Кабинет 1 · кресло 1"></label></div>
@@ -439,4 +443,11 @@ async function editEquipment(e) {
       const b = $("#eLifeNorm", box); if (b) b.onclick = () => { $("#eLife").value = norm; lifeT(); }; };
     ["#eLife", "#ePr", "#eSalv", "#eC"].forEach(s => $(s, box).oninput = lifeT); const ac = $("#eAcc", box); if (ac) ac.onchange = lifeT; lifeT();
   }
+  // 3.16: the models of the reference for the manufacturer typed; the category of a model; the inventory group's number
+  const mds = () => { const mf = $("#eMf", box).value.trim().toLowerCase(); $("#eMds", box).innerHTML = ((refs && refs.models) || []).filter(x => !mf || (x.manufacturer || "").toLowerCase() === mf).map(x => `<option value="${esc(x.model)}">${esc(x.manufacturer)}${x.article ? " · " + esc(x.article) : ""}</option>`).join(""); };
+  $("#eMf", box).addEventListener("input", mds); mds();
+  $("#eM", box).addEventListener("change", () => { const x = ((refs && refs.models) || []).find(y => y.model === $("#eM", box).value && (!$("#eMf", box).value || y.manufacturer === $("#eMf", box).value));
+    if (x && x.category && !$("#eC", box).value) { $("#eC", box).value = x.category; $("#eC", box).dispatchEvent(new Event("input")); } if (x && x.manufacturer && !$("#eMf", box).value) $("#eMf", box).value = x.manufacturer; });
+  if (isNew && refs && (refs.groups || []).length) $("#eC", box).addEventListener("change", async () => {
+    try { const n = await api.equipment_next_inv($("#eC", box).value); $("#eInv", box).placeholder = `${n} — присвоится сам`; } catch (x) { /* the old hint stays */ } });
 }

@@ -80,7 +80,8 @@ function stockTabsByRights() {
     inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment"),
     inv: can("equipment"), eq_refs: canAny("equipment", "stock_view"), eq_overview: canAny("equipment", "stock_view", "equipment_approve"),
     eq_receipts: canAny("equipment", "equipment_approve"), eq_moves: canAny("equipment", "stock_view", "equipment_approve"),
-    eq_purchases: canAny("equipment", "equipment_approve", "accounting"), eq_third: canAny("equipment", "stock_view", "equipment_approve"),
+    eq_purchases: canAny("equipment", "equipment_approve", "accounting"),
+    eq_third: canAny("equipment", "stock_view", "equipment_approve") && !(STK.eq_module && STK.eq_module.third_party === false),  // 3.16
     eq_docs: canAny("equipment", "stock_view", "equipment_approve"), eq_analytics: canAny("equipment", "equipment_approve", "accounting"),
     eq_log: canAny("equipment", "equipment_approve", "staff")};  // 3.15
   const area = STOCK_AREAS[S.stockArea], keys = [...area.tabs, ...(area.more || [])].map(t => t[0]).filter(k => k !== "inv");

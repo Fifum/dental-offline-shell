@@ -114,7 +114,9 @@ EQ_STATUS = {"in_use": "В работе", "repair": "В ремонте", "storag
 EQ_EVENTS = {"service": "Обслуживание", "repair": "Ремонт", "move": "Перемещение", "note": "Заметка",
              "writeoff": "Списание", "status": "Статус", "inventory": "Инвентаризация", "replace_plan": "План замены",
              "disposal": "Выбытие", "doc": "Документ", "condition": "Состояние", "created": "Поставлено на учёт",
-             "diag": "Диагностика"}
+             "diag": "Диагностика",
+             # 3.16 «Журнал действий»: a change of a card, of the references or settings, a request, the purchase plan
+             "edit": "Редактирование", "settings": "Изменение параметров", "request": "Создание заявки", "purchase": "План закупок"}
 # 3.13 «карточка оборудования»
 EQ_OWNERSHIP = {"own": "Собственность клиники", "lease": "Аренда", "leasing": "Лизинг", "owner": "Имущество учредителя",
                 "doctor": "Имущество врача", "other": "Иное пользование"}   # 3.15: the doctors' own and any other use
@@ -125,8 +127,20 @@ EQ_DISPOSED = {"writeoff": "Списано", "utilize": "Утилизирова�
                "return": "Возвращено владельцу"}
 EQ_DOC_KINDS = {"contract": "Договор купли-продажи", "waybill": "Товарная накладная", "act": "Акт ввода в эксплуатацию",
                 "passport": "Технический паспорт", "reg": "Регистрационное удостоверение", "warranty": "Гарантийный талон",
-                "service_act": "Акты ТО", "photo": "Фотографии", "other": "Другое"}
-EQ_DOC_MAIN = [k for k in EQ_DOC_KINDS if k != "other"]   # «Документы (n/8)»
+                "service_act": "Акты ТО", "photo": "Фотографии",
+                # 3.16 «Документы» (mockup 13)
+                "lease_contract": "Договор аренды или лизинга", "service_contract": "Договор на обслуживание",
+                "manual": "Инструкция по эксплуатации", "cert": "Сертификат соответствия", "license": "Лицензия или разрешение",
+                "report": "Отчёт или заключение", "other": "Другое"}
+EQ_DOC_MAIN = ["contract", "waybill", "act", "passport", "reg", "warranty", "service_act", "photo"]   # «Документы (n/8)»
+# 3.16: the categories of the section «Документы» (the photos live in the card's gallery, not here)
+EQ_DOC_CATS = {"contracts": ("Договоры", ("contract", "lease_contract", "service_contract", "waybill")),
+               "acts": ("Акты", ("act", "service_act")), "passports": ("Паспорта / инструкции", ("passport", "manual")),
+               "certs": ("Сертификаты", ("cert", "reg")), "warranty": ("Гарантии", ("warranty",)),
+               "licenses": ("Лицензии / разрешения", ("license",)), "reports": ("Отчёты и заключения", ("report",)),
+               "other": ("Прочие", ("other",))}
+EQ_DOC_COLS_316 = ("number TEXT", "doc_date TEXT", "valid_until TEXT", "counterparty TEXT", "archived INTEGER DEFAULT 0", "updated_at TEXT")
+DOC_SOON_DAYS = 30
 # the money of a piece of equipment: only someone with «Бухгалтерия» sees it, and only they may change it
 EQ_MONEY = ("price", "salvage", "market_value", "replace_cost", "reserve_monthly", "disposal_amount", "residual")
 EQ_NEW_COLS = ("manufacturer TEXT", "ownership TEXT", "condition TEXT", "location_id TEXT", "market_value REAL",
@@ -178,6 +192,40 @@ MAT_DOC_KINDS = {"reg": "Регистрационное удостоверени
 ORDER_STATUS = {"ordered": "Заказан", "partial": "Получен частично", "received": "Получен", "cancelled": "Отменён"}
 ORDER_OPEN = ("ordered", "partial")
 REQ_OPEN = ("new", "accepted", "partial")   # stock_flow.OPEN: the cabinets' requests still to be issued — the reserve
+# 3.16 «Справочники и настройки» (mockup 10): the module's settings, which really change what the program does, and the
+# references of the clinic's own (the defaults below until the clinic changes them; kept in `stock_settings`)
+EQ_MODULE = {"method": "linear", "round": "rub", "control_to": True, "to_days": 14, "to_report": True,
+             "no_doc_disposal": False, "third_party": True}
+EQ_ROUND = {"rub": "До рублей", "kop": "До копеек"}
+EQ_WORKS = [{"name": "Технический осмотр", "kind": "service"}, {"name": "Чистка и смазка наконечников", "kind": "service"},
+            {"name": "Замена фильтров", "kind": "service"}, {"name": "Дезинфекция водной системы установки", "kind": "service"},
+            {"name": "Калибровка", "kind": "diag"}, {"name": "Проверка электробезопасности", "kind": "diag"},
+            {"name": "Замена изношенных частей", "kind": "repair"}, {"name": "Ремонт электроники", "kind": "repair"}]
+EQ_REGS = [{"name": "ТО стоматологической установки", "kind": "service", "every_months": 6, "category": "Стоматологическое оборудование",
+            "checklist": ["Давление воздуха и воды", "Чистка фильтров и сеток", "Смазка наконечников и шлангов",
+                          "Педаль, светильник, кресло", "Дезинфекция водной системы", "Нет утечек воды и воздуха"]},
+           {"name": "ТО автоклава", "kind": "service", "every_months": 6, "category": "Стерилизационное оборудование",
+            "checklist": ["Чистка камеры и уплотнителя двери", "Клапаны и датчики", "Вакуумный тест", "Замена фильтров",
+                          "Контроль индикаторами"]},
+           {"name": "ТО компрессора", "kind": "service", "every_months": 12, "category": "Инженерное оборудование",
+            "checklist": ["Слив конденсата", "Замена воздушных фильтров", "Осушитель", "Рабочее давление", "Шум и вибрация"]},
+           {"name": "Поверка средств измерений", "kind": "verify", "every_months": 12, "category": "Диагностическое оборудование",
+            "checklist": ["Свидетельство о поверке", "Пломбы и маркировка", "Запись в паспорте"]}]
+EQ_DISP_REASONS = ["Непригодно к эксплуатации", "Сильный износ", "Неисправно, ремонт экономически нецелесообразен", "Морально устарело",
+                   "Утеряно или похищено", "Повреждено (авария, залив, пожар)", "Окончание договора аренды или лизинга"]
+EQ_REFS_KEYS = ("eq_categories", "eq_life", "eq_models", "eq_groups", "eq_works", "eq_regs", "eq_disp_reasons", "eq_module")
+# the fields of a card whose change the log shows «было → стало» (3.16 «Журнал действий»); kind: d — a date, m — money,
+# n — months, a dict — the titles of codes
+EQ_DIFF = [("inv_number", "Инвентарный номер", ""), ("name", "Наименование", ""), ("category", "Категория", ""),
+           ("manufacturer", "Производитель", ""), ("model", "Модель", ""), ("serial", "Серийный номер", ""),
+           ("responsible", "Ответственный", ""), ("purchase_date", "Дата покупки", "d"), ("warranty_until", "Гарантия до", "d"),
+           ("next_service", "Следующее ТО", "d"), ("comment", "Примечание", ""), ("ownership", "Принадлежность", EQ_OWNERSHIP),
+           ("accounting", "Способ учёта", EQ_ACCOUNTING), ("contractor", "Владелец или контрагент", ""), ("contract_no", "Договор", ""),
+           ("use_start", "Начало использования", "d"), ("use_end", "Окончание использования", "d"), ("qty", "Количество", ""),
+           ("replace_date", "Плановая замена", "d"), ("in_service", "Дата ввода в эксплуатацию", "d"), ("useful_months", "Срок службы", "n"),
+           ("price", "Стоимость", "m"), ("salvage", "Ликвидационная стоимость", "m"), ("market_value", "Рыночная стоимость", "m"),
+           ("replace_cost", "Стоимость замены", "m"), ("reserve_monthly", "Резерв на обновление", "m")]
+EQ_PAST = ("price", "salvage", "useful_months", "in_service")  # changing them changes the depreciation of past months
 
 
 def _now():
@@ -198,6 +246,44 @@ def _num(v, name="Количество"):
 
 def _clean(s, n=300):
     return str(s or "").strip()[:n]
+
+
+def _fmt_val(v, kind):
+    """3.16: a value of a card's field as the log shows it."""
+    if v in (None, ""):
+        return "—"
+    if kind == "d":
+        s = str(v)[:10]
+        return f"{s[8:10]}.{s[5:7]}.{s[:4]}" if len(s) == 10 else s
+    if kind == "m":
+        x = round(float(v or 0), 2)
+        s = f"{x:,.2f}".replace(",", " ").replace(".00", "").replace(".", ",")
+        return f"{s} ₽"
+    if kind == "n":
+        n = int(v or 0)
+        if not n:
+            return "—"
+        if n % 12:
+            return f"{n} мес."
+        y = n // 12
+        return f"{y} {'год' if y % 10 == 1 and y % 100 != 11 else 'года' if 2 <= y % 10 <= 4 and not 12 <= y % 100 <= 14 else 'лет'}"
+    if isinstance(kind, dict):
+        return kind.get(v, str(v))
+    return str(v)
+
+
+def eq_changes(old, new):
+    """3.16: what changed in a card: [{f, t, old, new, m}] (m — money: hidden from someone without «Бухгалтерия»)."""
+    out = []
+    for f, t, kind in EQ_DIFF:
+        a, b = old.get(f), new.get(f)
+        if kind == "m" or f in ("qty", "useful_months"):
+            same = round(float(a or 0), 2) == round(float(b or 0), 2)
+        else:
+            same = str(a or "") == str(b or "")
+        if not same:
+            out.append({"f": f, "t": t, "old": _fmt_val(a, kind), "new": _fmt_val(b, kind), "m": kind == "m"})
+    return out
 
 
 def _day(v, name="Годен до"):
@@ -407,6 +493,12 @@ class Stock:
                     db.conn.execute(f"ALTER TABLE equipment ADD COLUMN {col}")
             if "data" not in {r[1] for r in db.conn.execute("PRAGMA table_info(equipment_events)")}:  # 3.13: inventory details
                 db.conn.execute("ALTER TABLE equipment_events ADD COLUMN data TEXT")
+            if "reg_id" not in {r[1] for r in db.conn.execute("PRAGMA table_info(equipment_plans)")}:  # 3.16: the regulation of a plan
+                db.conn.execute("ALTER TABLE equipment_plans ADD COLUMN reg_id TEXT")
+            dcols = {r[1] for r in db.conn.execute("PRAGMA table_info(equipment_docs)")}
+            for col in EQ_DOC_COLS_316:  # 3.16 «Документы»: the number, the date, the term, the counterparty, the archive
+                if col.split()[0] not in dcols:
+                    db.conn.execute(f"ALTER TABLE equipment_docs ADD COLUMN {col}")
             mcols = {r[1] for r in db.conn.execute("PRAGMA table_info(materials)")}
             for col in MAT_NEW_COLS:  # 3.14: the material card
                 if col.split()[0] not in mcols:
@@ -1646,7 +1738,7 @@ class Stock:
         old = self.db.one("SELECT * FROM equipment WHERE id=?", (eid,)) if eid else None
         if old and old["status"] == "written_off":
             raise ValueError("Списанное оборудование изменить нельзя")
-        inv = _clean(f.get("inv_number"), 50) or (old["inv_number"] if old and old["inv_number"] else self._next_inv())
+        inv = _clean(f.get("inv_number"), 50) or (old["inv_number"] if old and old["inv_number"] else self._next_inv(_clean(f.get("category"), 100)))
         dup = self.db.one("SELECT id FROM equipment WHERE inv_number=? AND id<>?", (inv, eid or ""))
         if dup:
             raise ValueError(f"Инвентарный номер {inv} уже занят")
@@ -1702,12 +1794,26 @@ class Stock:
                 c.execute("UPDATE equipment SET in_service=?, useful_months=?, salvage=?, amort_method=? WHERE id=?", (*amort, eid))
             elif in_service:
                 c.execute("UPDATE equipment SET in_service=? WHERE id=?", (in_service, eid))
+            # 3.16: every change is a line of the log with «было → стало» (equipment_events.data)
+            ch = lambda t, a, b: {"changes": [{"t": t, "old": a, "new": b}]}  # noqa: E731
             if old and (old["location"] or "") != loc:
-                c.execute(ev, (eid, "move", today, f"{old['location'] or '—'} → {loc or '—'}", user, _now()))
+                self._ev(c, eid, "move", f"{old['location'] or '—'} → {loc or '—'}", user, today,
+                         data=ch("Место", old["location"] or "—", loc or "—"))
             if old and old["status"] != status:
-                c.execute(ev, (eid, "status", today, f"{EQ_STATUS[old['status']]} → {EQ_STATUS[status]}", user, _now()))
+                self._ev(c, eid, "status", f"{EQ_STATUS[old['status']]} → {EQ_STATUS[status]}", user, today,
+                         data=ch("Статус", EQ_STATUS[old["status"]], EQ_STATUS[status]))
             if old and (old.get("condition") or "ok") != cond:
-                c.execute(ev, (eid, "condition", today, f"{EQ_CONDITION[old.get('condition') or 'ok']} → {EQ_CONDITION[cond]}", user, _now()))
+                self._ev(c, eid, "condition", f"{EQ_CONDITION[old.get('condition') or 'ok']} → {EQ_CONDITION[cond]}", user, today,
+                         data=ch("Состояние", EQ_CONDITION[old.get("condition") or "ok"], EQ_CONDITION[cond]))
+            if old:
+                new = dict(c.execute("SELECT * FROM equipment WHERE id=?", (eid,)).fetchone())
+                diff = eq_changes(old, new)
+                if diff:
+                    data = {"changes": diff}
+                    past = [x["t"].lower() for x in diff if x["f"] in EQ_PAST]
+                    if past and amortization(old)["months_done"] > 0:  # «подозрительное»: the past months change
+                        data["flag"] = f"Изменено задним числом ({', '.join(past)}): меняется амортизация прошлых месяцев"
+                    self._ev(c, eid, "edit", "Изменено: " + ", ".join(x["t"].lower() for x in diff), user, today, data=data)
         return eid
 
     @staticmethod
@@ -1800,10 +1906,20 @@ class Stock:
     # ---------------------------------------- 3.13: inventory numbers, settings --
     _INV = re.compile(r"^(.*?)(\d+)$")
 
-    def _next_inv(self):
+    def _next_inv(self, category=""):
         """The next inventory number: the prefix of the last numbered piece goes on (СТ-001 → СТ-002, the width of the
-        digits kept); numbers of digits only go on as before (00001 → 00002); the very first one is ОБ-001."""
+        digits kept); numbers of digits only go on as before (00001 → 00002); the very first one is ОБ-001.
+        3.16: a category in an inventory group («Справочники») takes the group's code: СТ-001, СТ-002…"""
         rows = self.db.q("SELECT inv_number, created_at FROM equipment WHERE COALESCE(inv_number,'')<>'' ORDER BY created_at, rowid")
+        grp = next((g for g in self.eq_groups() if category and category in g["categories"]), None)
+        if grp:
+            prefix = f"{grp['code']}-"
+            used = {str(r["inv_number"]).strip() for r in rows}
+            same = [m[2] for r in rows if (m := self._INV.match(str(r["inv_number"]).strip())) and m[1] == prefix]
+            nxt, width = max((int(n) for n in same), default=0) + 1, max((len(n) for n in same), default=3)
+            while f"{prefix}{str(nxt).zfill(width)}" in used:
+                nxt += 1
+            return f"{prefix}{str(nxt).zfill(width)}"
         if not rows:
             return INV_FIRST
         parsed = [(m[1], m[2]) for r in rows if (m := self._INV.match(str(r["inv_number"]).strip()))]
@@ -1819,8 +1935,8 @@ class Stock:
         nums = [int(n) for p, n in parsed if not p]
         return str(max(nums, default=0) + 1).zfill(5) if nums else INV_FIRST
 
-    def next_inv(self):
-        return self._next_inv()
+    def next_inv(self, category=""):
+        return self._next_inv(_clean(category, 100))
 
     # ---------------------------------------------------------- 3.15: «Обзор» --
     def equipment_overview(self, money=True):
@@ -2176,6 +2292,12 @@ class Stock:
             sql += " AND equipment_id=?"
             args.append(equipment_id)
         rows = [self._req_row(r, eqs, today) for r in self.db.q(sql + " ORDER BY created_at DESC", args)]
+        regs = {p["id"]: p.get("reg_id") for p in self.db.q("SELECT id, reg_id FROM equipment_plans")}
+        by_reg = {g["id"]: g for g in self.eq_regs()}
+        for r in rows:  # 3.16: the checklist of the regulation of the schedule — ticked when the request is done
+            g = by_reg.get(regs.get(r.get("plan_id")) or "")
+            r["checklist"] = list(g["checklist"]) if g and r["status"] in ("new", "work") else []
+            r["reg_name"] = g["name"] if g else ""
         period = [r for r in rows if (r["created_at"] or "")[:4] == str(y)]
         sched = self.eq_schedule()
         cost = lambda yy: round(self.db.one("""SELECT COALESCE(SUM(cost),0) AS v FROM equipment_events WHERE kind IN ('service','repair','diag')
@@ -2209,6 +2331,9 @@ class Stock:
                          cost, created_by, created_name, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (rid, f"{REQ_PREFIX[kind]}-{n:03d}", e["id"], kind, text, pr, due, _clean(f.get("responsible"), 150), plan, "new", 0,
                        login, user, at, at))
+            # 3.16: the log shows who asked for the work («Создание заявки»)
+            self._ev(c, e["id"], "request", f"{REQ_PREFIX[kind]}-{n:03d} ({REQ_KINDS[kind].lower()}): {text}", user,
+                     data={"module": "Обслуживание", "request": f"{REQ_PREFIX[kind]}-{n:03d}"})
             if kind == "repair" and (e["condition"] or "ok") != "faulty":
                 c.execute("UPDATE equipment SET condition='faulty' WHERE id=?", (e["id"],))
                 self._ev(c, e["id"], "condition", f"{EQ_CONDITION.get(e['condition'] or 'ok')} → {EQ_CONDITION['faulty']}: {text}", user)
@@ -2239,11 +2364,17 @@ class Stock:
                 cost = max(0, _num(f.get("cost"), "Сумма"))
                 result = _clean(f.get("result"), 500) or r["description"]
                 day = _day(f.get("date"), "Дата") or day
+                # 3.16: the checklist of the regulation the plan follows — what was done, a line of the history
+                checks = [{"t": _clean(x.get("t"), 120), "ok": bool(x.get("ok"))} for x in (f.get("checklist") or [])
+                          if isinstance(x, dict) and _clean(x.get("t"), 120)][:40]
+                if checks:
+                    result = _clean(f"{result}. Чек-лист: {sum(1 for x in checks if x['ok'])} из {len(checks)}", 500)
                 c.execute("UPDATE equipment_requests SET status='done', cost=?, result=?, done_at=?, updated_at=? WHERE id=?",
                           (cost, result, f"{day} {at[11:]}", at, r["id"]))
                 if e:
                     self._ev(c, e["id"], "service" if r["kind"] == "service" else "repair" if r["kind"] == "repair" else "diag",
-                             f"{r['number']}: {result}", user, day, cost)
+                             f"{r['number']}: {result}", user, day, cost,
+                             data={"module": "Обслуживание", "request": r["number"], **({"checklist": checks} if checks else {})})
                     if e["status"] == "repair" or r["kind"] == "repair":
                         c.execute("UPDATE equipment SET status=CASE WHEN status='repair' THEN 'in_use' ELSE status END, condition='ok' WHERE id=?", (e["id"],))
                     if r["plan_id"]:
@@ -2265,12 +2396,14 @@ class Stock:
 
     def eq_plans(self):
         eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number, status FROM equipment")}
+        regs = {g["id"]: g["name"] for g in self.eq_regs()}
         out = []
         for p in self.db.q("SELECT * FROM equipment_plans WHERE active=1 ORDER BY next_date"):
             e = eqs.get(p["equipment_id"])
             if not e or e["status"] == "written_off":
                 continue
-            out.append({**p, "equipment_name": e["name"], "inv_number": e["inv_number"] or "", "kind_title": PLAN_KINDS.get(p["kind"], p["kind"])})
+            out.append({**p, "equipment_name": e["name"], "inv_number": e["inv_number"] or "", "kind_title": PLAN_KINDS.get(p["kind"], p["kind"]),
+                        "reg_name": regs.get(p.get("reg_id") or "", "")})
         return out
 
     def eq_schedule(self):
@@ -2287,6 +2420,28 @@ class Stock:
             r["overdue"] = r["date"] < today
         return sorted(rows, key=lambda r: (r["date"], r["name"]))
 
+    def eq_due(self):
+        """3.16 «Контроль сроков ТО и уведомления»: the service, verification and inspection overdue or due within the set days
+        (the plans of the schedule and the cards' own next service) and the open requests past their date — the bell of the
+        section, the badge of the menu and a line of the day report. Off — nothing."""
+        m = self.eq_module()
+        if not m["control_to"]:
+            return {"on": False, "days": m["to_days"], "items": [], "overdue": 0, "soon": 0}
+        today = date.today()
+        t, lim = today.isoformat(), (today + timedelta(days=m["to_days"])).isoformat()
+        items = [{"date": x["date"], "equipment_id": x["equipment_id"], "name": x["name"], "inv_number": x["inv_number"],
+                  "title": x["kind_title"], "kind": x["kind"], "overdue": x["overdue"]} for x in self.eq_schedule() if x["date"] <= lim]
+        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number FROM equipment WHERE status<>'written_off'")}
+        for r in self.db.q("""SELECT * FROM equipment_requests WHERE status IN ('new','work') AND COALESCE(due,'')<>'' AND due < ?
+                              ORDER BY due""", (t,)):
+            e = eqs.get(r["equipment_id"])
+            if e:
+                items.append({"date": r["due"], "equipment_id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "",
+                              "title": f"Заявка {r['number']} не выполнена", "kind": "request", "overdue": True})
+        items.sort(key=lambda x: (not x["overdue"], x["date"], x["name"]))
+        return {"on": True, "days": m["to_days"], "items": items, "overdue": sum(1 for x in items if x["overdue"]),
+                "soon": sum(1 for x in items if not x["overdue"]), "to_report": m["to_report"]}
+
     def eq_plan_save(self, f):
         f = f if isinstance(f, dict) else {}
         e = self._eq_live(f.get("equipment_id"))
@@ -2298,11 +2453,15 @@ class Stock:
         if not nxt:
             raise ValueError("Укажите дату следующего ТО")
         pid, at = str(f.get("id") or "") or _id("PL"), _now()
+        reg = str(f.get("reg_id") or "")  # 3.16: the regulation (its checklist is ticked when the work is done)
+        if reg and reg not in {g["id"] for g in self.eq_regs()}:
+            reg = ""
         with self.db.tx() as c:
-            c.execute("""INSERT INTO equipment_plans(id, equipment_id, kind, every_months, next_date, note, active, created_at, updated_at)
-                         VALUES(?,?,?,?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET equipment_id=excluded.equipment_id, kind=excluded.kind,
-                         every_months=excluded.every_months, next_date=excluded.next_date, note=excluded.note, active=1, updated_at=excluded.updated_at""",
-                      (pid, e["id"], kind, every, nxt, _clean(f.get("note"), 200), at, at))
+            c.execute("""INSERT INTO equipment_plans(id, equipment_id, kind, every_months, next_date, note, active, created_at, updated_at, reg_id)
+                         VALUES(?,?,?,?,?,?,1,?,?,?) ON CONFLICT(id) DO UPDATE SET equipment_id=excluded.equipment_id, kind=excluded.kind,
+                         every_months=excluded.every_months, next_date=excluded.next_date, note=excluded.note, active=1, updated_at=excluded.updated_at,
+                         reg_id=excluded.reg_id""",
+                      (pid, e["id"], kind, every, nxt, _clean(f.get("note"), 200), at, at, reg or None))
             self._sync_next_service(c, e["id"])
         return pid
 
@@ -2642,7 +2801,7 @@ class Stock:
         rows = self.db.q(sql + " ORDER BY ev.date DESC, ev.id DESC LIMIT 500", args)
         for r in rows:
             r["kind_title"] = EQ_EVENTS.get(r["kind"], r["kind"])
-            r["data"] = None
+            r["data"] = _jl(r.get("data"), {}) or None
         users = [r["u"] for r in self.db.q("SELECT DISTINCT user_name AS u FROM equipment_events WHERE COALESCE(user_name,'')<>'' ORDER BY u")]
         return {"rows": rows, "kinds": EQ_EVENTS, "users": users}
 
@@ -2677,17 +2836,266 @@ class Stock:
                 life[str(k)] = n
         return {k: v for k, v in life.items() if v}
 
+    def _own_list(self, k, default):
+        """A reference of the clinic's own: the saved list (even an empty one), or the defaults until it is first saved."""
+        r = self.db.one("SELECT v FROM stock_settings WHERE k=?", (k,))
+        if not r:
+            return [dict(x) if isinstance(x, dict) else x for x in default]
+        v = _jl(r["v"], [])
+        return v
+
+    def eq_models(self):
+        return [x for x in self._own_list("eq_models", []) if isinstance(x, dict) and (x.get("manufacturer") or x.get("model"))]
+
+    def eq_groups(self):
+        return [{**x, "categories": [str(c) for c in (x.get("categories") or []) if str(c).strip()]}
+                for x in self._own_list("eq_groups", []) if isinstance(x, dict) and x.get("code")]
+
+    def eq_works(self):
+        dflt = [{"id": f"W{i + 1}", **w} for i, w in enumerate(EQ_WORKS)]
+        return [x for x in self._own_list("eq_works", dflt) if isinstance(x, dict) and x.get("name")]
+
+    def eq_regs(self):
+        dflt = [{"id": f"R{i + 1}", **g} for i, g in enumerate(EQ_REGS)]
+        return [{**x, "checklist": [str(t) for t in (x.get("checklist") or []) if str(t).strip()]}
+                for x in self._own_list("eq_regs", dflt) if isinstance(x, dict) and x.get("name")]
+
+    def eq_disp_reasons(self):
+        return [str(x) for x in self._own_list("eq_disp_reasons", EQ_DISP_REASONS) if str(x).strip()]
+
+    def eq_module(self):
+        """3.16 «Основные настройки модуля»: what really changes the program's work (the depreciation in the P&L is the old
+        switch `pnl_amort`)."""
+        m = dict(EQ_MODULE)
+        for k, v in self._setting("eq_module", {}).items():
+            if k in EQ_MODULE and type(v) is type(EQ_MODULE[k]):
+                m[k] = v
+        m["round"] = m["round"] if m["round"] in EQ_ROUND else "rub"
+        m["method"] = m["method"] if m["method"] in AMORT_METHODS else "linear"
+        m["to_days"] = min(90, max(1, int(m["to_days"])))
+        r = self.db.one("SELECT v FROM stock_settings WHERE k='pnl_amort'")
+        m["auto_amort"] = not r or r["v"] != "0"
+        return m
+
+    def _log_settings(self, c, user, obj, module, changes, flag=""):
+        """3.16: a change of the references or the settings is a line of «Журнал действий» (no piece of equipment)."""
+        text = f"{obj}: " + "; ".join(f"{x['t']} {x['old']} → {x['new']}" for x in changes[:4]) + ("…" if len(changes) > 4 else "")
+        data = {"object": obj, "module": module, "changes": changes}
+        if flag:
+            data["flag"] = flag
+        self._ev(c, "", "settings", _clean(text, 500), user, data=data)
+
+    def eq_module_save(self, f, user="", money=False):
+        f = f if isinstance(f, dict) else {}
+        old = self.eq_module()
+        new = {k: old[k] for k in EQ_MODULE}
+        for k in ("control_to", "to_report", "no_doc_disposal", "third_party"):
+            if k in f:
+                new[k] = bool(f[k])
+        if "round" in f:
+            if f["round"] not in EQ_ROUND:
+                raise ValueError("Выберите округление сумм")
+            new["round"] = f["round"]
+        if "to_days" in f:
+            n = int(_num(f["to_days"], "За сколько дней предупреждать") or 0)
+            if not 1 <= n <= 90:
+                raise ValueError("Предупреждать о ТО — за 1–90 дней")
+            new["to_days"] = n
+        if "method" in f:
+            if f["method"] not in AMORT_METHODS:
+                raise ValueError("Такого метода амортизации нет")
+            if f["method"] != old["method"] and not money:
+                raise ValueError("Метод амортизации меняет сотрудник с правом «Бухгалтерия»")
+            new["method"] = f["method"]
+        auto = old["auto_amort"]
+        if "auto_amort" in f and bool(f["auto_amort"]) != auto:
+            if not money:
+                raise ValueError("Амортизацию в ОПиУ включает и выключает сотрудник с правом «Бухгалтерия»")
+            auto = bool(f["auto_amort"])
+        yn = lambda v: "вкл." if v else "выкл."  # noqa: E731
+        titles = {"method": ("Метод амортизации", lambda v: AMORT_METHODS.get(v, v)), "round": ("Округление сумм", lambda v: EQ_ROUND.get(v, v)),
+                  "control_to": ("Контроль сроков ТО", yn), "to_days": ("Предупреждать о ТО за, дней", str),
+                  "to_report": ("ТО в отчёте за день", yn), "no_doc_disposal": ("Запрет списания без документа", yn),
+                  "third_party": ("Учёт стороннего оборудования", yn)}
+        changes = [{"t": t, "old": fm(old[k]), "new": fm(new[k])} for k, (t, fm) in titles.items() if new[k] != old[k]]
+        if auto != old["auto_amort"]:
+            changes.append({"t": "Автоматический расчёт амортизации", "old": yn(old["auto_amort"]), "new": yn(auto)})
+        if not changes:
+            return self.eq_module()
+        with self.db.tx() as c:
+            self._set_setting(c, "eq_module", new)
+            if auto != old["auto_amort"]:
+                c.execute("""INSERT INTO stock_settings(k, v, updated_at) VALUES('pnl_amort', ?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v,
+                             updated_at=excluded.updated_at""", ("1" if auto else "0", _now()))
+            self._log_settings(c, user, "Основные настройки модуля", "Настройки", changes,
+                               flag="Выключен запрет списания без документа" if old["no_doc_disposal"] and not new["no_doc_disposal"] else "")
+        return self.eq_module()
+
+    # the references: what each list holds and how it is checked
+    EQ_REF_TITLES = {"eq_models": "Модели и производители", "eq_groups": "Инвентарные группы", "eq_works": "Виды работ (ТО)",
+                     "eq_regs": "Регламенты обслуживания", "eq_disp_reasons": "Причины выбытия"}
+
+    def _check_ref(self, key, rows):
+        rows = rows if isinstance(rows, list) else []
+        out, seen = [], set()
+        if key == "eq_disp_reasons":
+            for x in rows:
+                t = _clean(x, 150)
+                if t and t.lower() not in seen:
+                    seen.add(t.lower())
+                    out.append(t)
+            if not out:
+                raise ValueError("Оставьте хотя бы одну причину выбытия")
+            return out[:60]
+        for x in rows:
+            if not isinstance(x, dict):
+                continue
+            rid = _clean(x.get("id"), 40) or _id(key[3].upper())
+            if key == "eq_models":
+                mf, md = _clean(x.get("manufacturer"), 100), _clean(x.get("model"), 100)
+                if not (mf or md):
+                    continue
+                k = f"{mf.lower()}|{md.lower()}"
+                if k in seen:
+                    raise ValueError(f"Модель «{mf} {md}» записана дважды")
+                out.append({"id": rid, "manufacturer": mf, "model": md, "article": _clean(x.get("article"), 60),
+                            "category": _clean(x.get("category"), 100)})
+            elif key == "eq_groups":
+                code = re.sub(r"\s+", "", _clean(x.get("code"), 8)).upper().rstrip("-")
+                if not code:
+                    continue
+                if not re.fullmatch(r"[A-ZА-ЯЁ0-9]{1,6}", code):
+                    raise ValueError(f"Код группы «{code}» — до 6 букв или цифр, например СТ")
+                k = code
+                if k in seen:
+                    raise ValueError(f"Код группы {code} занят")
+                cats = list(dict.fromkeys(_clean(cc, 100) for cc in (x.get("categories") or []) if _clean(cc, 100)))
+                out.append({"id": rid, "code": code, "name": _clean(x.get("name"), 120) or code, "okof": _clean(x.get("okof"), 40),
+                            "categories": cats})
+            elif key == "eq_works":
+                name = _clean(x.get("name"), 120)
+                if not name:
+                    continue
+                k = name.lower()
+                if k in seen:
+                    raise ValueError(f"Вид работ «{name}» записан дважды")
+                out.append({"id": rid, "name": name, "kind": x.get("kind") if x.get("kind") in REQ_KINDS else "service"})
+            elif key == "eq_regs":
+                name = _clean(x.get("name"), 120)
+                if not name:
+                    continue
+                k = name.lower()
+                if k in seen:
+                    raise ValueError(f"Регламент «{name}» записан дважды")
+                every = int(_num(x.get("every_months"), "Периодичность") or 0)
+                if not 1 <= every <= 120:
+                    raise ValueError(f"«{name}»: периодичность — от 1 до 120 месяцев")
+                checks = list(dict.fromkeys(_clean(t, 120) for t in (x.get("checklist") or []) if _clean(t, 120)))[:40]
+                out.append({"id": rid, "name": name, "kind": x.get("kind") if x.get("kind") in PLAN_KINDS else "service",
+                            "every_months": every, "category": _clean(x.get("category"), 100), "checklist": checks})
+            else:
+                raise ValueError("Неизвестный справочник")
+            seen.add(k)
+        if key == "eq_groups":
+            cats = [cc for g in out for cc in g["categories"]]
+            dup = next((cc for cc in cats if cats.count(cc) > 1), None)
+            if dup:
+                raise ValueError(f"Категория «{dup}» уже в другой инвентарной группе")
+        return out[:500]
+
+    @staticmethod
+    def _ref_names(key, rows):
+        if key == "eq_disp_reasons":
+            return [str(x) for x in rows]
+        if key == "eq_models":
+            return [" ".join(x for x in (r.get("manufacturer"), r.get("model")) if x) for r in rows]
+        if key == "eq_groups":
+            return [f"{r['code']} {r['name']}" for r in rows]
+        return [r.get("name") or "" for r in rows]
+
+    def _ref_changes(self, key, old, new):
+        a, b = self._ref_names(key, old), self._ref_names(key, new)
+        added, gone = [x for x in b if x not in a], [x for x in a if x not in b]
+        ch = []
+        if added:
+            ch.append({"t": "Добавлено", "old": "—", "new": ", ".join(added[:6]) + ("…" if len(added) > 6 else "")})
+        if gone:
+            ch.append({"t": "Убрано", "old": ", ".join(gone[:6]) + ("…" if len(gone) > 6 else ""), "new": "—"})
+        if not ch and old != new:
+            ch.append({"t": "Записи изменены", "old": str(len(old)), "new": str(len(new))})
+        return ch
+
+    def eq_ref_save(self, key, rows, user=""):
+        """3.16: one reference of the clinic (models, inventory groups, kinds of work, regulations, reasons of disposal)."""
+        if key not in self.EQ_REF_TITLES:
+            raise ValueError("Неизвестный справочник")
+        new = self._check_ref(key, rows)
+        old = {"eq_models": self.eq_models, "eq_groups": self.eq_groups, "eq_works": self.eq_works, "eq_regs": self.eq_regs,
+               "eq_disp_reasons": self.eq_disp_reasons}[key]()
+        ch = self._ref_changes(key, old, new)
+        with self.db.tx() as c:
+            self._set_setting(c, key, new)
+            if ch:
+                self._log_settings(c, user, self.EQ_REF_TITLES[key], "Справочники", ch)
+        return self.eq_refs()
+
     def eq_refs(self):
         cats = self.eq_categories()
         counts = {r["category"] or "": r["n"] for r in self.db.q(
             "SELECT category, COUNT(*) AS n FROM equipment WHERE status<>'written_off' GROUP BY category")}
         life = self.eq_life()
+        live = self.db.q("SELECT id, category, manufacturer, model, location_id, ownership, accounting FROM equipment WHERE status<>'written_off'")
+        # models: the clinic's list and what the cards already have
+        own = self.eq_models()
+        used = {}
+        for e in live:
+            if e["manufacturer"] or e["model"]:
+                k = f"{(e['manufacturer'] or '').strip().lower()}|{(e['model'] or '').strip().lower()}"
+                u = used.setdefault(k, {"manufacturer": (e["manufacturer"] or "").strip(), "model": (e["model"] or "").strip(),
+                                        "category": e["category"] or "", "count": 0})
+                u["count"] += 1
+        models = []
+        for m in own:
+            k = f"{m['manufacturer'].lower()}|{m['model'].lower()}"
+            models.append({**m, "count": used.pop(k, {}).get("count", 0), "from_cards": False})
+        models += [{"id": "", **u, "article": "", "from_cards": True} for u in sorted(used.values(), key=lambda u: (u["manufacturer"], u["model"]))]
+        groups = self.eq_groups()
+        for g in groups:
+            g["count"] = sum(counts.get(cc, 0) for cc in g["categories"])
+        regs = self.eq_regs()
+        plans = {r["reg_id"]: r["n"] for r in self.db.q(
+            "SELECT reg_id, COUNT(*) AS n FROM equipment_plans WHERE active=1 AND COALESCE(reg_id,'')<>'' GROUP BY reg_id")}
+        for g in regs:
+            g["plans"] = plans.get(g["id"], 0)
+        places = [{"id": p["id"], "name": p["name"], "kind": p["kind"], "kind_title": LOC_KINDS.get(p["kind"], p["kind"] or ""),
+                   "chair": p["chair"] or "", "count": sum(1 for e in live if e["location_id"] == p["id"])}
+                  for p in self.db.q("SELECT id, name, kind, chair FROM stock_locations WHERE active=1 ORDER BY sort, name")]
+        chairs = [r["chair"] for r in self.db.q("""SELECT chair, COUNT(*) AS n FROM visits_archive WHERE COALESCE(chair,'')<>''
+                                                   GROUP BY chair ORDER BY chair""")] if self._has("visits_archive") else []
+        own_counts = {}
+        for e in live:
+            own_counts[e["ownership"] or "own"] = own_counts.get(e["ownership"] or "own", 0) + 1
+        reasons = self.eq_disp_reasons()
+        rc = {}
+        for r in self.db.q("SELECT writeoff_reason FROM equipment WHERE status='written_off' AND COALESCE(writeoff_reason,'')<>''"):
+            for x in reasons:
+                if r["writeoff_reason"].startswith(x):
+                    rc[x] = rc.get(x, 0) + 1
         return {"categories": [{"name": c, "count": counts.get(c, 0), "life": life.get(c, 0)} for c in cats],
                 "ownership": EQ_OWNERSHIP, "accounting": EQ_ACCOUNTING, "conditions": EQ_CONDITION, "statuses": EQ_STATUS,
                 "disposals": EQ_DISPOSAL, "receipt_docs": RECEIPT_DOCS, "move_reasons": MOVE_REASONS, "req_kinds": REQ_KINDS,
-                "priorities": PRIORITY, "plan_kinds": PLAN_KINDS, "funding": FUNDING, "chair_hours": self.chair_hours()}
+                "priorities": PRIORITY, "plan_kinds": PLAN_KINDS, "funding": FUNDING, "chair_hours": self.chair_hours(),
+                # 3.16 «Справочники и настройки»
+                "models": models, "manufacturers": sorted({m["manufacturer"] for m in models if m["manufacturer"]}, key=str.lower),
+                "groups": groups, "works": self.eq_works(), "regs": regs, "disp_reasons": [{"name": x, "count": rc.get(x, 0)} for x in reasons],
+                "places": places, "chairs": chairs, "ownership_counts": own_counts, "off_books": list(OFF_BOOKS),
+                "module": self.eq_module(), "methods": AMORT_METHODS, "rounds": EQ_ROUND, "doc_kinds": EQ_DOC_KINDS,
+                "doc_cats": {k: {"title": t, "kinds": list(ks)} for k, (t, ks) in EQ_DOC_CATS.items()}}
 
-    def eq_refs_save(self, f):
+    def _has(self, table):
+        return bool(self.db.one("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?", (table,)))
+
+    def eq_refs_save(self, f, user=""):
         """Categories in their order and the usual useful life of each (months; 0 — none)."""
         f = f if isinstance(f, dict) else {}
         out_c, out_l = None, None
@@ -2703,12 +3111,58 @@ class Stock:
                 if not 0 <= n <= MAX_USEFUL_MONTHS:
                     raise ValueError("Срок службы — от 0 до 600 месяцев")
                 out_l[_clean(k, 100)] = n
+        old_c, old_l = self.eq_categories(), self.eq_life()
+        ch = []
+        if out_c is not None:
+            ch = self._ref_changes("eq_disp_reasons", old_c, out_c)
+        if out_l is not None:
+            for k, n in out_l.items():
+                if old_l.get(k, 0) != n:
+                    ch.append({"t": f"Норматив «{k}»", "old": _fmt_val(old_l.get(k, 0), "n"), "new": _fmt_val(n, "n")})
         with self.db.tx() as c:
             if out_c is not None:
                 self._set_setting(c, "eq_categories", out_c)
             if out_l is not None:
                 self._set_setting(c, "eq_life", out_l)
+            if ch:
+                self._log_settings(c, user, "Виды оборудования и нормы амортизации", "Справочники", ch)
         return self.eq_refs()
+
+    def eq_place_chair(self, lid, chair, user=""):
+        """3.16 «Места эксплуатации»: the chair of Dentist Plus in a cabinet — its appointments are the runtime of the equipment
+        there («Аналитика → Эффективность использования»)."""
+        p = self.db.one("SELECT * FROM stock_locations WHERE id=? AND active=1", (str(lid or ""),))
+        if not p:
+            raise ValueError("Место не найдено")
+        chair = _clean(chair, 100)
+        if chair == (p["chair"] or ""):
+            return self.eq_refs()
+        with self.db.tx() as c:
+            c.execute("UPDATE stock_locations SET chair=?, updated_at=? WHERE id=?", (chair, _now(), p["id"]))
+            self._log_settings(c, user, f"Место «{p['name']}»", "Справочники", [{"t": "Кресло", "old": p["chair"] or "—", "new": chair or "—"}])
+        return self.eq_refs()
+
+    def eq_refs_export(self):
+        """«Импорт / экспорт справочников»: every reference and setting of the module in one file (to another clinic or a backup)."""
+        m = self.eq_module()
+        return {"format": "dental-desk-equipment-refs", "version": 1, "exported_at": _now(), "categories": self.eq_categories(),
+                "life": self.eq_life(), "eq_models": self.eq_models(), "eq_groups": self.eq_groups(), "eq_works": self.eq_works(),
+                "eq_regs": self.eq_regs(), "eq_disp_reasons": self.eq_disp_reasons(),
+                "module": {k: m[k] for k in EQ_MODULE if k != "method"}}
+
+    def eq_refs_import(self, data, user=""):
+        data = data if isinstance(data, dict) else {}
+        if data.get("format") != "dental-desk-equipment-refs":
+            raise ValueError("Это не файл справочников оборудования Dental Desk")
+        refs = {k: self._check_ref(k, data[k]) for k in self.EQ_REF_TITLES if k in data}
+        if "categories" in data or "life" in data:
+            self.eq_refs_save({k: data[k] for k in ("categories", "life") if k in data}, user)
+        if isinstance(data.get("module"), dict):
+            self.eq_module_save({k: v for k, v in data["module"].items() if k in EQ_MODULE and k != "method"}, user, money=False)
+        for k, rows in refs.items():
+            self.eq_ref_save(k, rows, user)
+        return {"imported": sorted([self.EQ_REF_TITLES[k] for k in refs] + (["Виды оборудования"] if "categories" in data else [])),
+                "refs": self.eq_refs()}
 
     def chair_hours(self):
         try:
@@ -2793,10 +3247,16 @@ class Stock:
             evs[-1] = (k, f"{t}. {note}")
         if not sets:
             return e["id"]
+        # 3.16: «было → стало» of each quick change for the log
+        titles = {"move": "Место", "condition": "Состояние", "note": "Принадлежность", "status": "Статус", "repair": "Статус"}
         with self.db.tx() as c:
             c.execute(f"UPDATE equipment SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), e["id"]))
             for k, t in evs:
-                self._ev(c, e["id"], k, t, user)
+                pair = (t.split(". ")[0].split(": ", 1)[-1]).split(" → ") if " → " in t else None
+                data = {"changes": [{"t": titles.get(k, ""), "old": pair[0], "new": pair[1]}]} if pair and len(pair) == 2 else None
+                if k == "repair":
+                    data = {"changes": [{"t": "Статус", "old": EQ_STATUS[e["status"]], "new": EQ_STATUS["repair"]}]}
+                self._ev(c, e["id"], k, t, user, data=data)
         return e["id"]
 
     def equipment_inventory(self, f, user=""):
@@ -2932,6 +3392,9 @@ class Stock:
         commission = [_clean(x, 150) for x in (f.get("commission") or []) if _clean(x)]
         if kind in ("writeoff", "utilize") and len(commission) < 2:
             raise ValueError("Укажите председателя и хотя бы одного члена комиссии")
+        basis = _clean(f.get("basis"), 200)
+        if not basis and self.eq_module()["no_doc_disposal"]:  # 3.16 «Запрет списания без документа»
+            raise ValueError("Укажите документ-основание: в настройках оборудования включён запрет списания без документа")
         day = _day(f.get("date"), "Дата") if f.get("date") else date.today().isoformat()
         # 3.15: every disposal has its act, numbered on among all the acts of disposal (writeoff, utilization, sale, transfer)
         n = self.db.one("SELECT COUNT(*) AS n FROM equipment WHERE status='written_off' AND COALESCE(writeoff_act,'')<>''")["n"] + 1
@@ -2951,8 +3414,11 @@ class Stock:
                          writeoff_commission=?, residual=?, disposal_kind=?, disposal_amount=?, disposal_responsible=?,
                          disposal_basis=? WHERE id=?""",
                       (day, reason, act, json.dumps(commission, ensure_ascii=False), residual, kind, amount,
-                       _clean(f.get("responsible"), 150), _clean(f.get("basis"), 200), e["id"]))
-            self._ev(c, e["id"], "writeoff" if kind in ("writeoff", "utilize") else "disposal", text, user, day)
+                       _clean(f.get("responsible"), 150), basis, e["id"]))
+            data = {"module": "Выбытие", "changes": [{"t": "Статус", "old": EQ_STATUS[e["status"]], "new": EQ_DISPOSED[kind]}]}
+            if not basis:  # 3.16: «подозрительное» — no document behind the disposal
+                data["flag"] = "Выбытие без документа-основания"
+            self._ev(c, e["id"], "writeoff" if kind in ("writeoff", "utilize") else "disposal", text, user, day, data=data)
         return e["id"]
 
     def write_off_equipment(self, f, user="", money=True):
@@ -2985,7 +3451,8 @@ class Stock:
                 nxt = c.execute("SELECT file_id FROM equipment_docs WHERE equipment_id=? AND kind='photo' AND deleted=0 AND file_id<>? "
                                 "ORDER BY created_at LIMIT 1", (e["id"], d["file_id"])).fetchone()
                 c.execute("UPDATE equipment SET photo_id=? WHERE id=?", (nxt[0] if nxt else None, e["id"]))
-            self._ev(c, e["id"], "doc", f"Убран документ: {EQ_DOC_KINDS.get(d['kind'], d['kind'])} — {d['title']}", user)
+            self._ev(c, e["id"], "doc", f"Убран документ: {EQ_DOC_KINDS.get(d['kind'], d['kind'])} — {d['title']}", user,
+                     data={"module": "Документы", "doc": d["id"], "flag": "Убран документ оборудования"})
         return e["id"]
 
     def equipment_doc_file(self, did):

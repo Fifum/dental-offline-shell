@@ -59,7 +59,7 @@ check("new columns of equipment", {"accounting", "contractor", "use_start", "use
 for t in ("equipment_receipts", "equipment_moves", "equipment_requests", "equipment_plans", "equipment_purchases"):
     check(f"table {t}", d.one("SELECT 1 AS x FROM sqlite_master WHERE name=?", (t,)))
     check(f"{t} replicated after equipment", t in replica.BY_NAME and replica.ORDER[t] > replica.ORDER["equipment"])
-check("catch-up 3.15 with the new columns", replica.CATCHUP == "3.15" and {"accounting", "contractor", "use_end", "qty"} <= set(replica.CATCHUP_COLS["equipment"]))
+check("catch-up 3.15 with the new columns", tuple(map(int, replica.CATCHUP.split("."))) >= (3, 15) and {"accounting", "contractor", "use_end", "qty"} <= set(replica.CATCHUP_COLS["equipment"]))
 
 # ownership: the doctor's and any other use are someone else's property
 check("ownership kinds", {"doctor", "other", "owner", "lease", "leasing", "own"} <= set(stockm.EQ_OWNERSHIP))

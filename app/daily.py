@@ -280,9 +280,17 @@ class Daily:
                 dp = dp_transfer.day_summary(self.db, day)
             except Exception:  # noqa: BLE001 — a bare database without records
                 dp = None
+        eq = None
+        if shifts:  # 3.16: the equipment's service dates («Контроль сроков ТО», «ТО в отчёте за день»)
+            try:
+                from stock import Stock  # noqa: PLC0415
+                eq = Stock(self.db).eq_due()
+                eq = eq if eq["on"] and eq.get("to_report") and eq["items"] else None
+            except Exception:  # noqa: BLE001 — a bare database without the equipment
+                eq = None
         return {"day": day, "rows": rows, "total": round(doc + nodoc, 2), "doc": doc, "nodoc": nodoc,
                 "by_category": dict(sorted(by_cat.items(), key=lambda x: -x[1])), "by_user": by_user, "cash": cash or {}, "shifts": day_shifts,
-                "stock": stock, "dp": dp}
+                "stock": stock, "dp": dp, "eq": eq}
 
     def text(self, rep) -> str:
         c = rep["cash"] or {}
@@ -319,6 +327,14 @@ class Daily:
                              + (", без документа" if r["nodoc"] else "")
                              + (f" — {r['supplier_name']}" if r["supplier_name"] else f" — {r['reason']}" if r["reason"] else "")
                              + (f" ({r['user_name']})" if r["user_name"] else ""))
+        eq = rep.get("eq")
+        if eq:
+            lines += ["", f"Оборудование: просрочено ТО и работ — {eq['overdue']}, в ближайшие {eq['days']} дн. — {eq['soon']}"]
+            for x in eq["items"][:10]:
+                lines.append(f"  {_fmt(x['date'])} {x['title']} — {x['name']}" + (f" ({x['inv_number']})" if x["inv_number"] else "")
+                             + (", просрочено" if x["overdue"] else ""))
+            if len(eq["items"]) > 10:
+                lines.append(f"  и ещё {len(eq['items']) - 10}")
         if rep.get("dp"):
             import dp_transfer  # noqa: PLC0415
             dl = dp_transfer.report_lines(rep["dp"])

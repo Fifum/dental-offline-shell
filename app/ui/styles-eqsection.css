@@ -308,3 +308,108 @@
 .eqs-wraptd{white-space:normal;max-width:360px}
 .eqs-reg td .linkbtn{display:inline-flex;align-items:center;gap:6px}
 .eqs-reg td .linkbtn svg{width:15px;height:15px}
+
+/* ===== 3.16 «Справочники и настройки» (mockup 10) */
+.eqs-hico{gap:14px}
+.eqs-hico>i{display:grid;place-items:center;width:46px;height:46px;color:var(--accent)}
+.eqs-hico>i svg{width:40px;height:40px;stroke-width:1.6}
+.eqs-subs{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.eqs-subs button{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;height:46px;padding:0 14px;border-radius:12px;
+  border:1px solid var(--line);background:var(--panel);font-size:14.5px;font-weight:500;box-shadow:0 1px 2px rgba(16,40,44,.05)}
+.eqs-subs button svg{color:var(--accent);width:20px;height:20px}
+.eqs-subs button:hover{background:var(--hover)}
+.eqs-subs button.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.eqs-subs button.on svg{color:inherit}
+.eqs-g2q{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
+.eqs-rtiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.eqs-rtiles button{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:12px;padding:14px 12px;border-radius:12px;border:1px solid var(--line);
+  background:var(--panel);min-width:0;box-shadow:0 1px 2px rgba(16,40,44,.04)}
+.eqs-rtiles button:hover{border-color:var(--accent-line);background:var(--hover)}
+.eqs-rtiles i{display:grid;place-items:center;width:40px;height:40px;flex:none;color:var(--accent)}
+.eqs-rtiles i svg{width:30px;height:30px;stroke-width:1.6}
+.eqs-rtiles span{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.eqs-rtiles b{font-size:14px;font-weight:600;line-height:1.25}
+.eqs-rtiles small{font-size:12.5px;color:var(--ink2);line-height:1.3}
+.eqs-rtiles button>svg:last-child{width:16px;height:16px;color:var(--ink2)}
+.eqs-qa{display:flex;flex-direction:column;gap:8px}
+.eqs-qa button{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);font-size:14px}
+.eqs-qa button:hover{border-color:var(--accent-line);background:var(--hover)}
+.eqs-qa button.on{background:var(--accent-soft);border-color:var(--accent-line)}
+.eqs-qa button>svg:first-child{color:var(--accent);width:20px;height:20px}
+.eqs-qa button span{flex:1}
+.eqs-qa button>svg:last-child{width:16px;height:16px;color:var(--ink2)}
+.eqs-g3b{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr) minmax(0,1fr);gap:14px;align-items:stretch}
+.eqs-keyt{width:100%}
+.eqs-keyt th{background:var(--panel2)}
+.eqs-kr{display:inline-flex;align-items:center;gap:10px}
+.eqs-kr svg{color:var(--accent);width:19px;height:19px}
+.eqs-kacts{white-space:nowrap}
+.eqs-kacts .icon-btn{width:30px;height:30px}
+.eqs-kacts .icon-btn svg{width:16px;height:16px}
+.eqs-mod{display:flex;flex-direction:column}
+.eqs-swr{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line2);font-size:14px;cursor:pointer;position:relative}
+.eqs-swr:last-child{border-bottom:0}
+.eqs-swr>span{flex:1;display:flex;align-items:center;gap:6px;min-width:0}
+.eqs-swr.full>span{flex-direction:column;align-items:flex-start;gap:2px}
+.eqs-swr.full small{font-size:12.5px;color:var(--ink2);line-height:1.35}
+.eqs-swr select{width:auto;min-width:130px;height:36px}
+.eqs-swr input.num{width:90px;height:36px;text-align:right}
+.eqs-swr input[type=checkbox]{position:absolute;opacity:0;pointer-events:none}
+.eqs-tg{flex:none;width:42px;height:24px;border-radius:12px;background:var(--sunken);border:1px solid var(--line);position:relative;transition:background .15s}
+.eqs-tg::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--panel);box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s}
+.eqs-swr input:checked+.eqs-tg{background:var(--accent);border-color:var(--accent)}
+.eqs-swr input:checked+.eqs-tg::after{left:20px}
+.eqs-swr input:disabled+.eqs-tg{opacity:.55}
+.eqs-swr input:focus-visible+.eqs-tg{outline:2px solid var(--accent-line);outline-offset:2px}
+.eqs-i{display:inline-grid;color:var(--ink2);font-style:normal}
+.eqs-i svg{width:15px;height:15px}
+.eqs-etw{overflow-x:auto;max-height:60vh;overflow-y:auto}
+.eqs-et{width:100%}
+.eqs-et .input{height:34px;min-width:80px;width:100%}
+.eqs-et td.num .input{width:90px;text-align:right}
+.eqs-et textarea.input{height:auto;min-width:220px}
+.eqs-et td{vertical-align:top}
+.eqs-fromc td{background:var(--panel2)}
+.eqs-chips{display:flex;flex-wrap:wrap;gap:4px;min-width:260px}
+.eqs-chips button{all:unset;cursor:pointer;padding:3px 8px;border-radius:7px;border:1px solid var(--line);font-size:12px;background:var(--panel)}
+.eqs-chips button.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-ink);font-weight:600}
+.eqs-info{line-height:1.55;font-size:14px}
+.eqs-steps2{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:8px}
+.eqs-tpl{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:12px}
+.eqs-tpl button{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);font-size:13.5px}
+.eqs-tpl button svg{color:var(--accent);width:19px;height:19px;flex:none}
+.eqs-tpl button.on{background:var(--accent-soft);border-color:var(--accent-line);font-weight:600}
+.eqs-yes{display:inline-grid;color:var(--ok)}
+.eqs-yes svg{width:18px;height:18px}
+.eqs-intg{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.eqs-intc{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.eqs-intc p{margin:0;font-size:13.5px;line-height:1.45}
+.eqs-intc .btn{display:inline-flex;align-items:center;gap:4px;margin-top:auto}
+.eqs-intc .btn svg{width:15px;height:15px}
+.eqs-check{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line2);margin:8px 0}
+.eqs-check label{display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer}
+/* the bell of the section */
+.top:has(#stockTabs.eqnav){position:relative}
+#stockTabs.eqnav .eqnav-bell{position:absolute;top:18px;right:24px}  /* the top right corner of the section, as on the mockups */
+.top:has(#eqBellW:not([hidden])) .title-block{padding-right:60px}
+#stockTabs.eqnav .eqnav-bell[hidden]{display:none}
+#stockTabs.eqnav .eqnav-bell .eqnav-mb{padding:0 12px;position:relative}
+#stockTabs.eqnav .eqnav-bell .eqnav-mb svg{color:var(--ink)}
+#eqBellN{position:absolute;top:5px;right:5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:#E8B23A;color:#fff;font-style:normal;font-size:10.5px;font-weight:700;display:grid;place-items:center;box-sizing:border-box}
+#eqBellN.bad{background:#D9534F}
+#eqBellN[hidden]{display:none}
+.eqbell-menu{width:360px;max-height:70vh;overflow:auto}
+.eqbell-h{display:flex;flex-direction:column;padding:8px 12px 10px;border-bottom:1px solid var(--line2);margin-bottom:4px}
+.eqbell-h small{color:var(--ink2);font-size:12.5px}
+.eqbell-menu button[data-e]{display:flex!important;align-items:center;gap:10px}
+.eqbell-menu button[data-e] span{flex:1;display:flex;flex-direction:column;min-width:0}
+.eqbell-menu button[data-e] b{font-size:13.5px;font-weight:600}
+.eqbell-menu button[data-e] small{font-size:12px;color:var(--ink2)}
+.eqbell-menu button[data-e] em{font-style:normal;font-size:12px;font-weight:600;padding:3px 8px;border-radius:7px;background:var(--sunken);white-space:nowrap}
+.eqbell-menu button.late em{background:#FDE8E6;color:#B23A2C}
+.eqbell-e{padding:10px 12px;font-size:13px}
+.eqbell-menu .eqbell-all{display:flex!important;align-items:center;gap:4px;justify-content:flex-end;color:var(--accent-ink);font-weight:600;border-top:1px solid var(--line2);border-radius:0;margin-top:4px}
+.eqbell-all svg{width:15px;height:15px}
+@media screen{:root[data-theme="dark"] .eqbell-menu button.late em{background:#3A1B18;color:#F29C90}}
+@media (max-width:1250px){.eqs-g3b{grid-template-columns:1fr 1fr}.eqs-rtiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:1000px){.eqs-g2q,.eqs-g3b{grid-template-columns:1fr}}
