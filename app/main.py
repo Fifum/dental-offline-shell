@@ -227,7 +227,13 @@ class Api:
         return self._stock.scan(code)
 
     def material(self, mid):
-        return self._stock_view(self._stock.material(mid))
+        """The material and, for its card (3.13), what this employee may do there."""
+        m = self._stock_view(self._stock.material(mid))
+        if m:
+            perms, _, _, direct, _ = self._stock_rights()
+            m["can"] = {"edit": "stock_edit" in perms, "ops": bool(perms & {"stock_edit", "stock_ops"}), "direct": direct,
+                        "photo": bool(perms & {"stock_edit", "stock_ops"})}
+        return m
 
     def save_material(self, f):
         return self._stock.save_material({**f, "_user": self._who()})

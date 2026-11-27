@@ -45,7 +45,7 @@ async function openEquipment(id, tab) {
   EQ.id = id; EQ.tab = tab || "main"; EQ.gal = 0; EQ.allDocs = false;
   S.stockTab = "equipment";
   $$("#stockTabs button").forEach(x => x.classList.toggle("on", x.dataset.k === "equipment"));
-  S.eqOpen = id;
+  S.eqOpen = id; S.matOpen = null;
   if (!$("#view-stock") || $("#view-stock").hidden) { if (typeof show === "function") show("stock"); }
   return eqCard();
 }

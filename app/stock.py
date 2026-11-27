@@ -408,7 +408,66 @@ class Stock:
                             if abs(v) > 1e-9]
         m["norms"] = self.db.q("""SELECT sm.service_id, sm.qty, s.title, s.code FROM service_materials sm
                                   JOIN services s ON s.id = sm.service_id WHERE sm.material_id=? ORDER BY s.title""", (mid,))
+        m.update(self.material_supplies(mid))   # 3.13 «карточка материала»
+        m.update(self.material_usage(mid, m["balance"] - (m.get("expired_qty") or 0)))
         return m
+
+    def material_supplies(self, mid):
+        """3.13 «Карточка материала»: every receipt of the material — when, from whom, how much, at what price, by which invoice;
+        per supplier: how many deliveries, the last one and the best price; the last supplier and the best current offer.
+
+        A material is bought from different suppliers over time (Marchenko, then Ivanova, then Petrov), so the supplier lives on
+        each receipt (`stock_docs.supplier_id`), not on the material."""
+        rows = self.db.q("""SELECT m.id, m.qty, m.price, m.at, m.doc_id, m.location_id, m.user_name, d.number AS doc_number,
+                                   COALESCE(NULLIF(d.date,''), substr(m.at,1,10)) AS day, d.supplier_id, COALESCE(d.nodoc,0) AS nodoc,
+                                   s.name AS supplier_name, l.lot, l.expires
+                            FROM stock_moves m LEFT JOIN stock_docs d ON d.id = m.doc_id LEFT JOIN suppliers s ON s.id = d.supplier_id
+                            LEFT JOIN stock_lots l ON l.id = (SELECT MIN(x.id) FROM stock_lots x WHERE x.move_id = m.id AND x.qty > 0)
+                            WHERE m.material_id=? AND m.kind='receipt' AND m.qty > 0
+                            ORDER BY day DESC, m.at DESC, m.id DESC""", (mid,))
+        names = self._loc_names()
+        by = {}
+        for r in rows:
+            r["qty"] = round(r["qty"], 3)
+            r["sum"] = round(r["qty"] * (r["price"] or 0), 2)
+            r["supplier_name"] = r["supplier_name"] or ""
+            r["location_name"] = names.get(r.get("location_id") or "", MAIN)
+            if not r["supplier_id"]:
+                continue
+            g = by.get(r["supplier_id"])
+            if g is None:  # rows go from the newest, so the first row of a supplier is its last delivery
+                g = by[r["supplier_id"]] = {"supplier_id": r["supplier_id"], "supplier_name": r["supplier_name"], "count": 0, "qty": 0.0,
+                                            "sum": 0.0, "last_date": r["day"], "last_price": r["price"] or 0, "min_price": None}
+            g["count"] += 1
+            g["qty"] = round(g["qty"] + r["qty"], 3)
+            g["sum"] = round(g["sum"] + r["sum"], 2)
+            if (r["price"] or 0) > 0 and (g["min_price"] is None or r["price"] < g["min_price"]):
+                g["min_price"] = r["price"]
+        sups = sorted(by.values(), key=lambda g: g["last_date"] or "", reverse=True)
+        for g in sups:
+            g["avg_price"] = round(g["sum"] / g["qty"], 2) if g["qty"] else 0
+        priced = [g for g in sups if g["last_price"] > 0]
+        best = min(priced, key=lambda g: (g["last_price"], -(date.fromisoformat(g["last_date"]).toordinal() if g["last_date"] else 0))) \
+            if priced else None
+        for g in sups:
+            g["best"] = best is not None and g["supplier_id"] == best["supplier_id"]
+        last = next((r for r in rows if r["supplier_id"]), None)
+        return {"supplies": rows[:300], "supply_count": len(rows), "supplier_stats": sups,
+                "last_supply": last and {"supplier_id": last["supplier_id"], "supplier_name": last["supplier_name"], "date": last["day"],
+                                         "price": last["price"] or 0, "qty": last["qty"], "doc_id": last["doc_id"],
+                                         "doc_number": last["doc_number"] or ""},
+                "best_offer": best and {"supplier_id": best["supplier_id"], "supplier_name": best["supplier_name"],
+                                        "price": best["last_price"], "date": best["last_date"]}}
+
+    def material_usage(self, mid, usable):
+        """How fast the material goes: services and write-offs over the last 60 days, and how many days the usable stock lasts."""
+        since = date.fromordinal(date.today().toordinal() - USAGE_DAYS).isoformat()
+        used = -(self.db.one("""SELECT COALESCE(SUM(qty),0) AS q FROM stock_moves WHERE material_id=? AND kind IN ('service','writeoff')
+                                AND substr(at,1,10) > ?""", (mid, since))["q"] or 0)
+        used = round(max(0.0, used), 3)
+        daily = used / USAGE_DAYS
+        return {"usage": {"days": USAGE_DAYS, "used": used, "daily": round(daily, 3),
+                          "days_left": round(max(0.0, usable) / daily, 1) if daily > 0 else None}}
 
     def save_material(self, f):
         name = _clean(f.get("name"), 200)
@@ -429,11 +488,16 @@ class Stock:
                       (mid, _clean(f.get("code"), 50), name, _clean(f.get("unit"), 20) or "шт", _clean(f.get("category"), 100),
                        max(0, _num(f.get("min_qty"), "Минимальный остаток")), max(0, _num(f.get("price"), "Цена")),
                        bar, _clean(f.get("comment"), 500), _now()))
-            if f.get("start_qty") and not f.get("id"):
+            sup = f.get("supplier_id") if f.get("supplier_id") and self.db.one("SELECT 1 AS x FROM suppliers WHERE id=?", (f.get("supplier_id"),)) else None
+            if f.get("start_qty") and not f.get("id") and not sup:
                 q = _num(f["start_qty"])
                 if q:
                     c.execute("INSERT INTO stock_moves(material_id, qty, price, kind, reason, user_name, at) VALUES(?,?,?,?,?,?,?)",
                               (mid, q, _num(f.get("price")), "inventory", "Начальный остаток", f.get("_user", ""), _now()))
+        if f.get("start_qty") and not f.get("id") and sup and _num(f["start_qty"]) > 0:
+            # 3.13: a new material «от поставщика» — the starting stock is that supplier's receipt, so the card shows who it was
+            self.receive({"supplier_id": sup, "number": f.get("doc_number"), "lines": [{"material_id": mid, "qty": f["start_qty"], "price": f.get("price")}],
+                          "comment": "Начальный остаток"}, f.get("_user", ""))
         return mid
 
     def delete_material(self, mid):

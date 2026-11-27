@@ -89,6 +89,7 @@ function snTile(key, title, sub, ok) {
   return `<button class="sn-tile sn-t-${key}" data-tile="${key}" ${ok ? "" : "disabled title='Нет прав — обратитесь к директору'"}><i>${SN_ICON[key]}</i><b>${title}</b><span>${sub}</span></button>`;
 }
 async function stockHome() {
+  S.matOpen = null;  // 3.13: the home screen replaces an open material card
   const body = $("#stockBody");
   const h = await api.stock_home(SN.days);
   SN.home = h;

@@ -10,7 +10,7 @@ const placeSelect = (id, cur = "", label = "Место") => hasPlaces() ? `<labe
 
 $$("#stockTabs button").forEach(b => b.onclick = () => {
   S.stockTab = b.dataset.k;
-  S.eqOpen = null;  // 3.13: a tab opens its list, not the card left open
+  S.eqOpen = null; S.matOpen = null;  // 3.13: a tab opens its list, not the card left open
   $$("#stockTabs button").forEach(x => x.classList.toggle("on", x === b));
   loadStock();
 });
@@ -30,6 +30,7 @@ async function loadStock() {
   if (S.stockTab === "steril") return sterilJournal();  // the journal is also for those without stock rights
   STK = await api.stock_summary();
   stockTabsByRights();  // 3.13: «По приёмам» only while the stock is linked to Dentist Plus (STK.dp_link)
+  if (S.matOpen && ["home", "balance"].includes(S.stockTab)) return mtCard();  // 3.13: the material card is a screen of these tabs
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, equipment: stockEquipment, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces}[S.stockTab];
   await fn();
@@ -47,6 +48,7 @@ function statRow() {
 
 /* ------------------------------------------------------------ balances */
 async function stockBalance() {
+  S.matOpen = null;
   const body = $("#stockBody");
   const q = S.stockQ || "", low = !!S.stockLow, exp = !!S.stockExp;
   if (!hasPlaces() || !STK.locations.some(l => l.id === S.stockLoc)) S.stockLoc = null;  // 3.5: «все места» or one place
@@ -88,7 +90,7 @@ async function stockBalance() {
 }
 
 function editMaterial(m, {onSaved} = {}) {
-  const box = modal(`<div class="m-h"><h3>${m.id ? "Материал" : "Новый материал"}</h3><button class="x" data-close>×</button></div>
+  const box = modal(`<div class="m-h"><h3>${m.id ? "Редактировать: " + esc(m.name) : "Карточка материала"}</h3><button class="x" data-close>×</button></div>
     <div class="m-b">
       <label class="fl">Название*<input class="input" id="mName" value="${esc(m.name || "")}" autofocus></label>
       <div class="grid3"><label class="fl">Код / артикул<input class="input" id="mCode" value="${esc(m.code || "")}"></label>
@@ -97,7 +99,9 @@ function editMaterial(m, {onSaved} = {}) {
       <div class="grid3"><label class="fl">Минимальный остаток<input class="input" id="mMin" type="number" step="any" min="0" value="${m.min_qty ?? ""}"></label>
         <label class="fl">Цена за единицу, ₽<input class="input" id="mPrice" type="number" step="any" min="0" value="${m.price ?? ""}"></label>
         ${m.id ? `<label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>` : `<label class="fl">Начальный остаток<input class="input" id="mStart" type="number" step="any" min="0"></label>`}</div>
-      ${m.id ? "" : `<label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>`}
+      ${m.id ? "" : `<div class="grid3"><label class="fl">Штрихкод<input class="input" id="mBar" value="${esc(m.barcode || "")}"></label>
+        <label class="fl" title="Начальный остаток запишется приходом от этого поставщика — он появится в истории поставок">Поставщик начального остатка<select class="input" id="mSup"><option value="">— без поставщика —</option></select></label>
+        <label class="fl">Номер накладной<input class="input" id="mDoc" placeholder="если есть"></label></div>`}
       <label class="fl">Комментарий<input class="input" id="mCom" value="${esc(m.comment || "")}"></label>
       <datalist id="mUnits">${STK.units.map(u => `<option value="${esc(u)}">`).join("")}</datalist>
       <datalist id="mCats">${[...new Set((S.stockRows || []).map(r => r.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join("")}</datalist>
@@ -107,40 +111,21 @@ function editMaterial(m, {onSaved} = {}) {
   $("#mOk", box).onclick = async () => {
     try {
       const id = await api.save_material({id: m.id, name: $("#mName").value, code: $("#mCode").value, category: $("#mCat").value, unit: $("#mUnit").value,
-        min_qty: $("#mMin").value, price: $("#mPrice").value, barcode: $("#mBar").value, comment: $("#mCom").value, start_qty: m.id ? null : $("#mStart").value});
-      closeModal(); toast("Сохранено"); loadStock();
+        min_qty: $("#mMin").value, price: $("#mPrice").value, barcode: $("#mBar").value, comment: $("#mCom").value, start_qty: m.id ? null : $("#mStart").value,
+        supplier_id: m.id ? null : $("#mSup").value, doc_number: m.id ? null : $("#mDoc").value});
+      closeModal(); toast(m.id ? "Сохранено" : "Карточка создана");
       if (onSaved) onSaved(id);
+      else if (!m.id && ["home", "balance"].includes(S.stockTab)) openMaterial(id);  // 3.13: like equipment, the new card opens
+      else loadStock();
     } catch (e) { $("#mErr").textContent = errText(e); }
   };
   const del = $("#mDel", box);
-  if (del) del.onclick = async () => { if (await ask(`Убрать «${m.name}» из справочника?`, {danger: true, ok: "Убрать", text: "История движения сохранится, нормы списания по услугам удалятся."})) { await api.delete_material(m.id); closeModal(); loadStock(); } };
+  if (del) del.onclick = async () => { if (await ask(`Убрать «${m.name}» из справочника?`, {danger: true, ok: "Убрать", text: "История движения сохранится, нормы списания по услугам удалятся."})) { await api.delete_material(m.id); closeModal(); S.matOpen = null; loadStock(); } };
+  const ms = $("#mSup", box);
+  if (ms) api.suppliers().then(list => { ms.insertAdjacentHTML("beforeend", list.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")); }).catch(() => {});
 }
 
-async function openMaterial(id) {
-  const m = await api.material(id);
-  const edit = can("stock_edit");
-  const box = modal(`<div class="m-h"><h3>${esc(m.name)}</h3><button class="x" data-close>×</button></div>
-    <div class="m-b">
-      <div class="sn-card-top">${photoBlock("material", m, canAny("stock_edit", "stock_ops"))}<div class="stat-row"><div class="stat"><span>Остаток</span><b>${qtyFmt(m.balance, m.unit)}</b>${m.balance_doc !== undefined && Math.abs(m.balance - m.balance_doc) > 1e-9 ? `<small class="muted">по документам: ${qtyFmt(m.balance_doc, m.unit)}</small>` : ""}</div><div class="stat"><span>Минимум</span><b>${m.min_qty ? qtyFmt(m.min_qty, m.unit) : "—"}</b></div>
-        <div class="stat"><span>Цена</span><b>${money(m.price)}</b></div><div class="stat"><span>Сумма</span><b>${money(m.value)}</b></div></div></div>
-      ${(m.by_location || []).some(x => x.id) ? `<h4 class="sub-h">По местам хранения</h4><div class="chips">${m.by_location.map(x => `<span class="chip ${x.qty < 0 ? "chip-warn" : ""}">${esc(x.name)} · ${qtyFmt(x.qty, m.unit)}</span>`).join("")}</div>` : ""}
-      <h4 class="sub-h">Партии и сроки годности</h4>
-      ${lotsTable(m.lot_list, m.unit, edit)}
-      <h4 class="sub-h">Списывается по услугам</h4>
-      ${m.norms.length ? `<div class="chips">${m.norms.map(n => `<span class="chip">${esc(n.title)} · ${qtyFmt(n.qty, m.unit)}</span>`).join("")}</div>` : `<div class="muted">Не привязан к услугам. Нормы задаются во вкладке «Нормы списания».</div>`}
-      <h4 class="sub-h">Движение</h4>
-      ${movesTable(m.moves, false)}
-    </div>
-    <div class="m-f"><span class="muted">${esc(m.code || "")} ${m.barcode ? "· штрихкод " + esc(m.barcode) : ""}</span><button class="btn ghost" data-close>Закрыть</button>
-      ${edit ? `<button class="btn ghost" id="mOutOne">Списать</button><button class="btn ghost" id="mInOne">Приход</button><button class="btn" id="mEdit">Изменить</button>` : ""}</div>`, {wide: true});
-  const on = (s, f) => { const el = $(s, box); if (el) el.onclick = f; };
-  bindPhotoBlock(box, "material", m, () => openMaterial(id));
-  on("#mEdit", () => editMaterial(m));
-  on("#mInOne", () => openStockDoc("receipt", [{material_id: m.id, qty: "", price: m.price}]));
-  on("#mOutOne", () => openStockDoc("writeoff", [{material_id: m.id, qty: ""}]));
-  $$("[data-lot-out]", box).forEach(b => b.onclick = () => { const g = m.lot_list.lots.find(x => String(x.id) === b.dataset.lotOut);
-    openStockDoc("writeoff", [{material_id: m.id, qty: g.left, lot_id: g.id, lot: g.lot, expires: g.expires}], {reason: g.state === "expired" ? "Истёк срок годности" : ""}); });
-}
+/* openMaterial — the screen «Карточка материала»: stock-matcard.js (3.13) */
 
 function movesTable(moves, withMaterial = true) {
   if (!moves.length) return `<div class="empty"><b>Движений нет</b></div>`;
