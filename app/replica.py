@@ -80,6 +80,7 @@ TABLES = [
     T("service_costs", key=("service_id",), title="Себестоимость услуги"),
     T("equipment", title="Оборудование"),
     T("equipment_events", intpk=True, title="Обслуживание оборудования"),
+    T("equipment_docs", title="Документ оборудования"),  # 3.13: the documents and photos of the equipment card
     # 3.10: the nurse's requests for materials and the write-offs waiting for a manager's approval
     T("stock_requests", title="Заявка на материалы"),
     T("stock_approvals", title="Списание на согласовании"),
@@ -206,8 +207,13 @@ def install(db):
 #  * the new columns are filled from the last synced copy of the row (sync_rows.base keeps the whole row as it came);
 #  * every peer and the cloud are asked for everything again: versions already here are skipped at once, the rows of the
 #    new tables arrive.
-CATCHUP = "3.10"
-CATCHUP_COLS = {"materials": ["photo_id"], "equipment": ["photo_id", "in_service", "useful_months", "salvage", "amort_method"]}
+CATCHUP = "3.13"
+CATCHUP_COLS = {"materials": ["photo_id"],
+                "equipment": ["photo_id", "in_service", "useful_months", "salvage", "amort_method",
+                              # 3.13: the equipment card
+                              "manufacturer", "ownership", "condition", "location_id", "market_value", "replace_cost",
+                              "replace_date", "reserve_monthly", "disposal_kind", "disposal_amount"],
+                "equipment_events": ["data"]}
 
 
 def _catch_up(conn):

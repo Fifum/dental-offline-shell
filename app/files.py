@@ -258,6 +258,30 @@ class Files:
                        "image/jpeg", len(jpg), sha, info["width"], info["height"], "{}", _now(), who or "", _now()))
         return self.get_row(fid)
 
+    def add_stock_file(self, name, data: bytes, who="") -> dict:
+        """3.13: a document of an equipment card — a photo or a scan is made smaller like a stock photo, a PDF is kept as it is."""
+        if not data:
+            raise ValueError("Пустой файл")
+        if len(data) > MAX_BYTES:
+            raise ValueError(f"Файл больше {MAX_BYTES // 1024 // 1024} МБ — сохраните документ поменьше")
+        ext = _ext(name, data)
+        if ext in PHOTO_EXT:
+            return self.add_stock_photo(name, data, who)
+        if ext != ".pdf" or not data.startswith(b"%PDF"):
+            raise ValueError("Можно добавить PDF или фото документа (JPEG, PNG)")
+        sha = hashlib.sha256(data).hexdigest()
+        dup = self.db.one("SELECT id FROM patient_files WHERE patient_id=? AND sha256=? AND deleted=0", (STOCK_OWNER, sha))
+        if dup:
+            return self.get_row(dup["id"])
+        fid = "F-" + uuid.uuid4().hex[:12]
+        (_pdir(STOCK_OWNER) / (fid + ".pdf")).write_bytes(data)
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO patient_files(id, patient_id, kind, title, tooth, taken_at, note, orig_name, ext, mime, size,
+                         sha256, width, height, meta, created_at, created_by, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (fid, STOCK_OWNER, "doc", Path(str(name or "документ")).stem[:200], "", None, "", str(name or "")[:200], ".pdf",
+                       "application/pdf", len(data), sha, None, None, "{}", _now(), who or "", _now()))
+        return self.get_row(fid)
+
     def stock_thumbs(self, ids) -> dict:
         """Small previews of stock photos only (never a patient's file, whatever id is asked for)."""
         ids = [str(x) for x in list(ids or [])[:300] if x]

@@ -127,7 +127,8 @@ async function stockHome() {
     if (e.key !== "Enter" || !q.value.trim()) return;
     e.preventDefault();
     const code = q.value.trim();
-    try { const r = await api.stock_scan(code); if (r.material) { q.value = ""; SN.q = ""; stockHomeSub(); openMaterial(r.material.id); return; } } catch (err) { /* not a barcode */ }
+    try { const r = await api.stock_scan(code); if (r.material) { q.value = ""; SN.q = ""; stockHomeSub(); openMaterial(r.material.id); return; }
+      if (r.equipment_id) { q.value = ""; SN.q = ""; openEquipment(r.equipment_id); return; } } catch (err) { /* not a barcode */ }  // 3.13: QR of a label
   };
   $("#snScan").onclick = () => { q.focus(); q.select(); toast("Наведите сканер на штрихкод — материал найдётся сам"); };
   await stockHomeSub();

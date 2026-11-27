@@ -128,7 +128,11 @@ class Api:
     def stock_summary(self):
         from stock import EQ_STATUS, LOC_KINDS, MOVE_KINDS, UNITS
         locs = self._stock.locations()
-        return {**self._stock.summary(), "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS,
+        summ = self._stock.summary()
+        if not self._eq_money():  # 3.13: the equipment's money only with «Бухгалтерия»
+            summ.pop("eq_residual", None)
+            summ.pop("eq_cost", None)
+        return {**summ, "units": UNITS, "move_kinds": MOVE_KINDS, "eq_status": EQ_STATUS, "eq_money": self._eq_money(),
                 "locations": [{"id": x["id"], "name": x["name"], "kind": x["kind"]} for x in locs], "loc_kinds": LOC_KINDS,
                 "dp_link": self._sauto.settings()["mode"] != "off"}  # 3.13: the stock is separate from Dentist Plus
 
@@ -282,20 +286,81 @@ class Api:
     def save_norms(self, service_id, items):
         return self._stock.save_norms(service_id, items)
 
+    # 3.13 «карточка оборудования»: the money (cost, depreciation, replacement) only for «Бухгалтерия» — never sent without it
+    # and never taken from the form of someone without it.
+    def _eq_money(self):
+        return "accounting" in self._my_perms()[0]
+
     def equipment_list(self, q="", show_written_off=False):
-        return self._stock.equipment_list(q, bool(show_written_off))
+        return self._stock.equipment_list(q, bool(show_written_off), money=self._eq_money())
 
     def equipment(self, eid):
-        return self._stock.equipment(eid)
+        return self._stock.equipment(eid, money=self._eq_money())
+
+    def equipment_card(self, eid):
+        """The card with what its screen needs besides the equipment: places, lists, rights, the next inventory number."""
+        from stock import EQ_CONDITION, EQ_DISPOSAL, EQ_DOC_KINDS, EQ_OWNERSHIP, EQ_STATUS
+        perms, _ = self._my_perms()
+        e = self.equipment(eid)
+        if not e:
+            raise ValueError("Оборудование не найдено")
+        return {"e": e, "places": [{"id": x["id"], "name": x["name"]} for x in self._stock.locations() if x["id"]],
+                "conditions": EQ_CONDITION, "ownerships": EQ_OWNERSHIP, "statuses": EQ_STATUS, "doc_kinds": EQ_DOC_KINDS,
+                "disposals": EQ_DISPOSAL, "can": {"edit": "equipment" in perms and e["status"] != "written_off",
+                                                   "money": "accounting" in perms}}
+
+    def equipment_next_inv(self):
+        return self._stock.next_inv()
 
     def save_equipment(self, f):
-        return self._stock.save_equipment(f, self._who())
+        return self._stock.save_equipment(f, self._who(), money=self._eq_money())
 
     def equipment_event(self, f):
-        return self._stock.equipment_event(f, self._who())
+        return self.equipment(self._stock.equipment_event(f, self._who()))
+
+    def equipment_set(self, f):
+        return self.equipment(self._stock.equipment_set(f if isinstance(f, dict) else {}, self._who()))
+
+    def equipment_inventory(self, f):
+        return self.equipment(self._stock.equipment_inventory(f if isinstance(f, dict) else {}, self._who()))
+
+    def equipment_replace_plan(self, f):
+        return self.equipment(self._stock.equipment_replace_plan(f if isinstance(f, dict) else {}, self._who(), self._eq_money()))
+
+    def equipment_dispose(self, f):
+        return self.equipment(self._stock.equipment_dispose(f if isinstance(f, dict) else {}, self._who(), self._eq_money()))
 
     def write_off_equipment(self, f):
-        return self._stock.write_off_equipment(f, self._who())
+        return self.equipment(self._stock.write_off_equipment(f, self._who(), self._eq_money()))
+
+    def equipment_doc_add(self, eid, kind, name, data_b64, title=""):
+        import files
+        self._stock._eq_live(eid)  # nothing is stored for a piece that is gone
+        fr = self._files.add_stock_file(name, files.b64_bytes(data_b64), self._who())
+        self._stock.equipment_doc_add(eid, kind, title or fr.get("title") or name, fr["id"], self._who())
+        return self.equipment(eid)
+
+    def equipment_doc_delete(self, did):
+        return self.equipment(self._stock.equipment_doc_delete(did, self._who()))
+
+    def equipment_doc_open(self, did):
+        d = self._stock.equipment_doc_file(did)
+        return {**self._files.stock_photo(d["file_id"]), "title": d["title"]}
+
+    def equipment_qr(self, eid):
+        """3.13: the QR of the inventory label (PNG) and what it holds."""
+        import crm
+        e = self._stock.equipment(eid, money=False)
+        if not e:
+            raise ValueError("Оборудование не найдено")
+        clinic = (config.load_settings().get("clinic") or {}).get("name") or config.BRAND.get("name") or ""
+        text = self._stock.qr_text(e, clinic)
+        return {"text": text, "png": crm.qr_data_uri(text), "link": text.startswith("https://"), "clinic": clinic,
+                "inv_number": e["inv_number"], "name": e["name"], "location": e["location_name"]}
+
+    def equipment_settings_save(self, f):
+        """«Бухгалтерия»: how many hours a chair works in a month (for «амортизация на кресло-час»)."""
+        return {"chair_hours": self._stock.set_chair_hours((f or {}).get("chair_hours"))}
 
     # ------------------------------------------- 3.10: the nurse's stock --
     def _stock_rights(self):

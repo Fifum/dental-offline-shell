@@ -306,6 +306,11 @@ METHOD_PERMS = {
     "stock_cost_settings_save": "accounting",
     "equipment_list": ("equipment", "stock_view"), "equipment": ("equipment", "stock_view"),
     "save_equipment": "equipment", "equipment_event": "equipment", "write_off_equipment": "equipment",
+    # 3.13: the equipment card (its money is cut out by the method itself without «Бухгалтерия»)
+    "equipment_card": ("equipment", "stock_view"), "equipment_next_inv": "equipment", "equipment_set": "equipment",
+    "equipment_inventory": "equipment", "equipment_replace_plan": "equipment", "equipment_dispose": "equipment",
+    "equipment_doc_add": "equipment", "equipment_doc_delete": "equipment", "equipment_doc_open": ("equipment", "stock_view"),
+    "equipment_settings_save": "accounting", "equipment_qr": ("equipment", "stock_view"),
     # 3.10: the nurse's stock — requests, consumption waiting for approval, photos, depreciation of equipment.
     # A write-off by someone without «Склад: приход, списание» or «согласование» is only a request (checked in Api)
     "stock_home": ("stock_view", "stock_edit", "stock_ops", "equipment"),
@@ -318,7 +323,7 @@ METHOD_PERMS = {
     "stock_approval_decide": "stock_approve", "stock_approval_cancel": ("stock_edit", "stock_ops", "stock_approve"),
     "stock_photos": ("stock_view", "stock_edit", "stock_ops", "equipment"), "stock_photo": ("stock_view", "stock_edit", "stock_ops", "equipment"),
     "stock_photo_set": ("stock_edit", "stock_ops", "equipment"), "stock_photo_clear": ("stock_edit", "stock_ops", "equipment"),
-    "equipment_amortization": ("equipment", "stock_view", "accounting"), "amort_settings_save": "accounting",
+    "equipment_amortization": "accounting", "amort_settings_save": "accounting",
     # money 2.12: advance, refunds, installments, memberships, cash shifts, insurance (ДМС)
     "money_patient": ("payments", "billing", "patients_view"), "deposit_use": "payments", "refund": "payments",
     "schedule": ("payments", "billing"), "schedule_draft": ("payments", "billing"), "schedule_save": ("payments", "billing"),
@@ -424,6 +429,10 @@ AUDITED = {
     "stock_cost_settings_save": "Настройки себестоимости и материалов в ОПиУ",
     "save_equipment": "Оборудование", "equipment_event": "Обслуживание оборудования",
     "write_off_equipment": "Списание оборудования",
+    "equipment_set": "Оборудование: место, состояние, ремонт", "equipment_inventory": "Инвентаризация оборудования",
+    "equipment_replace_plan": "Замена оборудования запланирована", "equipment_dispose": "Выбытие оборудования",
+    "equipment_doc_add": "Документ оборудования", "equipment_doc_delete": "Документ оборудования убран",
+    "equipment_settings_save": "Часы работы кресла в месяц",
     "stock_request_save": "Заявка на выдачу материалов", "stock_request_cancel": "Заявка на материалы отменена",
     "stock_request_reject": "Заявка на материалы отклонена", "stock_use": "Расход материалов (медсестра — на согласование)",
     "stock_approval_decide": "Согласование списания материалов", "stock_approval_cancel": "Отмена списания на согласовании",

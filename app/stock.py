@@ -27,7 +27,8 @@ import json
 import math
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from urllib.parse import quote, unquote
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS materials(
@@ -60,6 +61,11 @@ CREATE INDEX IF NOT EXISTS ix_lots_mat ON stock_lots(material_id);
 CREATE TABLE IF NOT EXISTS stock_locations(
     id TEXT PRIMARY KEY, name TEXT, kind TEXT, branch_id TEXT, chair TEXT, active INTEGER DEFAULT 1, sort INTEGER DEFAULT 0,
     comment TEXT, created_at TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS stock_settings(k TEXT PRIMARY KEY, v TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS equipment_docs(
+    id TEXT PRIMARY KEY, equipment_id TEXT, kind TEXT, title TEXT, file_id TEXT, created_by TEXT, created_at TEXT,
+    deleted INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS ix_eqdocs_eq ON equipment_docs(equipment_id);
 """
 SOON_DAYS = 30          # a lot expiring within this many days is highlighted
 USAGE_DAYS = 60         # the average daily use for the purchase list is taken over this period
@@ -72,7 +78,23 @@ MAIN = "Основной склад"   # the place of every move without a locat
 LOC_KINDS = {"store": "Склад", "cabinet": "Кабинет", "branch": "Филиал"}
 EQ_STATUS = {"in_use": "В работе", "repair": "В ремонте", "storage": "На складе", "written_off": "Списано"}
 EQ_EVENTS = {"service": "Обслуживание", "repair": "Ремонт", "move": "Перемещение", "note": "Заметка",
-             "writeoff": "Списание", "status": "Статус"}
+             "writeoff": "Списание", "status": "Статус", "inventory": "Инвентаризация", "replace_plan": "План замены",
+             "disposal": "Выбытие", "doc": "Документ", "condition": "Состояние", "created": "Поставлено на учёт"}
+# 3.13 «карточка оборудования»
+EQ_OWNERSHIP = {"own": "Собственность клиники", "lease": "Аренда", "leasing": "Лизинг", "owner": "Имущество учредителя"}
+EQ_CONDITION = {"ok": "Исправно", "service": "Требует обслуживания", "faulty": "Неисправно"}
+EQ_DISPOSAL = {"writeoff": "Списание и утилизация", "sale": "Продажа", "return": "Возврат владельцу"}
+EQ_DISPOSED = {"writeoff": "Списано", "sale": "Продано", "return": "Возвращено владельцу"}
+EQ_DOC_KINDS = {"contract": "Договор купли-продажи", "waybill": "Товарная накладная", "act": "Акт ввода в эксплуатацию",
+                "passport": "Технический паспорт", "reg": "Регистрационное удостоверение", "warranty": "Гарантийный талон",
+                "service_act": "Акты ТО", "photo": "Фотографии", "other": "Другое"}
+EQ_DOC_MAIN = [k for k in EQ_DOC_KINDS if k != "other"]   # «Документы (n/8)»
+# the money of a piece of equipment: only someone with «Бухгалтерия» sees it, and only they may change it
+EQ_MONEY = ("price", "salvage", "market_value", "replace_cost", "reserve_monthly", "disposal_amount", "residual")
+EQ_NEW_COLS = ("manufacturer TEXT", "ownership TEXT", "condition TEXT", "location_id TEXT", "market_value REAL",
+               "replace_cost REAL", "replace_date TEXT", "reserve_monthly REAL", "disposal_kind TEXT", "disposal_amount REAL")
+CHAIR_HOURS = 154       # working hours of a chair in a month, for «амортизация на кресло-час»
+INV_FIRST = "ОБ-001"
 UNITS = ["шт", "уп", "мл", "г", "фл", "амп", "карп", "набор", "пара", "м"]
 AMORT_METHODS = {"linear": "Линейный"}
 MAX_USEFUL_MONTHS = 600  # 50 years
@@ -256,9 +278,12 @@ class Stock:
             if "photo_id" not in {r[1] for r in db.conn.execute("PRAGMA table_info(materials)")}:
                 db.conn.execute("ALTER TABLE materials ADD COLUMN photo_id TEXT")
             ecols = {r[1] for r in db.conn.execute("PRAGMA table_info(equipment)")}
-            for col in ("photo_id TEXT", "in_service TEXT", "useful_months INTEGER", "salvage REAL DEFAULT 0", "amort_method TEXT"):
+            for col in ("photo_id TEXT", "in_service TEXT", "useful_months INTEGER", "salvage REAL DEFAULT 0", "amort_method TEXT",
+                        *EQ_NEW_COLS):  # 3.13: the equipment card
                 if col.split()[0] not in ecols:
                     db.conn.execute(f"ALTER TABLE equipment ADD COLUMN {col}")
+            if "data" not in {r[1] for r in db.conn.execute("PRAGMA table_info(equipment_events)")}:  # 3.13: inventory details
+                db.conn.execute("ALTER TABLE equipment_events ADD COLUMN data TEXT")
             db.conn.commit()
 
     service_location = None  # 3.5: callable(invoice row) -> place of the automatic write-off by an invoice (set by Api)
@@ -908,7 +933,8 @@ class Stock:
             if m:
                 break
         mat = next((x for x in self.materials() if x["id"] == m["id"]), None) if m else None
-        return {**p, "material": mat}
+        # 3.13: the QR of an equipment label opens its card
+        return {**p, "material": mat, "equipment_id": None if mat else self.equipment_by_code(code)}
 
     def summary(self):
         mats = self.materials()
@@ -925,32 +951,110 @@ class Stock:
                 "service_due": sum(1 for e in eq if e["status"] != "written_off" and e["next_service"] and e["next_service"] <= today)}
 
     # ============================================================ equipment --
-    def equipment_list(self, q="", show_written_off=False):
+    def _eq_titles(self, r, today=None):
+        today = today or date.today().isoformat()
+        off = r["status"] == "written_off"
+        r["status_title"] = EQ_DISPOSED.get(r.get("disposal_kind") or "writeoff", "Выбыло") if off else EQ_STATUS.get(r["status"], r["status"])
+        r["service_due"] = bool(r["next_service"] and r["next_service"] <= today and not off)
+        r["condition"] = r.get("condition") or "ok"
+        r["ownership"] = r.get("ownership") or "own"
+        r["condition_title"] = EQ_CONDITION.get(r["condition"], r["condition"])
+        r["ownership_title"] = EQ_OWNERSHIP.get(r["ownership"], r["ownership"])
+        r["amort"] = amortization(r)  # 3.10
+        r["money"] = True
+        return r
+
+    @staticmethod
+    def hide_money(e):
+        """3.13: the equipment without its money — for someone without «Бухгалтерия»."""
+        for r in e if isinstance(e, list) else [e]:
+            if not r:
+                continue
+            for k in (*EQ_MONEY, "amort", "amort_schedule", "chair_hour_cost"):
+                r.pop(k, None)
+            r["money"] = False
+        return e
+
+    def equipment_list(self, q="", show_written_off=False, money=True):
         rows = self.db.q("SELECT * FROM equipment ORDER BY CASE status WHEN 'written_off' THEN 1 ELSE 0 END, location, name")
         today = date.today().isoformat()
         for r in rows:
-            r["status_title"] = EQ_STATUS.get(r["status"], r["status"])
-            r["service_due"] = bool(r["next_service"] and r["next_service"] <= today and r["status"] != "written_off")
-            r["amort"] = amortization(r)  # 3.10
+            self._eq_titles(r, today)
         if not show_written_off:
             rows = [r for r in rows if r["status"] != "written_off"]
         q = (q or "").strip().lower()
         if q:
-            rows = [r for r in rows if q in f"{r['inv_number']} {r['name']} {r['model']} {r['serial']} {r['location']}".lower()]
-        return rows
+            rows = [r for r in rows if q in f"{r['inv_number']} {r['name']} {r['model']} {r['serial']} {r['location']} {r['manufacturer']}".lower()]
+        return rows if money else self.hide_money(rows)
 
-    def equipment(self, eid):
+    def equipment(self, eid, money=True):
         e = self.db.one("SELECT * FROM equipment WHERE id=?", (eid,))
-        if e:
-            e["status_title"] = EQ_STATUS.get(e["status"], e["status"])
-            e["amort"] = amortization(e)  # 3.10: depreciation and its months
-            e["amort_schedule"] = amort_schedule(e)
-            e["events"] = self.db.q("SELECT * FROM equipment_events WHERE equipment_id=? ORDER BY date DESC, id DESC", (eid,))
-            for ev in e["events"]:
-                ev["kind_title"] = EQ_EVENTS.get(ev["kind"], ev["kind"])
+        if not e:
+            return e
+        self._eq_titles(e)
+        e["amort_schedule"] = amort_schedule(e)  # 3.10: depreciation and its months
+        e["events"] = self.db.q("SELECT * FROM equipment_events WHERE equipment_id=? ORDER BY date DESC, id DESC", (eid,))
+        for ev in e["events"]:
+            ev["kind_title"] = EQ_EVENTS.get(ev["kind"], ev["kind"])
+            try:
+                ev["data"] = json.loads(ev.get("data") or "null")
+            except ValueError:
+                ev["data"] = None
+        # 3.13: documents, the photo gallery, the year's service costs, the chair hour
+        docs = self.db.q("""SELECT d.*, f.ext, f.size, f.orig_name FROM equipment_docs d LEFT JOIN patient_files f ON f.id = d.file_id
+                            WHERE d.equipment_id=? AND d.deleted=0 ORDER BY d.created_at, d.id""", (eid,))
+        for d in docs:
+            d["kind_title"] = EQ_DOC_KINDS.get(d["kind"], d["kind"])
+            d["image"] = (d.get("ext") or "") in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+        e["docs"] = docs
+        have = {d["kind"] for d in docs} | ({"photo"} if e.get("photo_id") else set())
+        e["doc_kinds"] = [{"kind": k, "title": EQ_DOC_KINDS[k], "count": sum(1 for d in docs if d["kind"] == k)} for k in EQ_DOC_KINDS]
+        e["doc_count"], e["doc_total"] = sum(1 for k in EQ_DOC_MAIN if k in have), len(EQ_DOC_MAIN)
+        e["photos"] = list(dict.fromkeys(x for x in [e.get("photo_id")] + [d["file_id"] for d in docs if d["kind"] == "photo"] if x))
+        year_ago = (date.today() - timedelta(days=365)).isoformat()
+        work = [ev for ev in e["events"] if ev["kind"] in ("service", "repair")]
+        e["service_cost_year"] = round(sum(ev["cost"] or 0 for ev in work if (ev["date"] or "") >= year_ago), 2)
+        e["service_count_year"] = sum(1 for ev in work if (ev["date"] or "") >= year_ago)
+        inv = next((ev for ev in e["events"] if ev["kind"] == "inventory"), None)
+        e["last_inventory"] = {"date": inv["date"], "found": bool((inv["data"] or {}).get("found", True)),
+                               "diffs": (inv["data"] or {}).get("diffs", []), "user_name": inv["user_name"]} if inv else None
+        e["chair_hours"] = self.chair_hours()
+        a = e["amort"]
+        e["chair_hour_cost"] = round(a["monthly"] / e["chair_hours"], 2) if a["on"] and e["chair_hours"] else 0.0
+        if e.get("location_id"):
+            p = self.db.one("SELECT name FROM stock_locations WHERE id=?", (e["location_id"],))
+            e["location_name"] = p["name"] if p else e["location"]
+        else:
+            e["location_name"] = e["location"] or ""
+        return e if money else self.hide_money(e)
+
+    def _eq_live(self, eid):
+        e = self.db.one("SELECT * FROM equipment WHERE id=?", (str(eid or ""),))
+        if not e:
+            raise ValueError("Оборудование не найдено")
+        if e["status"] == "written_off":
+            raise ValueError("Оборудование выбыло — изменить его нельзя")
         return e
 
-    def save_equipment(self, f, user=""):
+    def _eq_place(self, f, old=None):
+        """(location_id, location text): a place of «Места хранения» or a free text («Кабинет 1 · Кресло 1»)."""
+        old = old or {}
+        if "location_id" in f and f.get("location_id") not in (None, ""):
+            p = self.db.one("SELECT id, name FROM stock_locations WHERE id=?", (str(f.get("location_id")),))
+            if not p:
+                raise ValueError("Такого места нет в «Местах хранения»")
+            return p["id"], p["name"]
+        if "location" in f:
+            loc = _clean(f.get("location"), 100)
+            keep = "location_id" not in f and loc == (old.get("location") or "")
+            return (old.get("location_id") or "") if keep else "", loc
+        if "location_id" in f:  # «— не указано —»
+            return "", ""
+        return old.get("location_id") or "", old.get("location") or ""
+
+    def save_equipment(self, f, user="", money=True):
+        """The card of a piece of equipment. `money` (3.13) — the author has «Бухгалтерия»: without it the cost, the
+        depreciation and the replacement money are neither taken from the form nor changed."""
         name = _clean(f.get("name"), 200)
         if not name:
             raise ValueError("Укажите название оборудования")
@@ -958,18 +1062,36 @@ class Stock:
         old = self.db.one("SELECT * FROM equipment WHERE id=?", (eid,)) if eid else None
         if old and old["status"] == "written_off":
             raise ValueError("Списанное оборудование изменить нельзя")
-        inv = _clean(f.get("inv_number"), 50) or self._next_inv()
+        inv = _clean(f.get("inv_number"), 50) or (old["inv_number"] if old and old["inv_number"] else self._next_inv())
         dup = self.db.one("SELECT id FROM equipment WHERE inv_number=? AND id<>?", (inv, eid or ""))
         if dup:
             raise ValueError(f"Инвентарный номер {inv} уже занят")
-        status = f.get("status") or "in_use"
+        status = f.get("status") or (old["status"] if old else "in_use")
         if status not in EQ_STATUS or status == "written_off":
             status = old["status"] if old else "in_use"
-        vals = (inv, name, _clean(f.get("category"), 100), _clean(f.get("model"), 100), _clean(f.get("serial"), 100),
-                _clean(f.get("location"), 100), _clean(f.get("responsible"), 100), _clean(f.get("purchase_date"), 10),
-                max(0, _num(f.get("price"), "Стоимость")), _clean(f.get("warranty_until"), 10), _clean(f.get("next_service"), 10),
-                status, _clean(f.get("comment"), 1000))
-        amort = self._amort_fields(f, vals[8])
+        o = old or {}
+        lid, loc = self._eq_place(f, o)
+        price = max(0, _num(f.get("price"), "Стоимость")) if money else float(o.get("price") or 0)
+
+        def keep(k, fn):
+            return fn(f.get(k)) if k in f else (o.get(k) if o.get(k) is not None else "")
+        cut = lambda n: (lambda v: _clean(v, n))  # noqa: E731
+        vals = (inv, name, keep("category", cut(100)), keep("model", cut(100)), keep("serial", cut(100)), loc,
+                keep("responsible", cut(100)), keep("purchase_date", cut(10)), price, keep("warranty_until", cut(10)),
+                keep("next_service", cut(10)), status, keep("comment", cut(1000)))
+        cond = f.get("condition") if f.get("condition") in EQ_CONDITION else (o.get("condition") or "ok")
+        own = f.get("ownership") if f.get("ownership") in EQ_OWNERSHIP else (o.get("ownership") or "own")
+        extra = {"manufacturer": keep("manufacturer", cut(100)), "ownership": own, "condition": cond, "location_id": lid,
+                 "replace_date": keep("replace_date", lambda v: _day(v, "Плановая дата замены") if v else "")}
+        if money:
+            for k, title in (("market_value", "Рыночная стоимость"), ("replace_cost", "Стоимость замены"),
+                             ("reserve_monthly", "Резерв на обновление")):
+                if k in f:
+                    extra[k] = max(0, _num(f.get(k), title))
+        amort = self._amort_fields(f, price) if money else None
+        in_service = _day(f.get("in_service"), "Дата ввода в эксплуатацию") if not money and f.get("in_service") else None
+        today = date.today().isoformat()
+        ev = "INSERT INTO equipment_events(equipment_id, kind, date, text, user_name, created_at) VALUES(?,?,?,?,?,?)"
         with self.db.tx() as c:
             if old:
                 c.execute("""UPDATE equipment SET inv_number=?, name=?, category=?, model=?, serial=?, location=?, responsible=?,
@@ -979,14 +1101,18 @@ class Stock:
                 c.execute("""INSERT INTO equipment(inv_number, name, category, model, serial, location, responsible, purchase_date,
                              price, warranty_until, next_service, status, comment, id, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                           (*vals, eid, _now()))
+                c.execute(ev, (eid, "created", today, f"Инв. № {inv}" + (f" · {loc}" if loc else ""), user, _now()))
+            c.execute(f"UPDATE equipment SET {', '.join(k + '=?' for k in extra)} WHERE id=?", (*extra.values(), eid))
             if amort is not None:
                 c.execute("UPDATE equipment SET in_service=?, useful_months=?, salvage=?, amort_method=? WHERE id=?", (*amort, eid))
-            if old and old["location"] != vals[5]:
-                c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, user_name, created_at) VALUES(?,?,?,?,?,?)",
-                          (eid, "move", date.today().isoformat(), f"{old['location'] or '—'} → {vals[5] or '—'}", user, _now()))
+            elif in_service:
+                c.execute("UPDATE equipment SET in_service=? WHERE id=?", (in_service, eid))
+            if old and (old["location"] or "") != loc:
+                c.execute(ev, (eid, "move", today, f"{old['location'] or '—'} → {loc or '—'}", user, _now()))
             if old and old["status"] != status:
-                c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, user_name, created_at) VALUES(?,?,?,?,?,?)",
-                          (eid, "status", date.today().isoformat(), f"{EQ_STATUS[old['status']]} → {EQ_STATUS[status]}", user, _now()))
+                c.execute(ev, (eid, "status", today, f"{EQ_STATUS[old['status']]} → {EQ_STATUS[status]}", user, _now()))
+            if old and (old.get("condition") or "ok") != cond:
+                c.execute(ev, (eid, "condition", today, f"{EQ_CONDITION[old.get('condition') or 'ok']} → {EQ_CONDITION[cond]}", user, _now()))
         return eid
 
     @staticmethod
@@ -1038,9 +1164,53 @@ class Stock:
                 "accumulated": round(sum(r["accumulated"] for r in rows), 2), "residual": round(sum(r["residual"] for r in rows), 2),
                 "this_month": self.amort_month(t.strftime("%Y-%m")), "without_life": no}
 
+    # ---------------------------------------- 3.13: inventory numbers, settings --
+    _INV = re.compile(r"^(.*?)(\d+)$")
+
     def _next_inv(self):
-        nums = [int(r["inv_number"]) for r in self.db.q("SELECT inv_number FROM equipment") if str(r["inv_number"] or "").isdigit()]
-        return str(max(nums, default=0) + 1).zfill(5)
+        """The next inventory number: the prefix of the last numbered piece goes on (СТ-001 → СТ-002, the width of the
+        digits kept); numbers of digits only go on as before (00001 → 00002); the very first one is ОБ-001."""
+        rows = self.db.q("SELECT inv_number, created_at FROM equipment WHERE COALESCE(inv_number,'')<>'' ORDER BY created_at, rowid")
+        if not rows:
+            return INV_FIRST
+        parsed = [(m[1], m[2]) for r in rows if (m := self._INV.match(str(r["inv_number"]).strip()))]
+        pref = [p for p in parsed if p[0]]
+        if pref:
+            prefix = pref[-1][0]
+            same = [n for p, n in pref if p == prefix]
+            nxt, width = max(int(n) for n in same) + 1, max(len(n) for n in same)
+            used = {str(r["inv_number"]).strip() for r in rows}
+            while f"{prefix}{str(nxt).zfill(width)}" in used:
+                nxt += 1
+            return f"{prefix}{str(nxt).zfill(width)}"
+        nums = [int(n) for p, n in parsed if not p]
+        return str(max(nums, default=0) + 1).zfill(5) if nums else INV_FIRST
+
+    def next_inv(self):
+        return self._next_inv()
+
+    def chair_hours(self):
+        try:
+            r = self.db.one("SELECT v FROM stock_settings WHERE k='chair_hours'")
+            n = float(r["v"]) if r and r["v"] not in (None, "") else CHAIR_HOURS
+        except (ValueError, TypeError):
+            n = CHAIR_HOURS
+        return n if 0 < n <= 744 else CHAIR_HOURS
+
+    def set_chair_hours(self, n):
+        n = _num(n, "Часы кресла в месяц")
+        if not 1 <= n <= 744:
+            raise ValueError("Часы работы кресла в месяц — от 1 до 744")
+        with self.db.tx() as c:
+            c.execute("INSERT INTO stock_settings(k, v, updated_at) VALUES('chair_hours', ?, ?) ON CONFLICT(k) DO UPDATE SET "
+                      "v=excluded.v, updated_at=excluded.updated_at", (f"{n:g}", _now()))
+        return self.chair_hours()
+
+    # -------------------------------------------------- 3.13: events and quick actions --
+    def _ev(self, c, eid, kind, text, user, day=None, cost=0, data=None):
+        c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, cost, user_name, created_at, data) VALUES(?,?,?,?,?,?,?,?)",
+                  (eid, kind, day or date.today().isoformat(), text, cost, user, _now(),
+                   json.dumps(data, ensure_ascii=False) if data is not None else None))
 
     def equipment_event(self, f, user=""):
         e = self.db.one("SELECT * FROM equipment WHERE id=?", (f.get("equipment_id"),))
@@ -1050,33 +1220,221 @@ class Stock:
         text = _clean(f.get("text"), 1000)
         if not text:
             raise ValueError("Опишите, что сделано")
-        day = f.get("date") or date.today().isoformat()
+        day = _day(f.get("date"), "Дата") if f.get("date") else date.today().isoformat()
         with self.db.tx() as c:
-            c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, cost, user_name, created_at) VALUES(?,?,?,?,?,?,?)",
-                      (e["id"], kind, day, text, max(0, _num(f.get("cost"), "Стоимость")), user, _now()))
+            self._ev(c, e["id"], kind, text, user, day, max(0, _num(f.get("cost"), "Стоимость")))
             if f.get("next_service") is not None:
                 c.execute("UPDATE equipment SET next_service=? WHERE id=?", (_clean(f.get("next_service"), 10), e["id"]))
-        return self.equipment(e["id"])
+            if f.get("back_in_use") and e["status"] == "repair":  # «из ремонта — в работу»
+                c.execute("UPDATE equipment SET status='in_use', condition='ok' WHERE id=?", (e["id"],))
+                self._ev(c, e["id"], "status", f"{EQ_STATUS['repair']} → {EQ_STATUS['in_use']}", user, day)
+        return e["id"]
 
-    def write_off_equipment(self, f, user=""):
+    def equipment_set(self, f, user=""):
+        """The quick changes of the card, saved at once: the place («Переместить»), the condition, who owns it, the status
+        («Отправить на ремонт»). Every change is a line of the history."""
+        e = self._eq_live(f.get("id"))
+        note = _clean(f.get("text"), 500)
+        sets, evs = {}, []
+        if "location_id" in f or "location" in f:
+            lid, loc = self._eq_place(f, e)
+            if loc != (e["location"] or "") or lid != (e["location_id"] or ""):
+                sets.update(location_id=lid, location=loc)
+                evs.append(("move", f"{e['location'] or '—'} → {loc or '—'}"))
+        if "condition" in f:
+            cond = f.get("condition")
+            if cond not in EQ_CONDITION:
+                raise ValueError("Выберите техническое состояние")
+            if cond != (e["condition"] or "ok"):
+                sets["condition"] = cond
+                evs.append(("condition", f"{EQ_CONDITION[e['condition'] or 'ok']} → {EQ_CONDITION[cond]}"))
+        if "ownership" in f:
+            own = f.get("ownership")
+            if own not in EQ_OWNERSHIP:
+                raise ValueError("Выберите принадлежность")
+            if own != (e["ownership"] or "own"):
+                sets["ownership"] = own
+                evs.append(("note", f"Принадлежность: {EQ_OWNERSHIP[e['ownership'] or 'own']} → {EQ_OWNERSHIP[own]}"))
+        if "status" in f:
+            st = f.get("status")
+            if st not in EQ_STATUS or st == "written_off":
+                raise ValueError("Выбытие оформляется отдельно: «Оформить выбытие»")
+            if st != e["status"]:
+                sets["status"] = st
+                if st == "repair":
+                    if "condition" not in sets and (e["condition"] or "ok") == "ok":
+                        sets["condition"] = "faulty"
+                    evs.append(("repair", "Отправлено на ремонт"))
+                else:
+                    evs.append(("status", f"{EQ_STATUS[e['status']]} → {EQ_STATUS[st]}"))
+        if note and evs:
+            k, t = evs[-1]
+            evs[-1] = (k, f"{t}. {note}")
+        if not sets:
+            return e["id"]
+        with self.db.tx() as c:
+            c.execute(f"UPDATE equipment SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), e["id"]))
+            for k, t in evs:
+                self._ev(c, e["id"], k, t, user)
+        return e["id"]
+
+    def equipment_inventory(self, f, user=""):
+        """«Провести инвентаризацию»: found or not, where and in what condition; the differences are written down and the card
+        takes the place and the condition that were seen."""
+        e = self._eq_live(f.get("id"))
+        found = f.get("found", True) not in (False, 0, "0", "false", "no")
+        comment = _clean(f.get("comment"), 500)
+        day = _day(f.get("date"), "Дата") if f.get("date") else date.today().isoformat()
+        data, diffs, sets = {"found": found}, [], {}
+        if found:
+            lid, loc = self._eq_place(f, e) if ("location_id" in f or "location" in f) else (e["location_id"] or "", e["location"] or "")
+            if loc != (e["location"] or ""):
+                diffs.append(f"место: {e['location'] or '—'} → {loc or '—'}")
+                sets.update(location_id=lid, location=loc)
+            cond = f.get("condition") or e["condition"] or "ok"
+            if cond not in EQ_CONDITION:
+                raise ValueError("Выберите техническое состояние")
+            if cond != (e["condition"] or "ok"):
+                diffs.append(f"состояние: {EQ_CONDITION[e['condition'] or 'ok']} → {EQ_CONDITION[cond]}")
+                sets["condition"] = cond
+            data.update(location=loc, condition=cond)
+        else:
+            diffs.append("не найдено на месте")
+        data["diffs"] = diffs
+        text = ("Найдено" if found else "Не найдено") + ("; расхождения: " + "; ".join(diffs) if found and diffs else
+                                                         "; расхождений нет" if found else "") + (f". {comment}" if comment else "")
+        with self.db.tx() as c:
+            if sets:
+                c.execute(f"UPDATE equipment SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), e["id"]))
+            self._ev(c, e["id"], "inventory", text, user, day, data=data)
+        return e["id"]
+
+    def equipment_replace_plan(self, f, user="", money=True):
+        """«Запланировать замену»: the date; with «Бухгалтерия» also the market value, the cost of a new one and the monthly
+        reserve (empty — worked out: what is missing for a new one over the months left)."""
+        e = self._eq_live(f.get("id"))
+        day = _day(f.get("replace_date"), "Плановая дата замены") if f.get("replace_date") else ""
+        if not day:
+            raise ValueError("Укажите плановую дату замены")
+        if day <= date.today().isoformat():
+            raise ValueError("Плановая дата замены должна быть в будущем")
+        sets = {"replace_date": day}
+        if money:
+            mv = max(0, _num(f.get("market_value"), "Рыночная стоимость")) if "market_value" in f else float(e["market_value"] or 0)
+            rc = max(0, _num(f.get("replace_cost"), "Стоимость замены")) if "replace_cost" in f else float(e["replace_cost"] or 0)
+            rm = f.get("reserve_monthly")
+            if rm in (None, ""):
+                months = max(1, (_mon(day) or 0) - (_mon(date.today().isoformat()) or 0))
+                rm = round(max(0.0, rc - mv) / months, 2)
+            sets.update(market_value=mv, replace_cost=rc, reserve_monthly=max(0, _num(rm, "Резерв на обновление")))
+        comment = _clean(f.get("comment"), 300)
+        with self.db.tx() as c:
+            c.execute(f"UPDATE equipment SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), e["id"]))
+            self._ev(c, e["id"], "replace_plan", f"Замена запланирована на {day[8:10]}.{day[5:7]}.{day[:4]}" + (f". {comment}" if comment else ""), user)
+        return e["id"]
+
+    def equipment_dispose(self, f, user="", money=True):
+        """«Оформить выбытие»: списание и утилизация (the act of the commission, as before), продажа or возврат владельцу
+        (leased or the founder's). The piece stays in the register as «выбыло» and is not depreciated after that month."""
         e = self.db.one("SELECT * FROM equipment WHERE id=?", (f.get("id"),))
         if not e:
             raise ValueError("Оборудование не найдено")
         if e["status"] == "written_off":
-            raise ValueError("Оборудование уже списано")
+            raise ValueError("Оборудование уже списано" if (e["disposal_kind"] or "writeoff") == "writeoff" else "Оборудование уже выбыло")
+        kind = f.get("kind") if f.get("kind") in EQ_DISPOSAL else "writeoff"
         reason = _clean(f.get("reason"), 500)
         if not reason:
-            raise ValueError("Укажите причину списания")
+            raise ValueError({"writeoff": "Укажите причину списания", "sale": "Укажите покупателя и основание продажи",
+                              "return": "Укажите, кому и по какому документу возвращено"}[kind])
         commission = [_clean(x, 150) for x in (f.get("commission") or []) if _clean(x)]
-        if len(commission) < 2:
+        if kind == "writeoff" and len(commission) < 2:
             raise ValueError("Укажите председателя и хотя бы одного члена комиссии")
-        day = f.get("date") or date.today().isoformat()
-        n = self.db.one("SELECT COUNT(*) AS n FROM equipment WHERE status='written_off'")["n"] + 1
-        act = _clean(f.get("act_number"), 30) or str(n)
+        day = _day(f.get("date"), "Дата") if f.get("date") else date.today().isoformat()
+        act = ""
+        if kind == "writeoff":
+            n = self.db.one("SELECT COUNT(*) AS n FROM equipment WHERE status='written_off' AND COALESCE(disposal_kind,'writeoff')='writeoff'")["n"] + 1
+            act = _clean(f.get("act_number"), 30) or str(n)
+        if money:
+            residual = max(0, _num(f.get("residual"), "Остаточная стоимость")) if f.get("residual") not in (None, "") else amortization(e)["residual"]
+            amount = max(0, _num(f.get("amount"), "Сумма продажи")) if kind == "sale" else 0
+        else:  # without «Бухгалтерия» the book value is the depreciation's, the price of a sale is not taken
+            residual, amount = amortization({**e, "status": "written_off", "writeoff_date": day})["residual"], 0
+        text = {"writeoff": f"Акт № {act}: {reason}", "sale": f"Продано: {reason}", "return": f"Возвращено владельцу: {reason}"}[kind]
         with self.db.tx() as c:
             c.execute("""UPDATE equipment SET status='written_off', writeoff_date=?, writeoff_reason=?, writeoff_act=?,
-                         writeoff_commission=?, residual=? WHERE id=?""",
-                      (day, reason, act, json.dumps(commission, ensure_ascii=False), max(0, _num(f.get("residual"), "Остаточная стоимость")), e["id"]))
-            c.execute("INSERT INTO equipment_events(equipment_id, kind, date, text, user_name, created_at) VALUES(?,?,?,?,?,?)",
-                      (e["id"], "writeoff", day, f"Акт № {act}: {reason}", user, _now()))
-        return self.equipment(e["id"])
+                         writeoff_commission=?, residual=?, disposal_kind=?, disposal_amount=? WHERE id=?""",
+                      (day, reason, act, json.dumps(commission, ensure_ascii=False), residual, kind, amount, e["id"]))
+            self._ev(c, e["id"], "writeoff" if kind == "writeoff" else "disposal", text, user, day)
+        return e["id"]
+
+    def write_off_equipment(self, f, user="", money=True):
+        return self.equipment_dispose({**f, "kind": "writeoff"}, user, money)
+
+    # ----------------------------------------------------------- 3.13: documents --
+    def equipment_doc_add(self, eid, kind, title, file_id, user=""):
+        """A document (or a photo) of the card: the file is a row of patient_files owned by «_stock», so it travels to the
+        other computers like the stock photos; the first photo becomes the main one."""
+        e = self._eq_live(eid)
+        kind = kind if kind in EQ_DOC_KINDS else "other"
+        did = _id("ED")
+        title = _clean(title, 200) or EQ_DOC_KINDS[kind]
+        with self.db.tx() as c:
+            c.execute("INSERT INTO equipment_docs(id, equipment_id, kind, title, file_id, created_by, created_at, deleted) VALUES(?,?,?,?,?,?,?,0)",
+                      (did, e["id"], kind, title, file_id, user, _now()))
+            if kind == "photo" and not e["photo_id"]:
+                c.execute("UPDATE equipment SET photo_id=? WHERE id=?", (file_id, e["id"]))
+            self._ev(c, e["id"], "doc", f"{EQ_DOC_KINDS[kind]}: {title}", user)
+        return did
+
+    def equipment_doc_delete(self, did, user=""):
+        d = self.db.one("SELECT * FROM equipment_docs WHERE id=? AND deleted=0", (str(did or ""),))
+        if not d:
+            raise ValueError("Документ не найден")
+        e = self._eq_live(d["equipment_id"])
+        with self.db.tx() as c:
+            c.execute("UPDATE equipment_docs SET deleted=1 WHERE id=?", (d["id"],))
+            if e["photo_id"] == d["file_id"]:
+                nxt = c.execute("SELECT file_id FROM equipment_docs WHERE equipment_id=? AND kind='photo' AND deleted=0 AND file_id<>? "
+                                "ORDER BY created_at LIMIT 1", (e["id"], d["file_id"])).fetchone()
+                c.execute("UPDATE equipment SET photo_id=? WHERE id=?", (nxt[0] if nxt else None, e["id"]))
+            self._ev(c, e["id"], "doc", f"Убран документ: {EQ_DOC_KINDS.get(d['kind'], d['kind'])} — {d['title']}", user)
+        return e["id"]
+
+    def equipment_doc_file(self, did):
+        d = self.db.one("SELECT * FROM equipment_docs WHERE id=? AND deleted=0", (str(did or ""),))
+        if not d:
+            raise ValueError("Документ не найден")
+        return d
+
+    # ------------------------------------------------- 3.13: QR of the inventory label --
+    def phone_url(self):
+        """The address of the stock's phone app (empty — not set up): a QR then holds a link to the card there."""
+        r = self.db.one("SELECT v FROM stock_settings WHERE k='phone_url'")
+        u = str((r or {}).get("v") or "").strip()
+        return u if re.match(r"^https://[^\s/]+", u) else ""
+
+    def qr_text(self, e, clinic=""):
+        """What the QR of a label holds: a link `<app>/e/<инв. №>`, or (no app yet) the text a phone camera shows as it is —
+        the number first, so a desk scanner that stops at the line break still types the number."""
+        url = self.phone_url()
+        if url:
+            return f"{url.rstrip('/')}/e/{quote(str(e['inv_number'] or ''), safe='')}"
+        lines = [f"Инв. № {e['inv_number']}", e["name"], e.get("model") and f"Модель: {e['model']}",
+                 e.get("serial") and f"S/N: {e['serial']}", e.get("location") and f"Место: {e['location']}", clinic]
+        return "\n".join(str(x) for x in lines if x)
+
+    def equipment_by_code(self, code):
+        """The equipment a scanned label points to: the link of the phone app or the text of the label (or just the number)."""
+        s = str(code or "").strip()
+        if not s:
+            return None
+        m = re.search(r"/e/([^/?#\s]+)", s)
+        if m:
+            inv = unquote(m[1])
+        else:
+            first = s.splitlines()[0].strip()
+            m = re.match(r"^(?:инв\.?\s*№?|inv\.?\s*n?o?\.?)\s*(.+)$", first, re.I)
+            inv = (m[1] if m else first).strip()
+        r = self.db.one("SELECT id FROM equipment WHERE inv_number=?", (inv,)) or \
+            self.db.one("SELECT id FROM equipment WHERE lower(inv_number)=lower(?)", (inv,))
+        return r["id"] if r else None

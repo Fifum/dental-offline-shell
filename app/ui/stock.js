@@ -10,6 +10,7 @@ const placeSelect = (id, cur = "", label = "Место") => hasPlaces() ? `<labe
 
 $$("#stockTabs button").forEach(b => b.onclick = () => {
   S.stockTab = b.dataset.k;
+  S.eqOpen = null;  // 3.13: a tab opens its list, not the card left open
   $$("#stockTabs button").forEach(x => x.classList.toggle("on", x === b));
   loadStock();
 });
@@ -377,105 +378,28 @@ function editSupplier(s) {
 
 /* ------------------------------------------------------- equipment */
 async function stockEquipment() {
+  if (S.eqOpen) return openEquipment(S.eqOpen, EQ.tab);  // 3.13: the card is a screen of this tab
   const rows = await api.equipment_list(S.eqQ || "", !!S.eqAll);
-  const edit = can("equipment");
+  const edit = can("equipment"), mon = !!STK.eq_money;
   $("#stockBody").innerHTML = statRow() + `<div class="tab-tools">
       <div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="eqQ" placeholder="Название, инв. №, серийный, кабинет" value="${esc(S.eqQ || "")}"></div>
-      <label class="switch-row" style="margin:0"><input type="checkbox" id="eqAll" ${S.eqAll ? "checked" : ""}><span class="sw"></span>Показать списанное</label>
-      <span class="grow"></span><button class="btn ghost" id="eqAmort" title="Амортизация по месяцам, остаточная стоимость">Амортизация</button>${edit ? `<button class="btn" id="eqNew">Добавить оборудование</button>` : ""}</div>
-    <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Инв. №</th><th>Оборудование</th><th>Где</th><th>Статус</th><th>Следующее ТО</th><th class="num">Стоимость</th><th class="num" title="Стоимость минус начисленная амортизация">Остаточная</th></tr></thead><tbody>${
-      rows.map(e => `<tr data-e="${esc(e.id)}" class="${e.status === "written_off" ? "muted-row" : ""}"><td><b>${esc(e.inv_number)}</b></td><td class="lnk"><div class="sn-mat sm">${phHtml(e.photo_id)}<span><b>${esc(e.name)}</b><small class="muted" style="display:block">${esc([e.model, e.serial && "S/N " + e.serial].filter(Boolean).join(" · "))}</small></span></div></td>
-        <td>${esc(e.location)}</td><td><span class="pill ${e.status === "in_use" ? "st-ok" : e.status === "written_off" ? "" : "st-cancel"}">${esc(e.status_title)}</span></td>
-        <td class="${e.service_due ? "bad-t" : ""}">${e.next_service ? fmtDate(e.next_service) + (e.service_due ? " · пора" : "") : "—"}</td><td class="num">${money(e.price)}</td>
-        <td class="num">${e.amort && e.amort.on ? money(e.amort.residual) : '<span class="muted" title="Не указан срок полезного использования">—</span>'}</td></tr>`).join("")}</tbody></table>`
+      <label class="switch-row" style="margin:0"><input type="checkbox" id="eqAll" ${S.eqAll ? "checked" : ""}><span class="sw"></span>Показать выбывшее</label>
+      <span class="grow"></span>${mon ? `<button class="btn ghost" id="eqAmort" title="Амортизация по месяцам, остаточная стоимость">Амортизация</button>` : ""}${edit ? `<button class="btn" id="eqNew">Добавить оборудование</button>` : ""}</div>
+    <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Инв. №</th><th>Оборудование</th><th>Где</th><th>Состояние</th><th>Статус</th><th>Следующее ТО</th>${mon ? `<th class="num">Стоимость</th><th class="num" title="Стоимость минус начисленная амортизация">Остаточная</th>` : ""}</tr></thead><tbody>${
+      rows.map(e => `<tr data-e="${esc(e.id)}" class="${e.status === "written_off" ? "muted-row" : ""}"><td><b>${esc(e.inv_number)}</b></td><td class="lnk"><div class="sn-mat sm">${phHtml(e.photo_id)}<span><b>${esc(e.name)}</b><small class="muted" style="display:block">${esc([e.manufacturer, e.model, e.serial && "S/N " + e.serial].filter(Boolean).join(" · "))}</small></span></div></td>
+        <td>${esc(e.location)}</td><td>${e.status === "written_off" ? "" : `<span class="eqc-dot ${eqCondCls(e.condition)}">${esc(e.condition_title)}</span>`}</td><td><span class="pill ${e.status === "in_use" ? "st-ok" : e.status === "written_off" ? "" : "st-cancel"}">${esc(e.status_title)}</span></td>
+        <td class="${e.service_due ? "bad-t" : ""}">${e.next_service ? fmtDate(e.next_service) + (e.service_due ? " · пора" : "") : "—"}</td>${mon ? `<td class="num">${money(e.price)}</td>
+        <td class="num">${e.amort && e.amort.on ? money(e.amort.residual) : '<span class="muted" title="Не указан срок полезного использования">—</span>'}</td>` : ""}</tr>`).join("")}</tbody></table>`
       : `<div class="empty"><b>Оборудования пока нет</b><span>${edit ? "Внесите кресла, автоклав, компрессор и другую технику с инвентарными номерами" : ""}</span></div>`}</div>`;
   let t; $("#eqQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { S.eqQ = e.target.value; stockEquipment().then(() => { const i = $("#eqQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
   $("#eqAll").onchange = e => { S.eqAll = e.target.checked; stockEquipment(); };
   const n = $("#eqNew"); if (n) n.onclick = () => editEquipment({});
-  $("#eqAmort").onclick = () => openAmortReport();
+  const am = $("#eqAmort"); if (am) am.onclick = () => openAmortReport();
   $$("#stockBody tr[data-e]").forEach(tr => tr.onclick = () => openEquipment(tr.dataset.e));
   loadThumbs($("#stockBody"));
 }
 
-function editEquipment(e) {
-  const box = modal(`<div class="m-h"><h3>${e.id ? "Изменить оборудование" : "Новое оборудование"}</h3><button class="x" data-close>×</button></div>
-    <div class="m-b">
-      <div class="grid3"><label class="fl" style="grid-column:span 2">Название*<input class="input" id="eN" value="${esc(e.name || "")}" autofocus></label><label class="fl">Инвентарный №<input class="input" id="eInv" value="${esc(e.inv_number || "")}" placeholder="присвоится сам"></label></div>
-      <div class="grid3"><label class="fl">Модель<input class="input" id="eM" value="${esc(e.model || "")}"></label><label class="fl">Серийный №<input class="input" id="eS" value="${esc(e.serial || "")}"></label><label class="fl">Раздел<input class="input" id="eC" value="${esc(e.category || "")}"></label></div>
-      <div class="grid3"><label class="fl">Где стоит<input class="input" id="eL" value="${esc(e.location || "")}" placeholder="Кабинет 1 · Кресло 1"></label><label class="fl">Ответственный<input class="input" id="eR" value="${esc(e.responsible || "")}"></label>
-        <label class="fl">Статус<select class="input" id="eSt">${Object.entries(STK.eq_status).filter(([k]) => k !== "written_off").map(([k, t]) => `<option value="${k}" ${k === (e.status || "in_use") ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
-      <div class="grid3"><label class="fl">Дата покупки<input class="input" type="date" id="eP" value="${esc(e.purchase_date || "")}"></label><label class="fl">Стоимость, ₽<input class="input" type="number" min="0" step="any" id="ePr" value="${e.price ?? ""}"></label><label class="fl">Гарантия до<input class="input" type="date" id="eW" value="${esc(e.warranty_until || "")}"></label></div>
-      <div class="grid3"><label class="fl">Следующее ТО<input class="input" type="date" id="eNx" value="${esc(e.next_service || "")}"></label></div>
-      <h4 class="sub-h">Амортизация (линейный способ)</h4>
-      <div class="grid3"><label class="fl">Ввод в эксплуатацию<input class="input" type="date" id="eIn" value="${esc(e.in_service || "")}" title="Пусто — с даты покупки"></label>
-        <label class="fl">Срок полезного использования, мес.<input class="input" type="number" min="0" max="600" step="1" id="eLife" list="eLifes" value="${e.useful_months || ""}" placeholder="например, 60 = 5 лет"></label>
-        <label class="fl">Ликвидационная стоимость, ₽<input class="input" type="number" min="0" step="any" id="eSalv" value="${e.salvage || ""}" placeholder="0"></label></div>
-      <datalist id="eLifes">${[12, 24, 36, 60, 84, 120, 180].map(x => `<option value="${x}">${x / 12} ${plural(x / 12, "год", "года", "лет")}</option>`).join("")}</datalist>
-      <div class="muted" id="eLifeT" style="margin-top:-4px"></div>
-      <label class="fl">Комментарий<input class="input" id="eCom" value="${esc(e.comment || "")}"></label><div class="auth-err" id="eErr"></div></div>
-    <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="eOk">Сохранить</button></div>`, {wide: true});
-  $("#eOk", box).onclick = async () => {
-    try {
-      const id = await api.save_equipment({id: e.id, name: $("#eN").value, inv_number: $("#eInv").value, model: $("#eM").value, serial: $("#eS").value, category: $("#eC").value,
-        location: $("#eL").value, responsible: $("#eR").value, status: $("#eSt").value, purchase_date: $("#eP").value, price: $("#ePr").value, warranty_until: $("#eW").value,
-        next_service: $("#eNx").value, comment: $("#eCom").value, in_service: $("#eIn").value, useful_months: $("#eLife").value, salvage: $("#eSalv").value});
-      closeModal(); toast("Сохранено"); stockEquipment(); openEquipment(id);
-    } catch (err) { $("#eErr").textContent = errText(err); }
-  };
-  const lifeT = () => { const n = +$("#eLife").value || 0, p = +$("#ePr").value || 0, sv = +$("#eSalv").value || 0;
-    $("#eLifeT").textContent = n > 0 ? `${n % 12 ? n + " мес." : n / 12 + " " + plural(n / 12, "год", "года", "лет")}${p > 0 ? ` · в месяц ${money(Math.max(0, p - sv) / n)}` : ""}` : "Без срока амортизация не считается"; };
-  ["#eLife", "#ePr", "#eSalv"].forEach(s => $(s, box).oninput = lifeT); lifeT();
-}
-
-async function openEquipment(id) {
-  const e = await api.equipment(id);
-  const edit = can("equipment") && e.status !== "written_off";
-  const kv = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : "";
-  const box = modal(`<div class="m-h"><h3>${esc(e.name)} · инв. № ${esc(e.inv_number)}</h3><button class="x" data-close>×</button></div>
-    <div class="m-b">
-      ${e.status === "written_off" ? `<div class="warn-line">Списано ${fmtDate(e.writeoff_date)} по акту № ${esc(e.writeoff_act)}: ${esc(e.writeoff_reason)}</div>` : ""}
-      <div class="sn-card-top">${photoBlock("equipment", e, canAny("equipment", "stock_edit") && e.status !== "written_off")}<dl class="kv eq-kv">${kv("Статус", esc(e.status_title))}${kv("Где стоит", esc(e.location))}${kv("Модель", esc(e.model))}${kv("Серийный №", esc(e.serial))}${kv("Раздел", esc(e.category))}
-        ${kv("Ответственный", esc(e.responsible))}${kv("Куплено", e.purchase_date ? fmtDate(e.purchase_date) : "")}${kv("Стоимость", e.price ? money(e.price) : "")}
-        ${kv("Гарантия до", e.warranty_until ? fmtDate(e.warranty_until) : "")}${kv("Следующее ТО", e.next_service ? fmtDate(e.next_service) : "")}${kv("Комментарий", esc(e.comment))}</dl></div>
-      ${amortBlock(e)}
-      <h4 class="sub-h">История</h4>
-      ${edit ? `<div class="ev-add"><select class="input sm-sel" id="evK"><option value="service">Обслуживание</option><option value="repair">Ремонт</option><option value="note">Заметка</option></select>
-        <input class="input" id="evT" placeholder="Что сделано: замена фильтров, ремонт мотора…"><input class="input" id="evC" type="number" min="0" step="any" placeholder="Стоимость, ₽" style="width:130px">
-        <label class="fl" style="flex-direction:row;align-items:center;gap:6px;white-space:nowrap">След. ТО <input class="input" type="date" id="evN" value="${esc(e.next_service || "")}"></label><button class="btn small" id="evOk">Добавить</button></div>` : ""}
-      <div class="ev-list">${e.events.map(x => `<div class="ev-row"><span class="mv mv-${x.kind}">${esc(x.kind_title)}</span><b>${fmtDate(x.date)}</b><span class="grow">${esc(x.text)}</span>${x.cost ? `<span>${money(x.cost)}</span>` : ""}<small class="muted">${esc(x.user_name || "")}</small></div>`).join("") || '<div class="muted">Записей нет</div>'}</div>
-    </div>
-    <div class="m-f">${edit ? `<button class="btn ghost small danger" id="eWo">Списать</button>` : ""}<span class="muted"></span>
-      ${e.status === "written_off" ? `<button class="btn ghost" id="eAct">Печать акта списания</button>` : ""}<button class="btn ghost" data-close>Закрыть</button>${edit ? `<button class="btn" id="eEd">Изменить</button>` : ""}</div>`, {wide: true});
-  const on = (s, f) => { const el = $(s, box); if (el) el.onclick = f; };
-  bindPhotoBlock(box, "equipment", e, () => openEquipment(id));
-  on("#eEd", () => editEquipment(e));
-  on("#eWo", () => writeOffEquipment(e));
-  on("#eAct", () => printEquipmentAct(e));
-  on("#evOk", async () => {
-    try { await api.equipment_event({equipment_id: e.id, kind: $("#evK").value, text: $("#evT").value, cost: $("#evC").value, next_service: $("#evN").value}); toast("Записано"); openEquipment(e.id); stockEquipment(); }
-    catch (err) { toast(errText(err), true); }
-  });
-}
-
-function writeOffEquipment(e) {
-  const box = modal(`<div class="m-h"><h3>Списание: ${esc(e.name)}, инв. № ${esc(e.inv_number)}</h3><button class="x" data-close>×</button></div>
-    <div class="m-b">
-      <div class="grid3"><label class="fl">Дата<input class="input" type="date" id="woD" value="${iso(new Date())}"></label><label class="fl">Номер акта<input class="input" id="woN" placeholder="присвоится сам"></label>
-        <label class="fl">Остаточная стоимость, ₽<input class="input" type="number" min="0" step="any" id="woR" value="${e.amort && e.amort.on ? e.amort.residual : 0}" title="По амортизации на сегодня"></label></div>
-      <label class="fl">Причина списания*<input class="input" id="woW" list="woEq" placeholder="например: неисправность, ремонт нецелесообразен"></label>
-      <datalist id="woEq"><option value="Физический износ, ремонт экономически нецелесообразен"><option value="Неисправность, не подлежит восстановлению"><option value="Моральный износ, замена на новое"><option value="Повреждение в результате аварии"></datalist>
-      <label class="fl">Председатель комиссии*<input class="input" id="woC0" placeholder="ФИО, должность"></label>
-      <div class="grid2"><label class="fl">Член комиссии*<input class="input" id="woC1" placeholder="ФИО, должность"></label><label class="fl">Член комиссии<input class="input" id="woC2" placeholder="ФИО, должность"></label></div>
-      <div class="warn-line">После списания оборудование нельзя изменить. Акт можно распечатать и подписать комиссией.</div><div class="auth-err" id="woErr"></div></div>
-    <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="woOk">Списать и распечатать акт</button></div>`, {wide: true});
-  $("#woOk", box).onclick = async () => {
-    try {
-      const r = await api.write_off_equipment({id: e.id, date: $("#woD").value, act_number: $("#woN").value, residual: $("#woR").value, reason: $("#woW").value,
-        commission: [$("#woC0").value, $("#woC1").value, $("#woC2").value]});
-      closeModal(); toast("Оборудование списано"); stockEquipment(); printEquipmentAct(r);
-    } catch (err) { $("#woErr").textContent = errText(err); }
-  };
-}
+/* editEquipment, openEquipment and the disposal: stock-eqcard.js (3.13 «Карточка оборудования») */
 
 /* ------------------------------------------------------- printing */
 async function clinicHead() {
