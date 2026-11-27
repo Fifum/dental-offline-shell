@@ -1535,6 +1535,10 @@ class Stock:
         r["condition_title"] = EQ_CONDITION.get(r["condition"], r["condition"])
         r["ownership_title"] = EQ_OWNERSHIP.get(r["ownership"], r["ownership"])
         r["amort"] = amortization(r)  # 3.10
+        r["accounting"] = r.get("accounting") or "amort"  # 3.15
+        r["accounting_title"] = EQ_ACCOUNTING.get(r["accounting"], r["accounting"])
+        r["third_party"] = r["ownership"] in OFF_BOOKS
+        r["qty"] = r.get("qty") or 1
         r["money"] = True
         return r
 
@@ -1554,9 +1558,11 @@ class Stock:
         today = date.today().isoformat()
         last = {r["equipment_id"]: r["d"] for r in self.db.q(  # 3.14: «Инвентаризация → Оборудование»
             "SELECT equipment_id, MAX(date) AS d FROM equipment_events WHERE kind='inventory' GROUP BY equipment_id")}
+        names = self._loc_names()
         for r in rows:
             self._eq_titles(r, today)
             r["last_inventory_date"] = last.get(r["id"], "")
+            r["location_name"] = names.get(r.get("location_id")) if r.get("location_id") else (r["location"] or "")  # 3.15
         if not show_written_off:
             rows = [r for r in rows if r["status"] != "written_off"]
         q = (q or "").strip().lower()
@@ -1814,6 +1820,88 @@ class Stock:
 
     def next_inv(self):
         return self._next_inv()
+
+    # ---------------------------------------------------------- 3.15: «Обзор» --
+    def equipment_overview(self, money=True):
+        """The director's page of the section: the whole property without opening a card — how many, in what condition, what
+        it cost and is worth now (money only with «Бухгалтерия»), by category, what is due soon and what needs attention."""
+        today = date.today()
+        t, soon30, soon60 = today.isoformat(), (today + timedelta(days=30)).isoformat(), (today + timedelta(days=60)).isoformat()
+        rows = self.equipment_list("", False, True)
+        names = self._loc_names()
+        live = [e for e in rows if e["status"] != "written_off"]
+        cond = {"ok": 0, "service": 0, "faulty": 0}
+        for e in live:
+            k = "faulty" if e["status"] == "repair" or e["condition"] == "faulty" else e["condition"]
+            cond[k if k in cond else "ok"] += 1
+        own = [e for e in live if on_books(e)]
+        cats = {}
+        for e in live:
+            g = cats.setdefault(e["category"] or "Без категории", {"name": e["category"] or "Без категории", "count": 0, "cost": 0.0, "residual": 0.0})
+            g["count"] += e["qty"]
+            if on_books(e):
+                g["cost"] = round(g["cost"] + (e["price"] or 0), 2)
+                g["residual"] = round(g["residual"] + (e["amort"]["residual"] if e["amort"]["on"] else (e["price"] or 0)), 2)
+        total_cost = round(sum(g["cost"] for g in cats.values()), 2)
+        for g in cats.values():
+            g["share"] = round(g["cost"] * 100 / total_cost, 1) if total_cost else 0.0
+        by_cat = sorted(cats.values(), key=lambda g: (-g["cost"], -g["count"], g["name"]))
+        month = today.strftime("%Y-%m")
+        full = [e for e in own if e["amort"]["on"] and e["amort"]["done"]]
+        # what is due: service by the card and by the schedule, verification, replacement, the end of a lease or of a warranty
+        ev = []
+        lbl = lambda e: f"{e['name']}{' ' + e['inv_number'] if e['inv_number'] else ''}"  # noqa: E731
+        for e in live:
+            if e["next_service"] and e["next_service"] <= soon60:
+                ev.append({"date": e["next_service"], "kind": "service", "title": "Техническое обслуживание", "equipment_id": e["id"], "name": lbl(e)})
+            if e.get("replace_date") and e["replace_date"] <= (today + timedelta(days=120)).isoformat():
+                ev.append({"date": e["replace_date"], "kind": "replace", "title": "Плановая замена", "equipment_id": e["id"], "name": lbl(e)})
+            if e.get("use_end") and e["use_end"] <= soon60:
+                ev.append({"date": e["use_end"], "kind": "use_end", "title": {"lease": "Окончание аренды", "leasing": "Завершение лизинга"}.get(
+                    e["ownership"], "Окончание пользования"), "equipment_id": e["id"], "name": lbl(e)})
+            if e.get("warranty_until") and t <= e["warranty_until"] <= soon30:
+                ev.append({"date": e["warranty_until"], "kind": "warranty", "title": "Окончание гарантии", "equipment_id": e["id"], "name": lbl(e)})
+        by_id = {e["id"]: e for e in live}
+        for p in self.db.q("SELECT * FROM equipment_plans WHERE active=1 AND COALESCE(next_date,'')<>'' AND next_date<=?", (soon60,)):
+            e = by_id.get(p["equipment_id"])
+            if e:
+                ev.append({"date": p["next_date"], "kind": "plan_" + (p["kind"] or "service"), "title": PLAN_KINDS.get(p["kind"], "Плановое ТО"),
+                           "equipment_id": e["id"], "name": lbl(e)})
+        ev.sort(key=lambda x: (x["date"], x["name"]))
+        for x in ev:
+            x["overdue"] = x["date"] < t
+        # to replace: depreciated in full, the useful life runs out within half a year, a replacement planned within a year
+        repl = []
+        for e in own:
+            a = e["amort"]
+            why = ""
+            if a["on"] and a["done"]:
+                why = "Амортизировано 100 %"
+            elif a["on"] and a["months_left"] <= 6:
+                why = f"Срок службы истекает: осталось {a['months_left']} мес."
+            elif e.get("replace_date") and e["replace_date"] <= (today + timedelta(days=365)).isoformat():
+                why = f"Плановая замена {e['replace_date']}"
+            if why:
+                repl.append({"id": e["id"], "name": e["name"], "inv_number": e["inv_number"], "photo_id": e.get("photo_id") or "", "why": why,
+                             "urgent": bool(a["on"] and a["done"]), "replace_date": e.get("replace_date") or ""})
+        repl.sort(key=lambda x: (not x["urgent"], x["replace_date"] or "9999", x["name"]))
+        reqs = self.db.q("""SELECT r.*, e.name AS equipment_name, e.inv_number FROM equipment_requests r LEFT JOIN equipment e ON e.id = r.equipment_id
+                            ORDER BY r.created_at DESC LIMIT 6""")
+        for r in reqs:
+            r["kind_title"] = REQ_KINDS.get(r["kind"], r["kind"])
+            r["status_title"] = REQ_STATUS.get(r["status"], r["status"])
+            r["overdue"] = r["status"] in ("new", "work") and bool(r["due"]) and r["due"] < t
+        open_rep = self.db.one("SELECT COUNT(*) AS n FROM equipment_requests WHERE status IN ('new','work') AND kind='repair'")["n"]
+        out = {"total": sum(e["qty"] for e in live), "cards": len(live), "condition": cond, "full_amort": len(full),
+               "by_category": by_cat, "events": ev[:12], "to_replace": repl, "requests": reqs,
+               "attention": {"service_soon": sum(1 for x in ev if x["kind"] in ("service", "plan_service", "plan_verify", "plan_check") and t <= x["date"] <= soon30),
+                             "service_overdue": sum(1 for x in ev if x["kind"] in ("service", "plan_service", "plan_verify", "plan_check") and x["overdue"]),
+                             "repairs_open": open_rep, "to_replace": len(repl)},
+               "third_party": sum(1 for e in live if e["third_party"]), "places": len({e.get("location_id") or e["location"] for e in live})}
+        if money:
+            out["money"] = {"cost": total_cost, "residual": round(sum(g["residual"] for g in cats.values()), 2),
+                            "monthly": round(sum(amort_charge(e, month) for e in own), 2)}
+        return out
 
     # ------------------------------------------- 3.15: «Справочники и настройки» --
     def _setting(self, k, default):

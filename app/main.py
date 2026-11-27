@@ -456,6 +456,10 @@ class Api:
         return {"text": text, "png": crm.qr_data_uri(text), "link": text.startswith("https://"), "clinic": clinic,
                 "inv_number": e["inv_number"], "name": e["name"], "location": e["location_name"]}
 
+    def equipment_overview(self):
+        """3.15 «Оборудование → Обзор»; the money only with «Бухгалтерия»."""
+        return self._stock.equipment_overview(money=self._eq_money())
+
     def equipment_refs(self):
         """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""
         return self._stock.eq_refs()

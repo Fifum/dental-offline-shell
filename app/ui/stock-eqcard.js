@@ -78,7 +78,7 @@ async function eqCard() {
           <div class="eqc-dots">${photos.length > 1 ? photos.map((p, i) => `<button data-gal="${i}" class="${i === EQ.gal ? "on" : ""}" title="Фото ${i + 1}"></button>`).join("") : c.edit && !photos.length ? `<button class="linkbtn" id="eqPh0">${EQI.camera}Добавить фото</button>` : ""}</div></div>
         <div class="eqc-id"><span class="eqc-badge ${off ? "off" : eqCondCls(e.condition)}">${off ? EQI.info : e.condition === "ok" ? EQI.okc : EQI.warn}${esc(off ? e.status_title : e.condition_title)}</span>${e.status === "repair" && !off ? `<span class="eqc-badge bad">${EQI.wrench}В ремонте</span>` : ""}
           <h3>${esc(e.name)}</h3><div class="eqc-inv">Инвентарный номер: ${esc(e.inv_number || "—")}</div>
-          <ul><li>${EQI.pin}${esc(e.location_name || "Место не указано")}</li><li>${EQI.layers}${esc(e.category || "Категория не указана")}</li><li>${EQI.bank}${esc(e.ownership_title)}</li></ul></div>
+          <ul><li>${EQI.pin}${esc(e.location_name || "Место не указано")}</li><li>${EQI.layers}${esc(e.category || "Категория не указана")}</li><li>${EQI.bank}${esc(e.ownership_title)}${e.contractor ? ` · ${esc(e.contractor)}` : ""}</li>${e.accounting === "qty" || (e.qty || 1) > 1 ? `<li>${EQI.sigma}${e.accounting === "qty" ? "Количественный учёт" : "Количество"}${(e.qty || 1) > 1 ? `: ${e.qty} шт.` : ""}</li>` : ""}${e.use_end ? `<li>${EQI.cal}До ${fmtDate(e.use_end)}${e.contract_no ? `, договор № ${esc(e.contract_no)}` : ""}</li>` : ""}</ul></div>
         ${money ? `<div class="eqc-money"><div class="eqc-tiles">${tile(EQI.coins, "Первоначальная стоимость", eqMoney0(e.price))}${tile(EQI.chart, "Остаточная стоимость", a.on ? eqMoney0(a.residual) : eqMoney0(e.price))}
             ${tile(EQI.cal, "Амортизация в месяц", a.on ? eqMoney0(a.monthly) : "—")}${tile(EQI.sigma, "Накопленная амортизация", a.on ? eqMoney0(a.accumulated) : "—")}</div>
           <div class="eqc-amort"><div><span>Амортизировано</span><b>${a.on ? eqPct(a.percent) : "—"}</b></div><i><u style="width:${a.on ? Math.min(100, a.percent) : 0}%"></u></i>${a.on ? "" : `<small class="muted">Укажите срок полезного использования — в «Редактировать»</small>`}</div></div>` : ""}
@@ -159,7 +159,7 @@ function eqPane() {
       <div><h3>Замена оборудования</h3>${kv([["Рыночная стоимость сейчас", e.market_value ? money(e.market_value) : nz("", "Не указана")], ["Стоимость замены (новое)", e.replace_cost ? money(e.replace_cost) : nz("", "Не указана")],
         ["Плановая дата замены", e.replace_date ? fmtDate(e.replace_date) : nz("", "Не запланирована")], ["Резерв на обновление в месяц", e.reserve_monthly ? `<b>${money(e.reserve_monthly)}</b>` : "—"]])}
         ${c.edit ? `<button class="btn ghost small" id="eqRepl">${EQI.cal}Запланировать замену</button>` : ""}</div></div>
-      ${["lease", "owner"].includes(e.ownership) ? `<div class="note-box">${esc(e.ownership_title)}: это не имущество клиники, поэтому амортизация и выбытие не идут в финансовый отчёт. Платежи по аренде вносятся расходами.</div>` : ""}
+      ${["lease", "owner", "doctor", "other"].includes(e.ownership) ? `<div class="note-box">${esc(e.ownership_title)}: это не имущество клиники, поэтому амортизация и выбытие не идут в финансовый отчёт. Платежи по аренде вносятся расходами.</div>` : e.accounting === "qty" ? `<div class="note-box">Количественный учёт: оборудование учитывается штуками, без амортизации — его стоимость не идёт в финансовый отчёт амортизацией.</div>` : ""}
       ${amortBlock(e)}`;
     const h = $("#eqHours"); if (h) h.onclick = async () => { const v = await askInput("Часы работы кресла в месяц", [{label: "Часов в месяц", type: "number", value: e.chair_hours}], {text: "Например, 154 = 22 рабочих дня × 7 часов. Амортизация в месяц делится на это число.", ok: "Сохранить"});
       if (v) { try { await api.equipment_settings_save({chair_hours: v[0]}); toast("Сохранено"); eqCard(); } catch (x) { toast(errText(x), true); } } };
@@ -373,8 +373,12 @@ async function editEquipment(e) {
   let places = [], nextInv = "";
   try { [places, nextInv] = await Promise.all([api.stock_locations(), isNew ? api.equipment_next_inv() : Promise.resolve("")]); } catch (x) { /* the form works without them */ }
   places = (places || []).filter(p => p.id);
-  const R = (EQ.data && EQ.data.ownerships) ? EQ.data : {ownerships: {own: "Собственность клиники", lease: "Аренда", leasing: "Лизинг", owner: "Имущество учредителя"},
-    conditions: {ok: "Исправно", service: "Требует обслуживания", faulty: "Неисправно"}};
+  let refs = EQS.refs;  // 3.15: categories with the usual useful life, ownership, the ways of accounting
+  if (!refs) { try { refs = EQS.refs = await api.equipment_refs(); } catch (x) { refs = null; } }
+  const R = refs ? {ownerships: refs.ownership, conditions: refs.conditions, accounting: refs.accounting}
+    : {ownerships: {own: "Собственность клиники", lease: "Аренда", leasing: "Лизинг", owner: "Имущество учредителя", doctor: "Имущество врача", other: "Иное пользование"},
+      conditions: {ok: "Исправно", service: "Требует обслуживания", faulty: "Неисправно"}, accounting: {amort: "С амортизацией", qty: "Количественный учёт без амортизации"}};
+  const cats = refs ? refs.categories : [], lifeOf = c => (cats.find(x => x.name === c) || {}).life || 0;
   const opts = (o, cur) => Object.entries(o).map(([k, t]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${t}</option>`).join("");
   const box = modal(`<div class="m-h"><h3>${isNew ? "Карточка оборудования" : "Редактировать: " + esc(e.name)}</h3><button class="x" data-close>×</button></div>
     <div class="m-b eqc-edit">
@@ -382,13 +386,19 @@ async function editEquipment(e) {
         <label class="fl">Инвентарный номер<input class="input" id="eInv" value="${esc(e.inv_number || "")}" placeholder="${esc(nextInv ? nextInv + " — присвоится сам" : "присвоится сам")}"></label></div>
       <div class="grid3"><label class="fl">Категория<input class="input" id="eC" value="${esc(e.category || "")}" list="eCats" placeholder="Медицинское оборудование"></label>
         <label class="fl">Производитель<input class="input" id="eMf" value="${esc(e.manufacturer || "")}"></label><label class="fl">Модель<input class="input" id="eM" value="${esc(e.model || "")}"></label></div>
-      <datalist id="eCats">${["Медицинское оборудование", "Стерилизация", "Рентген и визиография", "Мебель", "Компьютеры и оргтехника", "Инструменты"].map(x => `<option value="${x}">`).join("")}</datalist>
+      <datalist id="eCats">${cats.map(x => `<option value="${esc(x.name)}">`).join("")}</datalist>
       <div class="grid3"><label class="fl">Серийный номер<input class="input" id="eS" value="${esc(e.serial || "")}"></label>
         <label class="fl">Местонахождение<select class="input" id="eLoc"><option value="">— другое (впишите ниже) —</option>${places.map(p => `<option value="${esc(p.id)}" ${p.id === e.location_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
         <label class="fl" id="eLW">Место текстом<input class="input" id="eL" value="${esc(e.location_id ? "" : e.location || "")}" placeholder="Кабинет 1 · кресло 1"></label></div>
       <div class="grid3"><label class="fl">Ответственный<input class="input" id="eR" value="${esc(e.responsible || "")}" placeholder="Медсестра кабинета № 1"></label>
         <label class="fl">Принадлежность<select class="input" id="eOwn">${opts(R.ownerships, e.ownership || "own")}</select></label>
         <label class="fl">Техническое состояние<select class="input" id="eCond">${opts(R.conditions, e.condition || "ok")}</select></label></div>
+      <div class="grid3" id="eThird"><label class="fl" style="grid-column:span 2">Владелец / контрагент<input class="input" id="eCtr" value="${esc(e.contractor || "")}" placeholder="Врач Иванов А. С. или ООО «РентАльянс»"></label>
+        <label class="fl">Договор №<input class="input" id="eCno" value="${esc(e.contract_no || "")}"></label>
+        <label class="fl">Начало использования<input class="input" type="date" id="eUs" value="${esc(e.use_start || "")}"></label>
+        <label class="fl">Окончание<input class="input" type="date" id="eUe" value="${esc(e.use_end || "")}" title="Окончание аренды, лизинга или пользования"></label></div>
+      <div class="grid3"><label class="fl">Количество, шт.<input class="input" type="number" min="1" step="1" id="eQty" value="${e.qty || 1}" title="Комплект или несколько одинаковых единиц под одним номером"></label>
+        ${money ? `<label class="fl" style="grid-column:span 2" title="Категория не задаёт учёт: недорогой инструмент можно учитывать штуками без амортизации">Способ учёта<select class="input" id="eAcc">${opts(R.accounting, e.accounting || "amort")}</select></label>` : ""}</div>
       <div class="grid3"><label class="fl">Статус<select class="input" id="eSt">${Object.entries(STK.eq_status || {}).filter(([k]) => k !== "written_off").map(([k, t]) => `<option value="${k}" ${k === (e.status || "in_use") ? "selected" : ""}>${t}</option>`).join("")}</select></label>
         <label class="fl">Дата покупки<input class="input" type="date" id="eP" value="${esc(e.purchase_date || "")}"></label><label class="fl">Ввод в эксплуатацию<input class="input" type="date" id="eIn" value="${esc(e.in_service || "")}" title="Пусто — с даты покупки"></label></div>
       <div class="grid3"><label class="fl">Гарантия до<input class="input" type="date" id="eW" value="${esc(e.warranty_until || "")}"></label><label class="fl">Следующее ТО<input class="input" type="date" id="eNx" value="${esc(e.next_service || "")}"></label></div>
@@ -402,10 +412,13 @@ async function editEquipment(e) {
       <label class="fl">Комментарий<input class="input" id="eCom" value="${esc(e.comment || "")}"></label><div class="auth-err" id="eErr"></div></div>
     <div class="m-f"><span class="muted">${isNew ? "После сохранения откроется карточка: фото, документы, QR-этикетка" : ""}</span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="eOk">${isNew ? "Создать карточку" : "Сохранить"}</button></div>`, {wide: true});
   const syncLoc = () => { $("#eLW", box).style.visibility = $("#eLoc", box).value ? "hidden" : ""; }; $("#eLoc", box).onchange = syncLoc; syncLoc();
+  const syncOwn = () => { $("#eThird", box).hidden = ($("#eOwn", box).value || "own") === "own"; }; $("#eOwn", box).onchange = syncOwn; syncOwn();
   $("#eOk", box).onclick = async () => {
     const f = {id: e.id, name: $("#eN").value, inv_number: $("#eInv").value, model: $("#eM").value, serial: $("#eS").value, category: $("#eC").value,
       manufacturer: $("#eMf").value, responsible: $("#eR").value, status: $("#eSt").value, purchase_date: $("#eP").value, warranty_until: $("#eW").value,
-      next_service: $("#eNx").value, comment: $("#eCom").value, in_service: $("#eIn").value, ownership: $("#eOwn").value, condition: $("#eCond").value};
+      next_service: $("#eNx").value, comment: $("#eCom").value, in_service: $("#eIn").value, ownership: $("#eOwn").value, condition: $("#eCond").value,
+      qty: $("#eQty").value, contractor: $("#eCtr").value, contract_no: $("#eCno").value, use_start: $("#eUs").value, use_end: $("#eUe").value};
+    if ($("#eAcc")) f.accounting = $("#eAcc").value;
     if ($("#eLoc").value) f.location_id = $("#eLoc").value; else { f.location_id = ""; f.location = $("#eL").value; }
     if (money) Object.assign(f, {price: $("#ePr").value, useful_months: $("#eLife").value, salvage: $("#eSalv").value});
     const pay = $("#ePay"); if (pay && pay.value) f.pay = pay.value;  // 3.14: «Покупка оборудования»
@@ -413,8 +426,11 @@ async function editEquipment(e) {
     catch (err) { $("#eErr").textContent = errText(err); }
   };
   if (money) {
-    const lifeT = () => { const n = +$("#eLife").value || 0, p = +$("#ePr").value || 0, sv = +$("#eSalv").value || 0;
-      $("#eLifeT").textContent = n > 0 ? `${n % 12 ? n + " мес." : n / 12 + " " + plural(n / 12, "год", "года", "лет")}${p > 0 ? ` · в месяц ${money(Math.max(0, p - sv) / n)}` : ""}` : "Без срока амортизация не считается"; };
-    ["#eLife", "#ePr", "#eSalv"].forEach(s => $(s, box).oninput = lifeT); lifeT();
+    const lifeT = () => { const n = +$("#eLife").value || 0, p = +$("#ePr").value || 0, sv = +$("#eSalv").value || 0, norm = lifeOf($("#eC").value);
+      const qty = $("#eAcc") && $("#eAcc").value === "qty", nt = norm ? ` · норматив для категории: ${norm % 12 ? norm + " мес." : norm / 12 + " " + plural(norm / 12, "год", "года", "лет")}` : "";
+      $("#eLifeT").innerHTML = qty ? "Количественный учёт: амортизация не считается" : (n > 0 ? `${n % 12 ? n + " мес." : n / 12 + " " + plural(n / 12, "год", "года", "лет")}${p > 0 ? ` · в месяц ${money(Math.max(0, p - sv) / n)}` : ""}` : "Без срока амортизация не считается")
+        + (nt && !qty && n !== norm ? `${esc(nt)} <button class="linkbtn" type="button" id="eLifeNorm">подставить</button>` : "");
+      const b = $("#eLifeNorm", box); if (b) b.onclick = () => { $("#eLife").value = norm; lifeT(); }; };
+    ["#eLife", "#ePr", "#eSalv", "#eC"].forEach(s => $(s, box).oninput = lifeT); const ac = $("#eAcc", box); if (ac) ac.onchange = lifeT; lifeT();
   }
 }

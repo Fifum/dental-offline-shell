@@ -143,6 +143,48 @@ check("the section's script and styles on the page", "stock-eqsection.js" in htm
       and html.index("stock-eqcard.js") < html.index("stock-eqsection.js"))
 check("the bar has «Ещё»", "more: [" in js and "eqNavHtml" in sec and "Справочники и настройки" in js)
 
+# ================================================ block 2: overview and register --
+e_old = S.save_equipment({"name": "Стоматологическая установка", "category": "Стоматологическое оборудование", "price": 1200000,
+                          "purchase_date": day(3700), "in_service": day(3700), "useful_months": 120, "next_service": day(10),
+                          "warranty_until": day(-20)})
+e_end = S.save_equipment({"name": "Микроскоп", "category": "Диагностическое оборудование", "price": 1200000, "purchase_date": day(330),
+                          "in_service": day(330), "useful_months": 14, "condition": "service", "next_service": day(5)})
+e_rep = S.save_equipment({"name": "Компрессор", "category": "Инженерное оборудование", "price": 180000, "replace_date": day(-100),
+                          "condition": "faulty"})
+e_lease = S.save_equipment({"name": "Рентген", "category": "Диагностическое оборудование", "price": 2400000, "ownership": "lease",
+                            "contractor": "ООО РентАльянс", "use_end": day(-20)})
+o = a.equipment_overview()
+live = [x for x in S.equipment_list("", False) if x["status"] != "written_off"]
+check("overview: all the live pieces with their quantity", o["total"] == sum(x["qty"] for x in live) and o["cards"] == len(live), (o["total"], o["cards"]))
+check("overview: condition", o["condition"]["service"] >= 1 and o["condition"]["faulty"] >= 1 and sum(o["condition"].values()) == len(live), o["condition"])
+check("overview: money of the clinic's own only", o["money"]["cost"] == round(sum(x["price"] or 0 for x in live if stockm.on_books(x)), 2), o["money"])
+check("overview: the monthly depreciation", o["money"]["monthly"] == round(sum(stockm.amort_charge(x, date.today().strftime("%Y-%m")) for x in live if stockm.on_books(x)), 2))
+check("overview: fully depreciated counted", o["full_amort"] >= 1)
+cats = {g["name"]: g for g in o["by_category"]}
+check("overview: by category with shares", cats["Стоматологическое оборудование"]["cost"] >= 1200000 and abs(sum(g["share"] for g in o["by_category"]) - 100) < 1,
+      [(g["name"], g["share"]) for g in o["by_category"]])
+check("a leased piece is counted but not in the money", "Рентген" not in [x["name"] for x in o["to_replace"]] and o["third_party"] >= 1)
+kinds = {(x["kind"], x["name"].split(" ")[0]) for x in o["events"]}
+check("events: service, the end of a lease, the replacement", ("service", "Микроскоп") in kinds and ("use_end", "Рентген") in kinds and ("replace", "Компрессор") in kinds, kinds)
+check("events: an overdue one marked", any(x["overdue"] for x in o["events"] if x["name"].startswith("Стоматологическая")))
+rep = {x["name"]: x for x in o["to_replace"]}
+check("to replace: depreciated in full is urgent", rep["Стоматологическая установка"]["urgent"] and "100" in rep["Стоматологическая установка"]["why"], rep.get("Стоматологическая установка"))
+check("to replace: the useful life runs out", "Микроскоп" in rep and "истекает" in rep["Микроскоп"]["why"], list(rep))
+check("to replace: a planned replacement", "Компрессор" in rep, list(rep))
+check("attention counts", o["attention"]["service_overdue"] >= 1 and o["attention"]["service_soon"] >= 1 and o["attention"]["to_replace"] == len(o["to_replace"]), o["attention"])
+o2 = S.equipment_overview(money=False)
+check("without «Бухгалтерия» no money", "money" not in o2 and o2["total"] == o["total"])
+lst = {x["id"]: x for x in S.equipment_list("", False)}
+check("the register has the name of the place and the accounting", "location_name" in lst[e_old] and lst[e_q]["accounting_title"].startswith("Количественный")
+      and lst[e_lease]["third_party"], lst[e_old].get("location_name"))
+check("overview has a right", "equipment_overview" in auth.METHOD_PERMS)
+sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")
+card = (ROOT / "app" / "ui" / "stock-eqcard.js").read_text(encoding="utf-8")
+for part in ("Состояние оборудования", "Стоимость по категориям", "Ближайшие события", "Быстрые действия", "Оборудование к замене",
+             "Последние заявки и работы", "Реестр оборудования", "Статус учёта", "Карточки", "Сортировка", "Экспорт"):
+    check(f"UI: {part}", part in sec)
+check("the form has the new fields", all(x in card for x in ("eAcc", "eQty", "eCtr", "eCno", "eUs", "eUe", "подставить")))
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)

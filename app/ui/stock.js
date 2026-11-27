@@ -4,7 +4,7 @@
    «Инвентаризация». The section is S.view, its open tab S.stockTab (each section remembers its own in S.stockTabs). */
 S.stockTab = "home";  // 3.10: the home screen with the four tiles (stock-nurse.js)
 S.stockArea = null;
-S.stockTabs = {stock: "home", equipment: "equipment", inventory: "inv_mat"};
+S.stockTabs = {stock: "home", equipment: "eq_overview", inventory: "inv_mat"};
 const STOCK_AREAS = {
   stock: {title: "Склад и материалы", sub: "Поставки, выдача в кабинеты, расход, заявки и закупки — медицинские и хозяйственные материалы",
     tabs: [["home", "Главная"], ["balance", "Остатки"], ["docs", "Документы"], ["moves", "Движение"],
@@ -13,7 +13,7 @@ const STOCK_AREAS = {
       ["norms", "Нормы списания"], ["suppliers", "Поставщики"]]},
   // 3.15: the bar of the mockups — the main tabs with icons and «Ещё» (stock-eqsection.js draws it)
   equipment: {title: "Оборудование", sub: "Учёт, обслуживание и управление имуществом клиники",
-    tabs: [["equipment", "Реестр оборудования"], ["service", "Обслуживание и ремонт"],
+    tabs: [["eq_overview", "Обзор"], ["equipment", "Реестр оборудования"], ["service", "Обслуживание и ремонт"],
       ["amort", "Амортизация", "Видят директор и учредитель (право «Бухгалтерия»)"]],
     more: [["disposed", "Выбытие и списание"], ["inv", "Инвентаризация"], ["steril", "Стерилизация"], ["eq_refs", "Справочники и настройки"]]},
   inventory: {title: "Инвентаризация", sub: "Пересчёт материалов по местам и проверка оборудования по инвентарным номерам",
@@ -75,7 +75,7 @@ function stockTabsByRights() {
     equipment: canAny("equipment", "stock_view"), service: canAny("equipment", "stock_view"), amort: can("accounting"),
     disposed: canAny("equipment", "stock_view"), steril: canAny("sterilization", "equipment"),
     inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment"),
-    inv: can("equipment"), eq_refs: canAny("equipment", "stock_view")};  // 3.15
+    inv: can("equipment"), eq_refs: canAny("equipment", "stock_view"), eq_overview: canAny("equipment", "stock_view", "equipment_approve")};  // 3.15
   const area = STOCK_AREAS[S.stockArea], keys = [...area.tabs, ...(area.more || [])].map(t => t[0]).filter(k => k !== "inv");
   $$("#stockTabs button[data-k]").forEach(b => b.hidden = !vis[b.dataset.k]);
   const mb = $("#eqMoreBtn"); if (mb) mb.parentElement.hidden = !(area.more || []).some(t => vis[t[0]]);
@@ -98,7 +98,7 @@ async function loadStock() {
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces, orders: stockOrders,
     equipment: stockEquipment, service: eqServiceTab, amort: eqAmortTab, disposed: eqDisposedTab,
-    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab}[S.stockTab];
+    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview}[S.stockTab];
   await fn();
 }
 
@@ -560,29 +560,7 @@ function editSupplier(s) {
 }
 
 /* ------------------------------------------------------- equipment */
-async function stockEquipment() {
-  if (S.eqOpen) return openEquipment(S.eqOpen, EQ.tab);  // 3.13: the card is a screen of this tab
-  const rows = await api.equipment_list(S.eqQ || "", false);
-  const edit = can("equipment"), mon = !!STK.eq_money;
-  $("#stockBody").innerHTML = eqStatRow() + `<div class="tab-tools">
-      <div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="eqQ" placeholder="Название, инв. №, серийный, кабинет или QR" value="${esc(S.eqQ || "")}"></div>
-      <span class="grow"></span>${edit ? `<button class="btn" id="eqNew">Добавить оборудование</button>` : ""}</div>
-    <div class="pbody" style="margin-top:8px">${rows.length ? `<table class="tbl"><thead><tr><th>Инв. №</th><th>Оборудование</th><th>Где</th><th>Состояние</th><th>Статус</th><th>Следующее ТО</th>${mon ? `<th class="num">Стоимость</th><th class="num" title="Стоимость минус начисленная амортизация">Остаточная</th>` : ""}</tr></thead><tbody>${
-      rows.map(e => `<tr data-e="${esc(e.id)}"><td><b>${esc(e.inv_number)}</b></td><td class="lnk"><div class="sn-mat sm">${phHtml(e.photo_id)}<span><b>${esc(e.name)}</b><small class="muted" style="display:block">${esc([e.manufacturer, e.model, e.serial && "S/N " + e.serial].filter(Boolean).join(" · "))}</small></span></div></td>
-        <td>${esc(e.location)}</td><td><span class="eqc-dot ${eqCondCls(e.condition)}">${esc(e.condition_title)}</span></td><td><span class="pill ${e.status === "in_use" ? "st-ok" : "st-cancel"}">${esc(e.status_title)}</span></td>
-        <td class="${e.service_due ? "bad-t" : ""}">${e.next_service ? fmtDate(e.next_service) + (e.service_due ? " · пора" : "") : "—"}</td>${mon ? `<td class="num">${money(e.price)}</td>
-        <td class="num">${e.amort && e.amort.on ? money(e.amort.residual) : '<span class="muted" title="Не указан срок полезного использования — амортизация не считается">—</span>'}</td>` : ""}</tr>`).join("")}</tbody></table>`
-      : `<div class="empty"><b>${S.eqQ ? "Ничего не найдено" : "Оборудования пока нет"}</b><span>${edit && !S.eqQ ? "Внесите кресла, автоклав, компрессор и другую технику с инвентарными номерами" : ""}</span></div>`}</div>`;
-  const eqq = $("#eqQ");
-  let t; eqq.oninput = e => { clearTimeout(t); t = setTimeout(() => { S.eqQ = e.target.value; stockEquipment().then(() => { const i = $("#eqQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 200); };
-  eqq.onkeydown = async e => {  // 3.14: the QR of a label opens the card
-    if (e.key !== "Enter" || !eqq.value.trim()) return;
-    try { const r = await api.stock_scan(eqq.value.trim()); if (r.equipment_id) { clearTimeout(t); S.eqQ = ""; openEquipment(r.equipment_id); } } catch (x) { /* a word to search */ }
-  };
-  const n = $("#eqNew"); if (n) n.onclick = () => editEquipment({});
-  $$("#stockBody tr[data-e]").forEach(tr => tr.onclick = () => openEquipment(tr.dataset.e));
-  loadThumbs($("#stockBody"));
-}
+/* stockEquipment — «Реестр оборудования»: stock-eqsection.js (3.15) */
 
 /** 3.14 «Оборудование → ТО и ремонт»: what is due for service, what is in repair, and every service and repair with its cost. */
 async function eqServiceTab() {

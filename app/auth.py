@@ -337,6 +337,7 @@ METHOD_PERMS = {
     "equipment_capex_candidates": "accounting", "expenses_to_capex": "accounting",  # 3.14
     # 3.15: the section «Оборудование» by the mockups
     "equipment_refs": ("equipment", "stock_view", "stock_ops", "equipment_approve"), "equipment_refs_save": "equipment",
+    "equipment_overview": ("equipment", "stock_view", "equipment_approve"),
     # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
     "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
     "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",
