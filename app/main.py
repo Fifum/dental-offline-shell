@@ -460,6 +460,52 @@ class Api:
         """3.15 «Оборудование → Обзор»; the money only with «Бухгалтерия»."""
         return self._stock.equipment_overview(money=self._eq_money())
 
+    # 3.15 «Поступление»: the prices only with «Бухгалтерия»; the payment of an accepted receipt may go to «Покупка оборудования»
+    def equipment_receipts(self, year=None):
+        return self._stock.eq_receipts(year, money=self._eq_money())
+
+    def equipment_receipt(self, rid):
+        return self._stock.eq_receipt(rid, money=self._eq_money())
+
+    def equipment_receipt_save(self, f):
+        rid = self._stock.eq_receipt_save(f, self._who(), money=self._eq_money())
+        return self.equipment_receipt(rid)
+
+    def equipment_receipt_accept(self, rid, pay=None):
+        import accounting
+        pay = pay if pay in accounting.METHODS else None
+        if pay and not self._eq_money():
+            raise ValueError("Записать оплату оборудования может только сотрудник с правом «Бухгалтерия»")
+        ids = self._stock.eq_receipt_accept(rid, self._who(), money=self._eq_money())
+        r = self._stock.eq_receipt(rid)
+        total = r.get("amount") or r.get("lines_total") or 0
+        if pay and total > 0:
+            self._acc.save_expense({"date": r["doc_date"], "category": accounting.CAPEX, "amount": total, "method": pay,
+                                    "comment": f"Поступление {r['number']}: {r['doc_kind_title']} № {r['doc_number']}"
+                                               + (f", {r['supplier_name']}" if r["supplier_name"] else "")}, self._who())
+        return {"equipment_ids": ids, "receipt": self.equipment_receipt(rid)}
+
+    def equipment_receipt_cancel(self, rid):
+        return self._stock.eq_receipt_cancel(rid)
+
+    # 3.15 «Перемещения»: approved by «Оборудование: согласование»
+    def equipment_moves(self, year=None, equipment_id=None):
+        return self._stock.eq_moves(year, equipment_id)
+
+    def equipment_move_save(self, f):
+        perms, u = self._my_perms()
+        return self._stock.eq_move_save(f, self._who(), (u or {}).get("login") or "", "equipment_approve" in perms)
+
+    def equipment_move_decide(self, mid, action, answer=""):
+        _, u = self._my_perms()
+        return self._stock.eq_move_decide(mid, action, answer, (u or {}).get("login") or "", self._who())
+
+    def equipment_move_step(self, mid, step):
+        return self._stock.eq_move_step(mid, step, self._who())
+
+    def equipment_move_cancel(self, mid):
+        return self._stock.eq_move_cancel(mid)
+
     def equipment_refs(self):
         """3.15: categories with the usual useful life, the ways of accounting, ownership, disposal and the journals' lists."""
         return self._stock.eq_refs()

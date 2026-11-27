@@ -13,7 +13,8 @@ const STOCK_AREAS = {
       ["norms", "Нормы списания"], ["suppliers", "Поставщики"]]},
   // 3.15: the bar of the mockups — the main tabs with icons and «Ещё» (stock-eqsection.js draws it)
   equipment: {title: "Оборудование", sub: "Учёт, обслуживание и управление имуществом клиники",
-    tabs: [["eq_overview", "Обзор"], ["equipment", "Реестр оборудования"], ["service", "Обслуживание и ремонт"],
+    tabs: [["eq_overview", "Обзор"], ["equipment", "Реестр оборудования"], ["eq_receipts", "Поступление"], ["eq_moves", "Перемещения"],
+      ["service", "Обслуживание и ремонт"],
       ["amort", "Амортизация", "Видят директор и учредитель (право «Бухгалтерия»)"]],
     more: [["disposed", "Выбытие и списание"], ["inv", "Инвентаризация"], ["steril", "Стерилизация"], ["eq_refs", "Справочники и настройки"]]},
   inventory: {title: "Инвентаризация", sub: "Пересчёт материалов по местам и проверка оборудования по инвентарным номерам",
@@ -75,7 +76,8 @@ function stockTabsByRights() {
     equipment: canAny("equipment", "stock_view"), service: canAny("equipment", "stock_view"), amort: can("accounting"),
     disposed: canAny("equipment", "stock_view"), steril: canAny("sterilization", "equipment"),
     inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment"),
-    inv: can("equipment"), eq_refs: canAny("equipment", "stock_view"), eq_overview: canAny("equipment", "stock_view", "equipment_approve")};  // 3.15
+    inv: can("equipment"), eq_refs: canAny("equipment", "stock_view"), eq_overview: canAny("equipment", "stock_view", "equipment_approve"),
+    eq_receipts: canAny("equipment", "equipment_approve"), eq_moves: canAny("equipment", "stock_view", "equipment_approve")};  // 3.15
   const area = STOCK_AREAS[S.stockArea], keys = [...area.tabs, ...(area.more || [])].map(t => t[0]).filter(k => k !== "inv");
   $$("#stockTabs button[data-k]").forEach(b => b.hidden = !vis[b.dataset.k]);
   const mb = $("#eqMoreBtn"); if (mb) mb.parentElement.hidden = !(area.more || []).some(t => vis[t[0]]);
@@ -98,7 +100,7 @@ async function loadStock() {
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
     visits: stockVisits, places: stockPlaces, orders: stockOrders,
     equipment: stockEquipment, service: eqServiceTab, amort: eqAmortTab, disposed: eqDisposedTab,
-    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview}[S.stockTab];
+    inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview, eq_receipts: eqReceiptsTab, eq_moves: eqMovesTab}[S.stockTab];
   await fn();
 }
 

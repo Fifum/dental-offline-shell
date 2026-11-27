@@ -192,3 +192,201 @@ function eqRegTable(list, mon, condPill) {
       ${mon ? `<td class="num"><b>${e.price ? eqMoney(e.price) : "—"}</b></td><td class="num">${e.amort && e.amort.on ? eqMoney(e.amort.residual) : e.accounting === "qty" || e.third_party ? '<span class="muted">не амортизируется</span>' : '<span class="muted" title="Не указан срок полезного использования">—</span>'}</td>
         <td class="num">${e.amort && e.amort.on && !e.amort.done ? eqMoney(e.amort.monthly) : "—"}</td>` : ""}</tr>`).join("")}</tbody>`;
 }
+
+/* ------------------------------------------------------------ the year of a journal, steps */
+const eqYearSel = (id, y) => { const now = new Date().getFullYear(); return `<label class="eqs-period">${EQX.cal}<span>Период:</span><select class="input" id="${id}">${[now + 1, now, now - 1, now - 2, now - 3].map(v => `<option value="${v}" ${v === y ? "selected" : ""}>${v} год</option>`).join("")}</select></label>`; };
+const eqStages = (title, items, cur) => `<section class="eqs-card eqs-stages"><h3>${title}</h3><ol>${items.map(([t, s], i) => `<li class="${i + 1 < cur ? "done" : i + 1 === cur ? "cur" : ""}"><i>${i + 1 < cur ? EQX.ok : ""}</i><span><b>${i + 1}. ${t}</b><small>${s}</small></span></li>`).join("")}</ol></section>`;
+const eqUseful = links => `<section class="eqs-card eqs-useful"><h3>Полезные действия</h3>${links.map(([k, ic, t, s]) => `<button data-u="${k}">${ic}<span><b>${t}</b>${s ? `<small>${s}</small>` : ""}</span>${EQX.chev}</button>`).join("")}</section>`;
+const eqPill = (cls, t) => `<span class="eqs-st ${cls}">${cls === "ok" ? EQX.ok : cls === "late" || cls === "bad" ? EQX.warn : EQX.clock}${esc(t)}</span>`;
+
+/* ------------------------------------------------------------ «Поступление» */
+const RC_STEPS = [["Регистрация документов", "Договор, накладная, счёт-фактура"], ["Приёмка оборудования", "Проверка комплектации и состояния"],
+  ["Постановка на учёт", "Инвентарный номер, категория, стоимость"], ["Ввод в эксплуатацию", "Дата ввода, кабинет, ответственный"]];
+async function eqReceiptsTab() {
+  const body = $("#stockBody");
+  EQS.rcYear = EQS.rcYear || new Date().getFullYear();
+  const [r, sups, places, refs] = await Promise.all([api.equipment_receipts(EQS.rcYear), api.suppliers(), api.stock_locations(), EQS.refs ? EQS.refs : api.equipment_refs()]);
+  EQS.refs = refs;
+  const mon = r.total !== undefined, edit = can("equipment");
+  let rc = EQS.rc;  // the receipt in the wizard: {id?, step, ...}
+  if (rc && rc.id) { const fresh = r.receipts.find(x => x.id === rc.id); rc = EQS.rc = fresh && fresh.status === "process" ? {...fresh, step: Math.min(rc.step || fresh.step, 4), _step: rc._step || fresh.step} : null; }
+  if (!rc) rc = EQS.rc = {step: 1, _step: 1, lines: [], doc_kind: "contract", doc_date: iso(new Date())};
+  const st = rc._step || 1, live = places.filter(p => p.id);
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Поступление оборудования</h2><span class="muted">Регистрация приобретения, приёмки и ввода в эксплуатацию</span></div><span class="grow"></span>
+      ${eqYearSel("rcYear", EQS.rcYear)}${edit ? `<button class="btn" id="rcNew">${EQX.plus}Новое поступление</button>` : ""}</div>
+    <div class="eqs-tiles">${eqTile(EQX.box, "Поступлений за период", r.count)}${mon ? eqTile(EQX.coins, "Общая стоимость", eqMoney(r.total)) : ""}${eqTile(EQX.ok, "Принято в эксплуатацию", r.accepted)}${eqTile(EQX.clock, "В процессе приёмки", r.process, r.process ? "warn" : "")}</div>
+    ${edit ? `<div class="eqs-g2r"><section class="eqs-card" id="rcWiz"><h3>Регистрация поступления${rc.number ? ` <span class="eqs-chip">${esc(rc.number)}</span>` : ""}</h3>
+        <div class="eqs-steps">${Object.values(r.steps).map((t, i) => `<button data-st="${i + 1}" class="${i + 1 === st ? "on" : i + 1 < st ? "done" : ""}" ${i + 1 > (rc.step || 1) ? "disabled" : ""}><i>${i + 1 < st ? EQX.ok : i + 1}</i>${t}</button>`).join("<u></u>")}</div>
+        <div id="rcStep"></div><div class="auth-err" id="rcErr"></div></section>
+      ${eqStages("Этапы поступления", RC_STEPS, st)}</div>` : ""}
+    <div class="eqs-g2r"><section class="eqs-card eqs-tcard"><h3 class="eqs-tch">${EQN.eq_receipts}Журнал поступлений</h3>
+        ${r.receipts.length ? `<table class="tbl eqs-reg" id="rcJ"><thead><tr><th>№ поступления</th><th>Дата</th><th>Поставщик</th><th>Документ</th><th class="num">Позиций</th>${mon ? '<th class="num">Сумма</th>' : ""}<th>Статус</th></tr></thead><tbody>${r.receipts.map(x => `<tr data-rc="${esc(x.id)}">
+          <td><b>${esc(x.number)}</b></td><td>${fmtDateShort(x.doc_date)}</td><td>${esc(x.supplier_name || "—")}</td><td class="muted">${esc(x.doc_kind_title)} № ${esc(x.doc_number)}</td><td class="num">${x.positions}</td>
+          ${mon ? `<td class="num"><b>${eqMoney(x.amount || x.lines_total)}</b></td>` : ""}<td>${x.status === "accepted" ? eqPill("ok", "Принято") : eqPill("wait", `${x.status_title} · шаг ${x.step}`)}</td></tr>`).join("")}</tbody></table>`
+          : `<div class="empty"><b>Поступлений ещё не было</b><span>Начните с документов поставщика — «Новое поступление»</span></div>`}</section>
+      ${eqUseful([["sup", EQX.box, "Справочник поставщиков", ""], ["print", EQX.doc, "Отчёт по поступлениям", "Журнал за год — на печать"], ["reg", EQX.list, "Реестр оборудования", ""]])}</div></div>`;
+  const ys = $("#rcYear"); ys.onchange = () => { EQS.rcYear = +ys.value; eqReceiptsTab(); };
+  const nw = $("#rcNew"); if (nw) nw.onclick = () => { EQS.rc = null; eqReceiptsTab(); };
+  $$("[data-rc]", body).forEach(tr => tr.onclick = () => { const x = r.receipts.find(y => y.id === tr.dataset.rc);
+    if (x.status === "process" && edit) { EQS.rc = {...x, _step: x.step}; eqReceiptsTab().then(() => $("#rcWiz").scrollIntoView({block: "start", behavior: "smooth"})); }
+    else eqReceiptView(x); });
+  $$("[data-u]", body).forEach(b => b.onclick = () => ({sup: () => stockGo("stock", "suppliers"), reg: () => stockGo("equipment", "equipment"),
+    print: () => { const t = $("#rcJ"); if (!t) return toast("Журнал пуст"); $("#printArea").innerHTML = `<h2>Журнал поступлений оборудования, ${EQS.rcYear} год</h2>${t.outerHTML}`; window.print(); }})[b.dataset.u]());
+  if (edit) { $$("[data-st]", body).forEach(b => b.onclick = () => { EQS.rc._step = +b.dataset.st; eqReceiptStep(sups, live, mon); }); eqReceiptStep(sups, live, mon); }
+}
+function eqReceiptStep(sups, places, mon) {
+  const rc = EQS.rc, st = rc._step || 1, el = $("#rcStep"), err = m => { $("#rcErr").textContent = m || ""; };
+  $$("#rcWiz [data-st]").forEach(b => { const n = +b.dataset.st; b.className = n === st ? "on" : n < st ? "done" : ""; b.disabled = n > (rc.step || 1); });
+  const lines = rc.lines || [], cats = (EQS.refs.categories || []).map(c => c.name), lifeOf = c => ((EQS.refs.categories || []).find(x => x.name === c) || {}).life || "";
+  const save = async (next, extra = {}) => {
+    err("");
+    try { const r = await api.equipment_receipt_save({id: rc.id, step: next, ...extra}); EQS.rc = {...r, _step: next}; return true; } catch (e) { err(errText(e)); return false; }
+  };
+  const nav = (back, nextT, onNext) => `<div class="eqs-wfoot">${back ? `<button class="btn ghost" id="rcBack">Назад</button>` : `<button class="btn ghost" id="rcCancel">${rc.id ? "Отменить поступление" : "Очистить"}</button>`}<span class="grow"></span><button class="btn" id="rcNext">${nextT} →</button></div>`;
+  if (st === 1) {
+    el.innerHTML = `<div class="eqs-form2"><label class="fl">Поставщик *<select class="input" id="rcSup"><option value="">Выберите поставщика</option>${sups.map(s => `<option value="${esc(s.id)}" ${s.id === rc.supplier_id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
+      <label class="fl">Дата документа *<input class="input" type="date" id="rcDate" value="${esc(rc.doc_date || iso(new Date()))}"></label>
+      <label class="fl">Документ-основание *<select class="input" id="rcKind">${Object.entries(EQS.refs.receipt_docs).map(([k, t]) => `<option value="${k}" ${k === (rc.doc_kind || "contract") ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+      ${mon ? `<label class="fl">Сумма по документу *<input class="input num" type="number" min="0" step="any" id="rcSum" value="${rc.amount || ""}" placeholder="0,00 ₽"></label>` : `<span></span>`}
+      <label class="fl">Номер документа *<input class="input" id="rcNum" value="${esc(rc.doc_number || "")}" placeholder="№ ДП-056/26"></label>
+      <label class="fl">Примечание<input class="input" id="rcCom" value="${esc(rc.comment || "")}" placeholder="Например: поставка по плану развития"></label></div>${nav(false, "Далее: Оборудование")}`;
+    $("#rcNext").onclick = async () => { const f = {supplier_id: $("#rcSup").value, doc_date: $("#rcDate").value, doc_kind: $("#rcKind").value, doc_number: $("#rcNum").value, comment: $("#rcCom").value};
+      if (mon) f.amount = $("#rcSum").value; if (await save(2, f)) eqReceiptsTab(); };
+  } else if (st === 2) {
+    const row = (l, i) => `<tr data-i="${i}"><td><input class="input" data-k="name" value="${esc(l.name || "")}" placeholder="Наименование"></td><td><input class="input" data-k="category" value="${esc(l.category || "")}" list="rcCats"></td>
+      <td><input class="input" data-k="manufacturer" value="${esc(l.manufacturer || "")}"></td><td><input class="input" data-k="model" value="${esc(l.model || "")}"></td><td><input class="input" data-k="serial" value="${esc(l.serial || "")}"></td>
+      <td><input class="input num" type="number" min="1" step="1" data-k="qty" value="${l.qty || 1}"></td>${mon ? `<td><input class="input num" type="number" min="0" step="any" data-k="price" value="${l.price || ""}"></td>` : ""}<td><button class="linkbtn danger-t" data-del="${i}">${EQX.x}</button></td></tr>`;
+    el.innerHTML = `<div class="eqs-lines"><table class="tbl compact"><thead><tr><th>Наименование *</th><th>Категория</th><th>Производитель</th><th>Модель</th><th>Серийный №</th><th class="num">Кол-во</th>${mon ? '<th class="num">Цена за ед., ₽</th>' : ""}<th></th></tr></thead><tbody id="rcLines">${(lines.length ? lines : [{}]).map(row).join("")}</tbody></table>
+      <datalist id="rcCats">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist><button class="btn ghost small" id="rcAdd">+ Строка</button>
+      <div class="muted eqs-hint">Проверьте комплектацию и состояние. Каждая единица получит свою карточку; при количественном учёте — одна карточка на всё количество.</div></div>${nav(true, "Далее: Учёт")}`;
+    const read = () => $$("#rcLines tr").map(tr => ({...(lines[+tr.dataset.i] || {}), ...Object.fromEntries($$("[data-k]", tr).map(i => [i.dataset.k, i.value]))})).filter(l => (l.name || "").trim());
+    $("#rcAdd").onclick = () => { EQS.rc.lines = [...read(), {}]; eqReceiptStep(sups, places, mon); };
+    $$("[data-del]", el).forEach(b => b.onclick = () => { const all = read(); all.splice(+b.dataset.del, 1); EQS.rc.lines = all; eqReceiptStep(sups, places, mon); });
+    $("#rcBack").onclick = () => { EQS.rc.lines = read(); EQS.rc._step = 1; eqReceiptStep(sups, places, mon); };
+    $("#rcNext").onclick = async () => { const l = read(); if (!l.length) return err("Добавьте хотя бы одну позицию"); if (await save(3, {lines: l})) eqReceiptsTab(); };
+  } else if (st === 3) {
+    el.innerHTML = `<div class="eqs-lines"><table class="tbl compact"><thead><tr><th>Позиция</th><th>Инв. номер</th>${mon ? "<th>Способ учёта</th><th class=\"num\">Срок, мес.</th>" : ""}<th>Ответственный</th></tr></thead><tbody id="rcLines">${lines.map((l, i) => `<tr data-i="${i}">
+      <td><b>${esc(l.name)}</b><small class="muted" style="display:block">${esc([l.category, l.qty > 1 ? `${l.qty} шт.` : ""].filter(Boolean).join(" · "))}</small></td>
+      <td><input class="input" data-k="inv_number" value="${esc(l.inv_number || "")}" placeholder="присвоится сам"></td>
+      ${mon ? `<td><select class="input" data-k="accounting">${Object.entries(EQS.refs.accounting).map(([k, t]) => `<option value="${k}" ${k === (l.accounting || "amort") ? "selected" : ""}>${t}</option>`).join("")}</select></td>
+        <td><input class="input num" type="number" min="0" max="600" step="1" data-k="useful_months" value="${l.useful_months || ""}" placeholder="${lifeOf(l.category) ? "норматив " + lifeOf(l.category) : "—"}"></td>` : ""}
+      <td><input class="input" data-k="responsible" value="${esc(l.responsible || "")}"></td></tr>`).join("")}</tbody></table>
+      <div class="muted eqs-hint">Номер продолжит префикс последнего инвентарного номера. Срок полезного использования ставится вручную; пустой — без амортизации.</div></div>${nav(true, "Далее: Ввод в эксплуатацию")}`;
+    const read = () => $$("#rcLines tr").map(tr => ({...lines[+tr.dataset.i], ...Object.fromEntries($$("[data-k]", tr).map(i => [i.dataset.k, i.value]))}));
+    $("#rcBack").onclick = () => { EQS.rc.lines = read(); EQS.rc._step = 2; eqReceiptStep(sups, places, mon); };
+    $("#rcNext").onclick = async () => { if (await save(4, {lines: read()})) eqReceiptsTab(); };
+  } else {
+    el.innerHTML = `<div class="eqs-lines"><table class="tbl compact"><thead><tr><th>Позиция</th><th>Кабинет / место</th><th>Дата ввода</th></tr></thead><tbody id="rcLines">${lines.map((l, i) => `<tr data-i="${i}">
+      <td><b>${esc(l.name)}</b><small class="muted" style="display:block">${esc([l.inv_number, l.qty > 1 ? `${l.qty} шт.` : ""].filter(Boolean).join(" · "))}</small></td>
+      <td><select class="input" data-k="location_id"><option value="">— не указано —</option>${places.map(p => `<option value="${esc(p.id)}" ${p.id === l.location_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></td>
+      <td><input class="input" type="date" data-k="in_service" value="${esc(l.in_service || rc.doc_date || "")}"></td></tr>`).join("")}</tbody></table>
+      ${mon ? `<label class="fl eqs-pay" title="Расход запишется датой документа в статью «Покупка оборудования»: в движении денег он есть, а в прибыль оборудование идёт амортизацией">Записать оплату<select class="input" id="rcPay"><option value="">— не записывать —</option>${["Наличные", "Безналичный перевод", "Карта"].map(k => `<option value="${k}">${k}</option>`).join("")}</select></label>` : ""}</div>
+      <div class="eqs-wfoot"><button class="btn ghost" id="rcBack">Назад</button><span class="grow"></span><button class="btn" id="rcNext">${EQX.ok}Ввести в эксплуатацию</button></div>`;
+    const read = () => $$("#rcLines tr").map(tr => ({...lines[+tr.dataset.i], ...Object.fromEntries($$("[data-k]", tr).map(i => [i.dataset.k, i.value]))}));
+    $("#rcBack").onclick = () => { EQS.rc.lines = read(); EQS.rc._step = 3; eqReceiptStep(sups, places, mon); };
+    $("#rcNext").onclick = async () => {
+      if (!(await save(4, {lines: read()}))) return;
+      try { const x = await api.equipment_receipt_accept(EQS.rc.id, $("#rcPay") ? $("#rcPay").value : ""); toast(`Принято: ${x.equipment_ids.length} ${plural(x.equipment_ids.length, "карточка", "карточки", "карточек")}`); EQS.rc = null; eqReceiptsTab(); }
+      catch (e) { err(errText(e)); }
+    };
+  }
+  const c = $("#rcCancel"); if (c) c.onclick = async () => {
+    if (!rc.id) { EQS.rc = null; return eqReceiptsTab(); }
+    if (!await ask(`Отменить поступление ${rc.number}?`, {danger: true, ok: "Отменить", cancel: "Не отменять"})) return;
+    try { await api.equipment_receipt_cancel(rc.id); EQS.rc = null; toast("Отменено"); eqReceiptsTab(); } catch (e) { err(errText(e)); }
+  };
+}
+function eqReceiptView(x) {
+  const mon = x.amount !== undefined;
+  const box = modal(`<div class="m-h"><h3>Поступление ${esc(x.number)}</h3><button class="x" data-close>×</button></div>
+    <div class="m-b"><div class="muted">${esc(x.doc_kind_title)} № ${esc(x.doc_number)} от ${fmtDate(x.doc_date)} · ${esc(x.supplier_name || "поставщик не указан")}${mon ? ` · ${eqMoney(x.amount || x.lines_total)}` : ""}</div>
+      <table class="tbl compact"><thead><tr><th>Позиция</th><th class="num">Кол-во</th>${mon ? '<th class="num">Цена</th>' : ""}<th>Инв. №</th></tr></thead><tbody>${x.lines.map(l => `<tr><td>${esc(l.name)}<small class="muted" style="display:block">${esc([l.category, l.model].filter(Boolean).join(" · "))}</small></td><td class="num">${l.qty}</td>${mon ? `<td class="num">${eqMoney(l.price)}</td>` : ""}<td>${esc(l.inv_number || "—")}</td></tr>`).join("")}</tbody></table>
+      ${x.equipment_ids.length ? `<div class="muted eqs-hint">Карточки: ${x.equipment_ids.length}. Откройте их в «Реестре оборудования».</div>` : ""}</div>
+    <div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>Закрыть</button>${x.equipment_ids.length ? `<button class="btn" id="rvOpen">Открыть первую карточку</button>` : ""}</div>`);
+  const o = $("#rvOpen", box); if (o) o.onclick = () => { closeModal(); openEquipment(x.equipment_ids[0]); };
+}
+
+/* ------------------------------------------------------------ «Перемещения» */
+const MV_STAGES = [["Создание заявки", "Формирование перемещения"], ["Подготовка к перемещению", "Утверждение, проверка состояния, отключение"],
+  ["Физическое перемещение", "Транспортировка и установка"], ["Подтверждение", "Фиксация нового местонахождения в учёте"]];
+async function eqMovesTab() {
+  const body = $("#stockBody");
+  EQS.mvYear = EQS.mvYear || new Date().getFullYear();
+  const [r, list, places] = await Promise.all([api.equipment_moves(EQS.mvYear, EQS.mvEq || null), api.equipment_list("", false), api.stock_locations()]);
+  const edit = can("equipment"), appr = can("equipment_approve"), live = places.filter(p => p.id);
+  const sel = EQS.mvSel ? r.moves.find(m => m.id === EQS.mvSel) : null;
+  const flt = EQS.mvFlt === "planned" ? r.moves.filter(m => m.planned) : r.moves;
+  const pill = m => m.status === "done" ? eqPill("ok", m.status_title) : m.status === "rejected" ? eqPill("bad", m.status_title) : m.planned ? eqPill("plan", m.status_title) : eqPill("wait", m.status_title);
+  body.innerHTML = `<div class="eqs">
+    <div class="eqs-head"><div><h2>Перемещения оборудования</h2><span class="muted">Передача оборудования между кабинетами, подразделениями и местами хранения</span></div><span class="grow"></span>
+      ${eqYearSel("mvYear", EQS.mvYear)}${edit ? `<button class="btn" id="mvNew">${EQX.plus}Новое перемещение</button>` : ""}</div>
+    <div class="eqs-tiles">${eqTile(EQN.eq_moves, "Перемещений за период", r.count)}${eqTile(EQX.ok, "Завершено", r.done)}${eqTile(EQX.clock, "В процессе", r.process, r.process ? "warn" : "")}${eqTile(EQX.cal, "Запланировано", r.planned)}</div>
+    <div class="eqs-g2r">${edit ? `<section class="eqs-card" id="mvForm"><h3>${EQN.eq_moves}Создать перемещение</h3>
+        <div class="eqs-form2"><label class="fl">Оборудование *<select class="input" id="mvEqS"><option value="">Выберите оборудование</option>${list.map(e => `<option value="${esc(e.id)}" data-from="${esc(e.location_name || e.location || "")}" data-lid="${esc(e.location_id || "")}">${esc(e.name)}${e.inv_number ? " " + esc(e.inv_number) : ""}</option>`).join("")}</select></label>
+          <label class="fl">Куда (новое местонахождение) *<select class="input" id="mvTo"><option value="">Выберите место</option>${live.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></label>
+          <label class="fl">Откуда (текущее местонахождение)<input class="input" id="mvFrom" disabled placeholder="—"></label>
+          <label class="fl">Дата перемещения *<input class="input" type="date" id="mvDate" value="${iso(new Date())}"></label>
+          <label class="fl">Основание *<input class="input" id="mvReason" list="mvReasons" placeholder="Перераспределение нагрузки"></label>
+          <label class="fl">Ответственный *<input class="input" id="mvResp" value="${esc(ME ? ME.name || "" : "")}"></label>
+          <label class="fl eqs-span2">Комментарий<input class="input" id="mvCom" maxlength="250" placeholder="Например: перенос из-за ремонта кабинета № 3"></label></div>
+        <datalist id="mvReasons">${r.reasons.map(x => `<option value="${esc(x)}">`).join("")}</datalist>
+        ${appr ? `<label class="dx-doc"><input type="checkbox" id="mvNow">Сразу провести — оборудование уже перенесли</label>` : `<div class="muted eqs-hint">Перемещение утверждает директор или учредитель (право «Оборудование: согласование»).</div>`}
+        <div class="auth-err" id="mvErr"></div><div class="eqs-wfoot"><span class="grow"></span><button class="btn ghost" id="mvClear">Отмена</button><button class="btn" id="mvOk">Создать перемещение →</button></div></section>` : ""}
+      ${eqStages(sel ? `Этапы ${esc(sel.number)}` : "Этапы перемещения", MV_STAGES, sel ? (sel.status === "done" ? 5 : sel.stage) : 1)}</div>
+    <div class="eqs-g2r"><section class="eqs-card eqs-tcard"><h3 class="eqs-tch">${EQN.eq_moves}Журнал перемещений${EQS.mvEq || EQS.mvFlt ? ` <button class="linkbtn" id="mvAll">${EQX.x}все</button>` : ""}</h3>
+        ${flt.length ? `<table class="tbl eqs-reg" id="mvJ"><thead><tr><th>№</th><th>Дата</th><th>Оборудование</th><th>Откуда</th><th>Куда</th><th>Основание</th><th>Статус</th><th></th></tr></thead><tbody>${flt.map(m => `<tr data-mv="${esc(m.id)}" class="${m.id === EQS.mvSel ? "sel" : ""}">
+          <td><b>${esc(m.number)}</b></td><td>${fmtDateShort(m.date)}</td><td><div class="sn-mat sm">${phHtml(m.photo_id)}<span>${esc(m.equipment_name)}</span></div></td><td>${esc(m.from_name)}</td><td>${esc(m.to_name)}</td>
+          <td class="muted">${esc(m.reason)}</td><td>${pill(m)}</td><td class="eqs-acts2">${[
+            appr && m.status === "requested" && `<button class="linkbtn" data-a="approve">утвердить</button><button class="linkbtn danger-t" data-a="reject">отклонить</button>`,
+            edit && m.status === "approved" && !m.planned && `<button class="linkbtn" data-a="moving">начать</button>`,
+            edit && ["approved", "moving"].includes(m.status) && `<button class="linkbtn" data-a="done">подтвердить</button>`,
+            (edit || appr) && ["requested", "approved"].includes(m.status) && `<button class="linkbtn danger-t" data-a="cancel">отменить</button>`,
+            `<button class="linkbtn" data-a="print">акт</button>`].filter(Boolean).join("")}</td></tr>`).join("")}</tbody></table>`
+          : `<div class="empty"><b>Перемещений нет</b><span>${edit ? "Выберите оборудование и место выше" : ""}</span></div>`}</section>
+      ${eqUseful([["hist", EQN.eq_moves, "История по оборудованию", "Все перемещения выбранной единицы"], ["plan", EQX.cal, "Планируемые перемещения", "Запланированные на будущее"],
+        ["print", EQX.doc, "Печать акта перемещения", "Форма внутреннего документа"], ["reasons", EQX.list, "Шаблоны оснований", "Справочник причин перемещений"]])}</div></div>`;
+  loadThumbs(body);
+  $("#mvYear").onchange = e => { EQS.mvYear = +e.target.value; eqMovesTab(); };
+  const all = $("#mvAll"); if (all) all.onclick = () => { EQS.mvEq = null; EQS.mvFlt = null; eqMovesTab(); };
+  const nw = $("#mvNew"); if (nw) nw.onclick = () => { $("#mvForm").scrollIntoView({block: "start", behavior: "smooth"}); $("#mvEqS").focus(); };
+  const es = $("#mvEqS"); if (es) {
+    es.onchange = () => { const o = es.selectedOptions[0]; $("#mvFrom").value = o ? o.dataset.from || "" : ""; $$("#mvTo option").forEach(x => { x.disabled = !!x.value && o && x.value === o.dataset.lid; }); };
+    $("#mvClear").onclick = () => { EQS.mvSel = null; eqMovesTab(); };
+    $("#mvOk").onclick = async () => {
+      try { const id = await api.equipment_move_save({equipment_id: es.value, to_location_id: $("#mvTo").value, date: $("#mvDate").value, reason: $("#mvReason").value,
+        responsible: $("#mvResp").value, comment: $("#mvCom").value, now: $("#mvNow") ? $("#mvNow").checked : false});
+        EQS.mvSel = id; toast(appr ? "Перемещение утверждено" : "Перемещение отправлено на утверждение"); eqMovesTab(); } catch (e) { $("#mvErr").textContent = errText(e); }
+    };
+    if (EQS.mvPreset) { es.value = EQS.mvPreset; es.onchange(); EQS.mvPreset = null; $("#mvForm").scrollIntoView({block: "start"}); }
+  }
+  $$("tr[data-mv]", body).forEach(tr => tr.onclick = async ev => {
+    const m = r.moves.find(x => x.id === tr.dataset.mv), a = ev.target.dataset && ev.target.dataset.a;
+    if (!a) { EQS.mvSel = m.id; return eqMovesTab(); }
+    try {
+      if (a === "print") return eqMovePrint(m);
+      if (a === "approve") await api.equipment_move_decide(m.id, "approve");
+      if (a === "reject") { const why = await promptText("Почему отклонено?"); if (!why) return; await api.equipment_move_decide(m.id, "reject", why); }
+      if (a === "moving" || a === "done") await api.equipment_move_step(m.id, a);
+      if (a === "cancel") { if (!await ask(`Отменить ${m.number}?`, {danger: true, ok: "Отменить", cancel: "Не отменять"})) return; await api.equipment_move_cancel(m.id); }
+      EQS.mvSel = m.id; toast(a === "done" ? "Место в карточке обновлено" : "Сохранено"); eqMovesTab();
+    } catch (e) { toast(errText(e), true); }
+  });
+  $$("[data-u]", body).forEach(b => b.onclick = () => ({
+    hist: () => { const id = (sel && sel.equipment_id) || (es && es.value); if (!id) return toast("Выберите оборудование в форме или строку журнала"); EQS.mvEq = id; eqMovesTab(); },
+    plan: () => { EQS.mvFlt = "planned"; eqMovesTab(); },
+    print: () => sel ? eqMovePrint(sel) : toast("Выберите перемещение в журнале"),
+    reasons: () => modal(`<div class="m-h"><h3>Шаблоны оснований</h3><button class="x" data-close>×</button></div><div class="m-b"><ul class="eqs-ul">${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul><div class="muted">В поле «Основание» можно выбрать шаблон или написать своё.</div></div><div class="m-f"><span class="grow"></span><button class="btn" data-close>Закрыть</button></div>`)})[b.dataset.u]());
+}
+async function promptText(title) {
+  return new Promise(ok => { const box = modal(`<div class="m-h"><h3>${esc(title)}</h3><button class="x" data-close>×</button></div><div class="m-b"><input class="input" id="ptT" autofocus></div><div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="ptOk">OK</button></div>`);
+    $("#ptOk", box).onclick = () => { const v = $("#ptT", box).value.trim(); closeModal(); ok(v); }; });
+}
+async function eqMovePrint(m) {
+  const head = await clinicHead();
+  $("#printArea").innerHTML = `${head}<h2 style="text-align:center">Акт перемещения оборудования № ${esc(m.number)}</h2><p style="text-align:center">от ${fmtDate(m.date)}</p>
+    <table><tr><th>Оборудование</th><th>Инв. №</th><th>Откуда</th><th>Куда</th><th>Основание</th></tr><tr><td>${esc(m.equipment_name)}</td><td>${esc(m.inv_number)}</td><td>${esc(m.from_name)}</td><td>${esc(m.to_name)}</td><td>${esc(m.reason)}</td></tr></table>
+    ${m.comment ? `<p>Комментарий: ${esc(m.comment)}</p>` : ""}<p>Статус: ${esc(m.status_title)}${m.approved_name ? `, утвердил: ${esc(m.approved_name)}` : ""}</p>
+    ${signLines([{role: "Передал", name: m.responsible || ""}, {role: "Принял", name: ""}, {role: "Утвердил", name: m.approved_name || ""}])}`;
+  window.print();
+}

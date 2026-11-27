@@ -185,6 +185,83 @@ for part in ("Состояние оборудования", "Стоимость 
     check(f"UI: {part}", part in sec)
 check("the form has the new fields", all(x in card for x in ("eAcc", "eQty", "eCtr", "eCno", "eUs", "eUe", "подставить")))
 
+# ================================================ block 3: receipts and moves --
+sup = S.save_supplier({"name": "СтомТех ООО"})
+refuses("a receipt needs a document number", lambda: a.equipment_receipt_save({"supplier_id": sup}), "номер документа")
+refuses("a receipt needs a supplier", lambda: a.equipment_receipt_save({"doc_number": "1"}), "поставщика")
+r = a.equipment_receipt_save({"supplier_id": sup, "doc_kind": "contract", "doc_number": "ДП-056/26", "doc_date": day(7), "amount": 1520000, "step": 2})
+yy = day(7)[2:4]
+check("a receipt: number П-…/yy, in process, step 2", r["number"] == f"П-00001/{yy}" and r["status"] == "process" and r["step"] == 2, (r["number"], r["step"]))
+loc = S.save_location({"name": "Кабинет № 2", "kind": "cabinet"})
+r = a.equipment_receipt_save({"id": r["id"], "step": 3, "lines": [
+    {"name": "Стоматологическая установка", "category": "Стоматологическое оборудование", "model": "Intego", "serial": "SN-1", "qty": 1, "price": 1500000},
+    {"name": "Наконечник", "category": "Медицинские инструменты", "qty": 2, "price": 7000},
+    {"name": "Боры (набор)", "qty": 5, "price": 600, "accounting": "qty"}, {"name": " "}]})
+check("lines kept (an empty one dropped)", len(r["lines"]) == 3 and r["positions"] == 8 and r["lines_total"] == 1500000 + 14000 + 3000, (len(r["lines"]), r["positions"]))
+r = a.equipment_receipt_save({"id": r["id"], "step": 4, "lines": [{**r["lines"][0], "useful_months": 120, "inv_number": "СТ-101", "location_id": loc, "in_service": day(5)},
+                                                                {**r["lines"][1], "location_id": loc}, {**r["lines"][2]}]})
+check("the step never goes back on the server", a.equipment_receipt_save({"id": r["id"], "step": 2})["step"] == 4)
+check("a receipt in the journal", any(x["id"] == r["id"] for x in a.equipment_receipts()["receipts"]) and a.equipment_receipts()["process"] >= 1)
+nr = S.eq_receipt(r["id"], money=False)
+check("without «Бухгалтерия» no prices", "amount" not in nr and all("price" not in x for x in nr["lines"]))
+S.eq_receipt_save({"id": r["id"], "lines": [{**nr["lines"][0]}, {**nr["lines"][1]}, {**nr["lines"][2]}]}, money=False)
+check("a save without «Бухгалтерия» keeps the prices", S.eq_receipt(r["id"])["lines"][0]["price"] == 1500000)
+exp0 = d.one("SELECT COUNT(*) AS n FROM expenses")["n"]
+x = a.equipment_receipt_accept(r["id"], "Безналичный перевод")
+ids = x["equipment_ids"]
+check("accepted: one card a unit, one for the quantity", len(ids) == 4 and x["receipt"]["status"] == "accepted", len(ids))
+cards = [S.equipment(i) for i in ids]
+u = next(c for c in cards if c["name"] == "Стоматологическая установка")
+check("the card from the receipt", u["inv_number"] == "СТ-101" and u["price"] == 1500000 and u["useful_months"] == 120 and u["in_service"] == day(5)
+      and u["location_id"] == loc and u["receipt_id"] == r["id"] and u["purchase_date"] == day(7) and u["serial"] == "SN-1", u)
+check("two pieces — two cards, the next numbers", sum(1 for c in cards if c["name"] == "Наконечник") == 2
+      and len({c["inv_number"] for c in cards}) == 4)
+b = next(c for c in cards if c["name"] == "Боры (набор)")
+check("counted by quantity — one card with its quantity", b["qty"] == 5 and b["accounting"] == "qty")
+check("the payment went to «Покупка оборудования»", d.one("SELECT COUNT(*) AS n FROM expenses")["n"] == exp0 + 1
+      and d.one("SELECT category, amount FROM expenses ORDER BY rowid DESC LIMIT 1")["amount"] == 1520000)
+refuses("an accepted receipt is not changed", lambda: a.equipment_receipt_save({"id": r["id"], "doc_number": "2"}), "проведено")
+refuses("nor accepted twice", lambda: a.equipment_receipt_accept(r["id"]), "проведено")
+r2 = a.equipment_receipt_save({"supplier_id": sup, "doc_number": "Н-2", "doc_date": day(1)})
+refuses("nothing to accept without lines", lambda: a.equipment_receipt_accept(r2["id"]), "Добавьте оборудование")
+a.equipment_receipt_cancel(r2["id"])
+check("a cancelled receipt leaves the journal", not any(x["id"] == r2["id"] for x in a.equipment_receipts()["receipts"]))
+
+loc2 = S.save_location({"name": "Кабинет № 3", "kind": "cabinet"})
+refuses("a move needs a place", lambda: a.equipment_move_save({"equipment_id": u["id"], "reason": "x"}), "куда")
+refuses("not to where it is", lambda: a.equipment_move_save({"equipment_id": u["id"], "to_location_id": loc, "reason": "x"}), "уже там")
+refuses("a move needs a reason", lambda: S.eq_move_save({"equipment_id": u["id"], "to_location_id": loc2}), "основание")
+mid = S.eq_move_save({"equipment_id": u["id"], "to_location_id": loc2, "reason": "Перераспределение нагрузки", "responsible": "Менеджер"}, "Менеджер", "manager", False)
+m = next(x for x in a.equipment_moves()["moves"] if x["id"] == mid)
+check("a move waits for approval", m["status"] == "requested" and m["number"].startswith("ПМ-") and m["from_name"] == "Кабинет № 2" and m["to_name"] == "Кабинет № 3"
+      and m["stage"] == 1, m)
+refuses("one open move a piece", lambda: S.eq_move_save({"equipment_id": u["id"], "to_location_id": loc2, "reason": "x"}, "", "", False), "незавершённое")
+refuses("not moved before approval", lambda: a.equipment_move_step(mid, "done"), "утверждённое")
+refuses("a refusal needs a reason", lambda: a.equipment_move_decide(mid, "reject"), "почему")
+a.equipment_move_decide(mid, "approve")
+a.equipment_move_step(mid, "moving")
+check("approved, then moving", next(x for x in a.equipment_moves()["moves"] if x["id"] == mid)["stage"] == 3)
+a.equipment_move_step(mid, "done")
+u2 = S.equipment(u["id"])
+check("done: the card has its new place and a line of history", u2["location_id"] == loc2 and u2["location"] == "Кабинет № 3"
+      and any(ev["kind"] == "move" and "ПМ-" in ev["text"] for ev in u2["events"]))
+fut = S.eq_move_save({"equipment_id": u["id"], "to_location_id": loc, "reason": "Ремонт кабинета", "date": day(-10)}, "Директор", "dir", True)
+mv = a.equipment_moves()
+f = next(x for x in mv["moves"] if x["id"] == fut)
+check("the director's move is approved at once; a future one is planned", f["status"] == "approved" and f["planned"] and f["status_title"] == "Запланировано" and mv["planned"] >= 1)
+a.equipment_move_cancel(fut)
+now = S.eq_move_save({"equipment_id": u["id"], "to_location_id": loc, "reason": "Ремонт кабинета", "now": True}, "Директор", "dir", True)
+check("done at once by the director", S.equipment(u["id"])["location_id"] == loc and next(x for x in a.equipment_moves()["moves"] if x["id"] == now)["status"] == "done")
+check("history of one piece", all(x["equipment_id"] == u["id"] for x in a.equipment_moves(None, u["id"])["moves"]) and len(a.equipment_moves(None, u["id"])["moves"]) == 2)
+check("the decision needs the right", auth.METHOD_PERMS["equipment_move_decide"] == "equipment_approve")
+for k in ("equipment_receipts", "equipment_receipt", "equipment_receipt_save", "equipment_receipt_accept", "equipment_receipt_cancel", "equipment_moves",
+          "equipment_move_save", "equipment_move_decide", "equipment_move_step", "equipment_move_cancel"):
+    check(f"{k} has a right", k in auth.METHOD_PERMS)
+sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")
+for part in ("Регистрация поступления", "Этапы поступления", "Журнал поступлений", "Ввести в эксплуатацию", "Создать перемещение", "Этапы перемещения",
+             "Журнал перемещений", "Акт перемещения", "Шаблоны оснований"):
+    check(f"UI: {part}", part in sec)
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)

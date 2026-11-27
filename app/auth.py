@@ -338,6 +338,11 @@ METHOD_PERMS = {
     # 3.15: the section «Оборудование» by the mockups
     "equipment_refs": ("equipment", "stock_view", "stock_ops", "equipment_approve"), "equipment_refs_save": "equipment",
     "equipment_overview": ("equipment", "stock_view", "equipment_approve"),
+    "equipment_receipts": ("equipment", "equipment_approve"), "equipment_receipt": ("equipment", "equipment_approve"),
+    "equipment_receipt_save": "equipment", "equipment_receipt_accept": "equipment", "equipment_receipt_cancel": "equipment",
+    "equipment_moves": ("equipment", "stock_view", "equipment_approve"), "equipment_move_save": "equipment",
+    "equipment_move_decide": "equipment_approve", "equipment_move_step": "equipment",
+    "equipment_move_cancel": ("equipment", "equipment_approve"),
     # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
     "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
     "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",
@@ -461,6 +466,10 @@ AUDITED = {
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
     "expenses_to_capex": "Расходы перенесены в «Покупку оборудования»",
     "equipment_refs_save": "Оборудование: категории и нормативы",
+    "equipment_receipt_save": "Поступление оборудования", "equipment_receipt_accept": "Оборудование введено в эксплуатацию",
+    "equipment_receipt_cancel": "Поступление оборудования отменено", "equipment_move_save": "Перемещение оборудования",
+    "equipment_move_decide": "Перемещение оборудования: утверждение", "equipment_move_step": "Перемещение оборудования: этап",
+    "equipment_move_cancel": "Перемещение оборудования отменено",
     "material_set": "Материал: минимум, оптимум, срок поставки, поставщик", "material_label": "Наклейка материала (штрихкод)",
     "material_doc_add": "Документ материала", "material_doc_delete": "Документ материала убран",
     "material_analog_add": "Аналог материала", "material_analog_delete": "Аналог материала убран",

@@ -1903,6 +1903,256 @@ class Stock:
                             "monthly": round(sum(amort_charge(e, month) for e in own), 2)}
         return out
 
+    # ------------------------------------------------------ 3.15: «Поступление» --
+    _RCPT_TEXT = {"name": 200, "category": 100, "manufacturer": 100, "model": 100, "serial": 100, "inv_number": 50, "responsible": 100}
+
+    def _receipt_lines(self, lines, old_lines=None, money=True):
+        """The lines of a receipt: what came (name, category, model, serial, quantity, price) and how it is accounted for (inv. №,
+        useful life, the way, the place, the day it was put into service). Without «Бухгалтерия» the money of a line is kept."""
+        old = {str(x.get("key")): x for x in (old_lines or [])}
+        out = []
+        for i, ln in enumerate(lines or []):
+            ln = ln if isinstance(ln, dict) else {}
+            name = _clean(ln.get("name"), 200)
+            if not name:
+                continue
+            key = str(ln.get("key") or f"L{i + 1}-{uuid.uuid4().hex[:6]}")
+            o = old.get(key, {})
+            row = {"key": key, **{k: _clean(ln.get(k), n) for k, n in self._RCPT_TEXT.items()},
+                   "qty": max(1, int(_num(ln.get("qty"), "Количество") or 1)),
+                   "accounting": ln.get("accounting") if ln.get("accounting") in EQ_ACCOUNTING else (o.get("accounting") or "amort"),
+                   "location_id": str(ln.get("location_id") or "")[:60], "in_service": _day(ln.get("in_service"), "Ввод в эксплуатацию")}
+            if money:
+                row["price"] = max(0, _num(ln.get("price"), "Цена"))
+                n = int(_num(ln.get("useful_months"), "Срок полезного использования") or 0)
+                if not 0 <= n <= MAX_USEFUL_MONTHS:
+                    raise ValueError("Срок полезного использования — от 0 до 600 месяцев")
+                row["useful_months"] = n
+            else:
+                row["price"], row["useful_months"] = o.get("price") or 0, o.get("useful_months") or 0
+            out.append(row)
+        return out
+
+    def _receipt_row(self, r, sups=None, money=True):
+        r = dict(r)
+        r["lines"] = _jl(r.get("lines"), [])
+        r["equipment_ids"] = _jl(r.get("equipment_ids"), [])
+        r["status_title"] = RECEIPT_STATUS.get(r["status"], r["status"])
+        r["doc_kind_title"] = RECEIPT_DOCS.get(r.get("doc_kind"), r.get("doc_kind") or "")
+        sups = sups if sups is not None else {s["id"]: s["name"] for s in self.db.q("SELECT id, name FROM suppliers")}
+        r["supplier_name"] = sups.get(r.get("supplier_id")) or ""
+        r["positions"] = sum(int(x.get("qty") or 1) for x in r["lines"])
+        r["lines_total"] = round(sum((x.get("price") or 0) * int(x.get("qty") or 1) for x in r["lines"]), 2)
+        if not money:
+            r.pop("amount", None)
+            r.pop("lines_total", None)
+            for x in r["lines"]:
+                x.pop("price", None)
+        return r
+
+    def eq_receipts(self, year=None, money=True):
+        y = str(year or date.today().year)
+        sups = {s["id"]: s["name"] for s in self.db.q("SELECT id, name FROM suppliers")}
+        rows = [self._receipt_row(r, sups, money) for r in self.db.q(
+            "SELECT * FROM equipment_receipts WHERE status<>'cancelled' ORDER BY COALESCE(doc_date,''), created_at DESC")]
+        rows = [r for r in rows if r["status"] == "process"] + sorted([r for r in rows if r["status"] != "process"],
+                                                                     key=lambda r: r.get("doc_date") or "", reverse=True)
+        period = [r for r in rows if (r.get("doc_date") or r["created_at"] or "")[:4] == y]
+        out = {"year": int(y), "receipts": rows, "count": len(period), "accepted": sum(1 for r in period if r["status"] == "accepted"),
+               "process": sum(1 for r in rows if r["status"] == "process"), "docs": RECEIPT_DOCS, "steps": RECEIPT_STEPS}
+        if money:
+            out["total"] = round(sum(r.get("amount") or r.get("lines_total") or 0 for r in period), 2)
+        return out
+
+    def eq_receipt(self, rid, money=True):
+        r = self.db.one("SELECT * FROM equipment_receipts WHERE id=?", (str(rid or ""),))
+        if not r:
+            raise ValueError("Поступление не найдено")
+        return self._receipt_row(r, money=money)
+
+    def eq_receipt_save(self, f, user="", money=True):
+        """A receipt step by step: the documents (supplier, the kind, number and date, the sum), the equipment, its accounting.
+        It stays «В процессе» until «Ввести в эксплуатацию»."""
+        f = f if isinstance(f, dict) else {}
+        rid = str(f.get("id") or "")
+        old = self.db.one("SELECT * FROM equipment_receipts WHERE id=?", (rid,)) if rid else None
+        if old and old["status"] != "process":
+            raise ValueError("Поступление уже проведено — изменить его нельзя")
+        o = dict(old or {})
+        sid = str(f.get("supplier_id") if "supplier_id" in f else o.get("supplier_id") or "").strip() or None
+        if sid and not self.db.one("SELECT 1 AS x FROM suppliers WHERE id=?", (sid,)):
+            raise ValueError("Поставщик не найден")
+        kind = f.get("doc_kind") if f.get("doc_kind") in RECEIPT_DOCS else (o.get("doc_kind") or "contract")
+        num = _clean(f.get("doc_number"), 60) if "doc_number" in f else (o.get("doc_number") or "")
+        if not num:
+            raise ValueError("Укажите номер документа")
+        if not sid:
+            raise ValueError("Выберите поставщика")
+        dday = _day(f.get("doc_date"), "Дата документа") if f.get("doc_date") else (o.get("doc_date") or date.today().isoformat())
+        amount = max(0, _num(f.get("amount"), "Сумма по документу")) if money and "amount" in f else (o.get("amount") or 0)
+        lines = self._receipt_lines(f.get("lines"), _jl(o.get("lines"), []), money) if "lines" in f else _jl(o.get("lines"), [])
+        step = max(int(o.get("step") or 1), min(4, max(1, int(_num(f.get("step")) or 1))))
+        at = _now()
+        with self.db.tx() as c:
+            if old:
+                c.execute("""UPDATE equipment_receipts SET supplier_id=?, doc_kind=?, doc_number=?, doc_date=?, amount=?, comment=?, lines=?,
+                             step=?, updated_at=? WHERE id=?""",
+                          (sid, kind, num, dday, amount, _clean(f.get("comment"), 500) if "comment" in f else o.get("comment") or "",
+                           json.dumps(lines, ensure_ascii=False), step, at, rid))
+            else:
+                rid = _id("ER")
+                yy = dday[2:4]
+                n = c.execute("SELECT COUNT(*) FROM equipment_receipts WHERE substr(COALESCE(doc_date,''),1,4)=?", (dday[:4],)).fetchone()[0] + 1
+                c.execute("""INSERT INTO equipment_receipts(id, number, supplier_id, doc_kind, doc_number, doc_date, amount, comment, lines, step,
+                             status, equipment_ids, user_name, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          (rid, f"П-{n:05d}/{yy}", sid, kind, num, dday, amount, _clean(f.get("comment"), 500),
+                           json.dumps(lines, ensure_ascii=False), step, "process", "[]", user, at, at))
+        return rid
+
+    def eq_receipt_accept(self, rid, user="", money=True):
+        """«Ввести в эксплуатацию»: every line becomes a card (one per unit; counted by quantity — one card with its quantity),
+        put into service on its day and place, with its inventory number; the receipt is «Принято»."""
+        r = self.db.one("SELECT * FROM equipment_receipts WHERE id=?", (str(rid or ""),))
+        if not r:
+            raise ValueError("Поступление не найдено")
+        if r["status"] != "process":
+            raise ValueError("Поступление уже проведено")
+        lines = _jl(r["lines"], [])
+        if not lines:
+            raise ValueError("Добавьте оборудование — шаг «Оборудование»")
+        ids = []
+        for ln in lines:
+            units = 1 if ln.get("accounting") == "qty" else int(ln.get("qty") or 1)
+            for k in range(units):
+                f = {"name": ln["name"], "category": ln.get("category"), "manufacturer": ln.get("manufacturer"), "model": ln.get("model"),
+                     "serial": ln.get("serial") if units == 1 else "", "responsible": ln.get("responsible"),
+                     "purchase_date": r["doc_date"], "in_service": ln.get("in_service") or r["doc_date"], "status": "in_use",
+                     "qty": ln.get("qty") if ln.get("accounting") == "qty" else 1, "accounting": ln.get("accounting") or "amort",
+                     "inv_number": ln.get("inv_number") if k == 0 else "", "price": ln.get("price") or 0,
+                     "useful_months": ln.get("useful_months") or 0}
+                if ln.get("location_id"):
+                    f["location_id"] = ln["location_id"]
+                eid = self.save_equipment(f, user, money=True)  # the receipt's prices were set by «Бухгалтерия» (or kept)
+                ids.append(eid)
+        with self.db.tx() as c:
+            for eid in ids:
+                c.execute("UPDATE equipment SET receipt_id=? WHERE id=?", (r["id"], eid))
+                self._ev(c, eid, "created", f"Поступление {r['number']}: {RECEIPT_DOCS.get(r['doc_kind'], '')} № {r['doc_number']}", user,
+                         r["doc_date"])
+            c.execute("UPDATE equipment_receipts SET status='accepted', step=4, equipment_ids=?, accepted_at=?, updated_at=? WHERE id=?",
+                      (json.dumps(ids), _now(), _now(), r["id"]))
+        return ids
+
+    def eq_receipt_cancel(self, rid):
+        r = self.db.one("SELECT * FROM equipment_receipts WHERE id=?", (str(rid or ""),))
+        if not r or r["status"] != "process":
+            raise ValueError("Отменить можно только поступление в процессе")
+        with self.db.tx() as c:
+            c.execute("UPDATE equipment_receipts SET status='cancelled', updated_at=? WHERE id=?", (_now(), r["id"]))
+        return True
+
+    # ------------------------------------------------------ 3.15: «Перемещения» --
+    def _move_row(self, r, names, eqs):
+        r = dict(r)
+        e = eqs.get(r["equipment_id"]) or {}
+        r["equipment_name"] = e.get("name") or "удалённое оборудование"
+        r["inv_number"] = e.get("inv_number") or ""
+        r["photo_id"] = e.get("photo_id") or ""
+        r["from_name"] = names.get(r.get("from_location_id")) if r.get("from_location_id") else (r.get("from_text") or "—")
+        r["to_name"] = names.get(r.get("to_location_id")) or "—"
+        today = date.today().isoformat()
+        r["planned"] = r["status"] == "approved" and (r.get("date") or "") > today
+        r["status_title"] = "Запланировано" if r["planned"] else MOVE_STATUS.get(r["status"], r["status"])
+        r["stage"] = {"requested": 1, "approved": 2, "moving": 3, "done": 4}.get(r["status"], 0)
+        return r
+
+    def eq_moves(self, year=None, equipment_id=None):
+        y = str(year or date.today().year)
+        names = self._loc_names()
+        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number, photo_id FROM equipment")}
+        sql, args = "SELECT * FROM equipment_moves WHERE status<>'cancelled'", []
+        if equipment_id:
+            sql += " AND equipment_id=?"
+            args.append(equipment_id)
+        rows = [self._move_row(r, names, eqs) for r in self.db.q(sql + " ORDER BY date DESC, created_at DESC", args)]
+        period = [r for r in rows if (r.get("date") or "")[:4] == y]
+        return {"year": int(y), "moves": rows, "count": len(period), "done": sum(1 for r in period if r["status"] == "done"),
+                "process": sum(1 for r in rows if r["status"] in ("requested", "moving") or (r["status"] == "approved" and not r["planned"])),
+                "planned": sum(1 for r in rows if r["planned"]), "statuses": MOVE_STATUS, "reasons": MOVE_REASONS}
+
+    def eq_move_save(self, f, user="", login="", approve=False):
+        """«Создать перемещение»: from where the piece is now to another place, on a day, for a reason. Approved by someone with
+        «Оборудование: согласование» (the author with that right — at once); only then it may be moved."""
+        f = f if isinstance(f, dict) else {}
+        e = self._eq_live(f.get("equipment_id"))
+        to = self.db.one("SELECT id, name FROM stock_locations WHERE id=?", (str(f.get("to_location_id") or ""),))
+        if not to:
+            raise ValueError("Выберите, куда переместить (место из «Мест хранения»)")
+        if to["id"] == (e["location_id"] or ""):
+            raise ValueError("Оборудование уже там")
+        if self.db.one("SELECT 1 AS x FROM equipment_moves WHERE equipment_id=? AND status IN ('requested','approved','moving')", (e["id"],)):
+            raise ValueError("По этому оборудованию уже есть незавершённое перемещение")
+        reason = _clean(f.get("reason"), 200)
+        if not reason:
+            raise ValueError("Укажите основание перемещения")
+        day = _day(f.get("date"), "Дата перемещения") or date.today().isoformat()
+        n = self.db.one("SELECT COUNT(*) AS n FROM equipment_moves")["n"] + 1
+        mid, at = _id("EM"), _now()
+        with self.db.tx() as c:
+            c.execute("""INSERT INTO equipment_moves(id, number, equipment_id, from_location_id, from_text, to_location_id, date, reason,
+                         responsible, comment, status, created_by, created_name, created_at, approved_by, approved_name, approved_at, updated_at)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (mid, f"ПМ-{n:04d}", e["id"], e["location_id"] or "", e["location"] or "", to["id"], day, reason,
+                       _clean(f.get("responsible"), 150), _clean(f.get("comment"), 250), "approved" if approve else "requested",
+                       login, user, at, login if approve else None, user if approve else None, at if approve else None, at))
+        if approve and f.get("now"):
+            self.eq_move_step(mid, "done", user)
+        return mid
+
+    def eq_move_decide(self, mid, action, answer="", login="", user=""):
+        m = self.db.one("SELECT * FROM equipment_moves WHERE id=?", (str(mid or ""),))
+        if not m or m["status"] != "requested":
+            raise ValueError("Перемещение не ждёт утверждения")
+        if action not in ("approve", "reject"):
+            raise ValueError("Утвердить или отклонить")
+        if action == "reject" and not _clean(answer):
+            raise ValueError("Напишите, почему отклонено")
+        with self.db.tx() as c:
+            c.execute("""UPDATE equipment_moves SET status=?, approved_by=?, approved_name=?, approved_at=?, answer=?, updated_at=? WHERE id=?""",
+                      ("approved" if action == "approve" else "rejected", login, user, _now(), _clean(answer, 300), _now(), m["id"]))
+        return m["id"]
+
+    def eq_move_step(self, mid, step, user=""):
+        """«Начать перемещение» (approved → moving) and «Подтвердить» (→ done: the card gets its new place, a line of history)."""
+        m = self.db.one("SELECT * FROM equipment_moves WHERE id=?", (str(mid or ""),))
+        if not m:
+            raise ValueError("Перемещение не найдено")
+        if step == "moving" and m["status"] != "approved":
+            raise ValueError("Начать можно утверждённое перемещение")
+        if step == "done" and m["status"] not in ("approved", "moving"):
+            raise ValueError("Подтвердить можно утверждённое перемещение")
+        if step not in ("moving", "done"):
+            raise ValueError("Неизвестный этап")
+        if step == "done":
+            e = self._eq_live(m["equipment_id"])
+            to = self.db.one("SELECT id, name FROM stock_locations WHERE id=?", (m["to_location_id"],))
+            with self.db.tx() as c:
+                c.execute("UPDATE equipment SET location_id=?, location=? WHERE id=?", (to["id"], to["name"], e["id"]))
+                self._ev(c, e["id"], "move", f"{m['number']}: {e['location'] or '—'} → {to['name']} ({m['reason']})", user)
+                c.execute("UPDATE equipment_moves SET status='done', done_at=?, updated_at=? WHERE id=?", (_now(), _now(), m["id"]))
+        else:
+            with self.db.tx() as c:
+                c.execute("UPDATE equipment_moves SET status='moving', updated_at=? WHERE id=?", (_now(), m["id"]))
+        return m["id"]
+
+    def eq_move_cancel(self, mid):
+        m = self.db.one("SELECT * FROM equipment_moves WHERE id=?", (str(mid or ""),))
+        if not m or m["status"] not in ("requested", "approved"):
+            raise ValueError("Отменить можно перемещение до его начала")
+        with self.db.tx() as c:
+            c.execute("UPDATE equipment_moves SET status='cancelled', updated_at=? WHERE id=?", (_now(), m["id"]))
+        return True
+
     # ------------------------------------------- 3.15: «Справочники и настройки» --
     def _setting(self, k, default):
         r = self.db.one("SELECT v FROM stock_settings WHERE k=?", (k,))

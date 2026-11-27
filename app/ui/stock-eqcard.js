@@ -274,6 +274,7 @@ function eqAction(k) {
   if (k === "photo") return eqUpload("photo");
   if (k === "inventory") return eqTab("inventory");
   if (k === "fixed") return eqTab("service");
+  if (k === "move" && r.places.length) { EQS.mvPreset = e.id; S.eqOpen = null; return stockGo("equipment", "eq_moves"); }  // 3.15: a move is approved
   if (k === "move") {
     const box = modal(`<div class="m-h"><h3>Переместить: ${esc(e.name)}</h3><button class="x" data-close>×</button></div>
       <div class="m-b"><div class="muted">Сейчас: <b>${esc(e.location_name || "место не указано")}</b></div>
