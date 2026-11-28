@@ -53,7 +53,7 @@ def discovery_ports(port) -> list:
     return sorted({port + 1, 8766, *extra})
 
 
-SECRET_ARGS = {"test_connection"}
+SECRET_ARGS = {"test_connection", "stock_cloud_join"}  # 3.18.2: nor a code that connects a computer to the cloud of the stock
 FIRST_ARG_ONLY = {"voice_enroll", "patient", "file_get"}  # М19: an id, never a recording or a whole record
 VIEWS = {"patient", "file_get"}  # М19: opening a card or a file — once per employee and id in VIEW_EVERY seconds
 VIEW_EVERY = 600

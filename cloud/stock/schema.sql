@@ -102,6 +102,7 @@ begin
 end $$;
 
 -- The provider makes a clinic: the code for its laptops (typed once in the program) and the clinic code for phones.
+-- (Since 3.18.2 a laptop makes its clinic itself, see dd.register below; these codes keep working.)
 create or replace function dd.create_tenant(p_name text) returns jsonb language plpgsql volatile set search_path = '' as $$
 declare t text := encode(extensions.gen_random_bytes(12), 'hex'); raw text := dd.rand_code(16); phone text := dd.rand_code(8);
 begin
@@ -249,3 +250,70 @@ revoke all on dd.photos from public, anon, authenticated;
 insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
 values ('dd-photos', 'dd-photos', false, 3145728, array['image/jpeg'])
 on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+-- 3.18.2 (migration «dd_register»): a laptop connects without a code. It knows a secret of its clinic — made from the key of
+-- the clinic network (the computers of one clinic share it, app/stock_cloud.py) — and sends it; the cloud keeps only its
+-- hash here. A secret the cloud knows → that clinic; a new one → a new clinic (rate-limited by the edge function). A demo
+-- program has a secret of its own and a demo clinic (`demo`), so test data never meets a real stock.
+alter table dd.tenants add column if not exists demo boolean not null default false;
+
+create table if not exists dd.tenant_keys(
+  hash text primary key,
+  tenant_id text not null references dd.tenants(id) on delete cascade,
+  created_at timestamptz not null default now());
+create index if not exists tenant_keys_tenant on dd.tenant_keys(tenant_id);
+
+-- A code a connected laptop makes for another computer of the clinic that is not in its network (24 hours).
+create table if not exists dd.invites(
+  hash text primary key,
+  tenant_id text not null references dd.tenants(id) on delete cascade,
+  device_id text,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now());
+create index if not exists invites_tenant on dd.invites(tenant_id);
+
+alter table dd.tenant_keys enable row level security;
+alter table dd.invites enable row level security;
+revoke all on dd.tenant_keys, dd.invites from public, anon, authenticated;
+
+-- The keys a laptop of the clinic knows: one nobody has comes to this clinic; one of a clinic no laptop is connected to any
+-- more (made by mistake before the laptop joined this one by a code) moves here; one of a living clinic stays there.
+create or replace function dd.bind_keys(p_tenant text, p_hashes text[]) returns int
+language plpgsql volatile set search_path = '' as $$
+declare h text; cur text; n int := 0;
+begin
+  foreach h in array coalesce(p_hashes, '{}'::text[]) loop
+    select tenant_id into cur from dd.tenant_keys where hash = h for update;
+    if not found then
+      insert into dd.tenant_keys(hash, tenant_id) values (h, p_tenant) on conflict (hash) do nothing;
+      n := n + 1;
+    elsif cur <> p_tenant and not exists (select 1 from dd.devices d where d.tenant_id = cur and d.kind = 'laptop' and not d.revoked) then
+      update dd.tenant_keys set tenant_id = p_tenant, created_at = now() where hash = h;
+      n := n + 1;
+    end if;
+  end loop;
+  return n;
+end $$;
+
+-- The clinic of these keys (one with laptops first), or — `p_create` — a new one with them. Under a lock of the keys, so two
+-- laptops of one clinic connecting at the same moment get one clinic.
+create or replace function dd.register(p_hashes text[], p_name text, p_demo boolean, p_create boolean) returns jsonb
+language plpgsql volatile set search_path = '' as $$
+declare t text; made boolean := false;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(x, 7)) from (select unnest(p_hashes) as x order by 1) s;
+  select k.tenant_id into t from dd.tenant_keys k join dd.tenants tt on tt.id = k.tenant_id
+  where k.hash = any(p_hashes)
+  order by exists (select 1 from dd.devices d where d.tenant_id = k.tenant_id and d.kind = 'laptop' and not d.revoked) desc, k.created_at
+  limit 1;
+  if t is null then
+    if not p_create then return jsonb_build_object('tenant', null); end if;
+    t := encode(extensions.gen_random_bytes(12), 'hex');
+    insert into dd.tenants(id, name, phone_code, demo) values (t, coalesce(p_name, ''), dd.rand_code(8), coalesce(p_demo, false));
+    made := true;
+  end if;
+  perform dd.bind_keys(t, p_hashes);
+  return jsonb_build_object('tenant', t, 'created', made);
+end $$;
+
+revoke all on all functions in schema dd from public, anon, authenticated;

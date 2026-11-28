@@ -1,5 +1,5 @@
 /* The app works without the network: its files are kept here, the data is in IndexedDB (app.js). */
-const V = "dd-stock-5";
+const V = "dd-stock-6";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/config.js", "/manifest.webmanifest", "/icons/icon.svg",
   "/icons/icon-192.png", "/fonts/inter-latin-400-normal.woff2", "/fonts/inter-cyrillic-400-normal.woff2",
   "/fonts/inter-latin-600-normal.woff2", "/fonts/inter-cyrillic-600-normal.woff2", "/fonts/inter-latin-700-normal.woff2",

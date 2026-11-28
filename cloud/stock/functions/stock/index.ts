@@ -6,8 +6,10 @@
 // personal 6-digit PIN (its hash comes from the laptops), read the rows their position may see and do stock operations,
 // which this function checks against the rights of the position and writes as new versions of the rows.
 //
-// Laptop:  POST /v1/join {code, name, version, tz} · /v1/status · /v1/push {changes} · /v1/pull {since} · /v1/staff · /v1/leave
-//          (header X-DD-Token: the laptop's token)
+// Laptop:  POST /v1/register {keys, create, demo, name, clinic, version, tz} — 3.18.2: no code; the secret of the clinic
+//          (from the key of the clinic network) finds its clinic or, with `create`, makes one · /v1/join {code, …} — a code
+//          (the provider's DDS-… or one from /v1/invite) · /v1/status {keys} · /v1/push {changes} · /v1/pull {since} ·
+//          /v1/staff · /v1/invite (a code for another computer, 24 h) · /v1/leave   (header X-DD-Token: the laptop's token)
 // Phone:   POST /p/hello {code, name} → device token · /p/login {login, pin} (X-DD-Device) → session ·
 //          /p/me · /p/pull {since} · /p/op {op, kind, id, …} · /p/logout (X-DD-Session)
 // Photos:  a phone sends a photo of equipment (/p/op kind «equipment_photo»); it waits in the private bucket «dd-photos» until
@@ -35,6 +37,10 @@ const PHOTO_WAITING = 300;            // photos of a clinic no laptop has taken 
 const PHOTO_BYTES = 250_000_000;      // and their bytes (the free plan has 1 GB of storage)
 const PHOTO_CLAIM_MIN = 10;           // a laptop that took the list has the photos to itself this long
 const PHOTO_KEEP_DAYS = 30;           // a photo nobody took is not kept for ever
+const NEW_PER_IP = 5;                 // new clinics from one address a day (3.18.2: a laptop makes its clinic itself)
+const NEW_PER_HOUR = 60;              // and from everywhere an hour
+const DEMO_KEEP_DAYS = 30;            // a demo clinic no laptop has opened this long goes
+const INVITE_H = 24;                  // a code for another computer of the clinic
 
 // ------------------------------------------------------------------------------------------------------------- helpers --
 class E extends Error {
@@ -219,24 +225,108 @@ function need(ctx: Ctx, ...any: string[]) {
 }
 
 // ---------------------------------------------------------------------------------------------------- laptop routes --
+// The secrets of its clinic a laptop sends (3.18.2): only their hashes are kept.
+async function keyHashes(f: any): Promise<string[]> {
+  const keys = (Array.isArray(f.keys) ? f.keys : []).slice(0, 4).map((k: unknown) => String(k ?? ""))
+    .filter((k: string) => /^[A-Za-z0-9_-]{40,100}$/.test(k));
+  return [...new Set(await Promise.all(keys.map((k: string) => sha("DDK" + k))))];
+}
+
+async function bindKeys(tenant: string, f: any) {
+  const hs = await keyHashes(f);
+  if (hs.length) await sql`select dd.bind_keys(${tenant}, ${sql.array(hs)}::text[])`;
+}
+
+async function newLaptop(t: any, f: any) {
+  const id = hid(8), tok = token();
+  await sql`insert into dd.devices(id, tenant_id, kind, name, token_hash, version, last_seen)
+            values (${id}, ${t.id}, 'laptop', ${clean(f.name, 80) || "Компьютер"}, ${await sha(tok)}, ${clean(f.version, 20)}, now())`;
+  if (Number.isFinite(Number(f.tz))) await sql`update dd.tenants set tz_offset = ${Math.round(Number(f.tz))} where id = ${t.id}`;
+  const pc = String(t.phone_code || "");
+  return { device: id, token: tok, tenant: t.id, name: t.name, demo: !!t.demo, phone_code: pc ? pc.slice(0, 4) + "-" + pc.slice(4) : "",
+    api: API };
+}
+
 async function join(req: Request, f: any) {
   const code = norm(f.code);
   const bad = await sql`select n, since from dd.ip_fails where ip = ${"j:" + ip(req)}`;
   if (bad[0] && bad[0].n >= 10 && Date.now() - new Date(bad[0].since).getTime() < LOCK_MIN * 60000)
     throw new E(`Слишком много неверных кодов. Подождите ${LOCK_MIN} минут.`, 429);
-  const [t] = code.length >= 19 ? await sql`select * from dd.tenants where join_hash = ${await sha(code)}` : [];
+  // the provider's code (DDS + 16) or one a laptop of the clinic made for another computer (DDS + 12, a day)
+  const h = await sha(code);
+  const [t] = code.length >= 15 ? await sql`select * from dd.tenants where join_hash = ${h}
+                                            union all select t.* from dd.invites i join dd.tenants t on t.id = i.tenant_id
+                                            where i.hash = ${h} and i.expires_at > now() limit 1` : [];
   if (!t) {
     await sql`insert into dd.ip_fails(ip, n, since) values (${"j:" + ip(req)}, 1, now()) on conflict (ip) do update set
               n = case when dd.ip_fails.since < now() - interval '15 minutes' then 1 else dd.ip_fails.n + 1 end,
               since = case when dd.ip_fails.since < now() - interval '15 minutes' then now() else dd.ip_fails.since end`;
-    throw new E("Код подключения не подходит. Проверьте его.", 403);
+    throw new E("Код подключения не подходит или устарел. Проверьте его.", 403);
   }
   if (t.status !== "active") throw new E("Облако склада клиники отключено. Свяжитесь с поддержкой.", 403);
-  const id = hid(8), tok = token();
-  await sql`insert into dd.devices(id, tenant_id, kind, name, token_hash, version, last_seen)
-            values (${id}, ${t.id}, 'laptop', ${clean(f.name, 80) || "Компьютер"}, ${await sha(tok)}, ${clean(f.version, 20)}, now())`;
-  if (Number.isFinite(Number(f.tz))) await sql`update dd.tenants set tz_offset = ${Math.round(Number(f.tz))} where id = ${t.id}`;
-  return { device: id, token: tok, tenant: t.id, name: t.name, api: API };
+  if (!!t.demo !== !!f.demo)
+    throw new E(t.demo ? "Это код демо-склада: настоящий склад к нему не подключить." : "Программа в демо-режиме: к настоящему складу её не подключить.", 409);
+  await bindKeys(t.id, f);
+  return await newLaptop(t, f);
+}
+
+// 3.18.2: a laptop connects by the secret of its clinic. Found — it joins that clinic (another computer of the clinic made
+// it); not found — with `create` a new clinic is made (a few a day from one address), without it the laptop learns there
+// is none yet (it asks again later: a computer of the clinic may make it meanwhile).
+async function register(req: Request, f: any) {
+  const hs = await keyHashes(f);
+  if (!hs.length) throw new E("Обновите программу: этот компьютер не знает ключа клиники", 400);
+  const demo = !!f.demo;
+  const name = clean(f.clinic, 100);
+  const reg = async (create: boolean) =>
+    (await sql`select dd.register(${sql.array(hs)}::text[], ${demo ? (name ? "Демо · " + name : "Демо-клиника") : name}, ${demo}, ${create}) as r`)[0].r;
+  let r = await reg(false);
+  if (!r.tenant) {
+    if (!f.create) return { tenant: null };
+    const key = "r:" + ip(req);
+    const [b] = await sql`select n, since from dd.ip_fails where ip = ${key}`;
+    if (b && b.n >= NEW_PER_IP && Date.now() - new Date(b.since).getTime() < 864e5)
+      throw new E("С этого адреса сегодня уже подключили много новых клиник. Попробуйте завтра или напишите в поддержку.", 429);
+    const [n] = await sql`select count(*)::int as n from dd.tenants where created_at > now() - interval '1 hour'`;
+    if (n.n >= NEW_PER_HOUR) throw new E("Облако склада сейчас перегружено подключениями. Попробуйте через час.", 429);
+    await cleanDemo();
+    r = await reg(true);
+    if (r.created)
+      await sql`insert into dd.ip_fails(ip, n, since) values (${key}, 1, now()) on conflict (ip) do update set
+                n = case when dd.ip_fails.since < now() - interval '1 day' then 1 else dd.ip_fails.n + 1 end,
+                since = case when dd.ip_fails.since < now() - interval '1 day' then now() else dd.ip_fails.since end`;
+  }
+  const [t] = await sql`select * from dd.tenants where id = ${r.tenant}`;
+  if (t.status !== "active") throw new E("Облако склада клиники отключено. Свяжитесь с поддержкой.", 403);
+  if (!!t.demo !== demo) throw new E("Демо-склад и настоящий склад не смешиваются. Обновите программу.", 409);
+  return { ...(await newLaptop(t, f)), created: !!r.created };
+}
+
+// Demo clinics nobody has opened for a month go with their rows and photos.
+async function cleanDemo() {
+  const old = await sql`select t.id from dd.tenants t where t.demo and t.created_at < now() - ${DEMO_KEEP_DAYS + " days"}::interval
+                        and not exists (select 1 from dd.devices d where d.tenant_id = t.id
+                                        and coalesce(d.last_seen, d.created_at) > now() - ${DEMO_KEEP_DAYS + " days"}::interval)
+                        limit 20`;
+  for (const t of old) await dropTenant(t.id).catch((e) => console.error("demo clean", e));
+}
+
+async function dropTenant(id: string) {
+  const ph = await sql`select path from dd.photos where tenant_id = ${id}`;
+  if (ph.length) await dropObjects(ph.map((r: any) => r.path));
+  await sql`delete from dd.tenants where id = ${id}`;
+}
+
+// A code for another computer of the clinic that is not in its network: typed there once, works a day.
+async function invite(ctx: Ctx) {
+  await sql`delete from dd.invites where expires_at < now()`;
+  const [n] = await sql`select count(*)::int as n from dd.invites where tenant_id = ${ctx.tenant.id}`;
+  if (n.n >= 20) throw new E("Кодов уже много — подождите, пока старые истекут (сутки)", 429);
+  const [r] = await sql`select dd.rand_code(12) as c`;
+  const raw = String(r.c);
+  await sql`insert into dd.invites(hash, tenant_id, device_id, expires_at)
+            values (${await sha("DDS" + raw)}, ${ctx.tenant.id}, ${ctx.device.id}, now() + ${INVITE_H + " hours"}::interval)`;
+  return { code: `DDS-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`, hours: INVITE_H };
 }
 
 async function status(ctx: Ctx, f: any) {
@@ -244,12 +334,13 @@ async function status(ctx: Ctx, f: any) {
   if (f.version) await sql`update dd.devices set version = ${clean(f.version, 20)} where id = ${ctx.device.id}`;
   if (Number.isFinite(Number(f.tz))) await sql`update dd.tenants set tz_offset = ${Math.round(Number(f.tz))} where id = ${t.id}`;
   if (clean(f.clinic, 120)) await sql`update dd.tenants set name = ${clean(f.clinic, 120)} where id = ${t.id} and name = ''`;
+  await bindKeys(t.id, f);  // 3.18.2: a laptop connected by a code tells the secret of its clinic — its other computers come here by themselves
   const devices = await sql`select id, kind, name, version, created_at, last_seen from dd.devices
                             where tenant_id = ${t.id} and not revoked order by kind, created_at`;
   const pc = String(t.phone_code || "");
   const [ph] = await sql`select count(*)::int as n from dd.photos where tenant_id = ${t.id}`;
   return { tenant: t.id, name: t.name, seq: Number(t.seq), phone_code: pc ? pc.slice(0, 4) + "-" + pc.slice(4) : "",
-    device: ctx.device.id, devices, photos: ph.n, api: API };
+    device: ctx.device.id, devices, photos: ph.n, demo: !!t.demo, api: API };
 }
 
 function checkKey(k: unknown) {
@@ -929,6 +1020,8 @@ Deno.serve(async (req: Request) => {
     if (!f || typeof f !== "object" || Array.isArray(f)) throw new E("Неверный запрос");
     switch (path) {
       case "/v1/join": return json(req, await join(req, f));
+      case "/v1/register": return json(req, await register(req, f));
+      case "/v1/invite": return json(req, await invite(await laptop(req)));
       case "/v1/status": return json(req, await status(await laptop(req), f));
       case "/v1/push": return json(req, await push(await laptop(req), f));
       case "/v1/pull": return json(req, await lpull(await laptop(req), f));
@@ -939,6 +1032,11 @@ Deno.serve(async (req: Request) => {
       case "/v1/leave": {
         const c = await laptop(req);
         await sql`update dd.devices set revoked = true, token_hash = null where id = ${c.device.id}`;
+        // a demo clinic its last laptop left (the program left the demo) is not kept
+        if (c.tenant.demo) {
+          const [o] = await sql`select count(*)::int as n from dd.devices where tenant_id = ${c.tenant.id} and kind = 'laptop' and not revoked`;
+          if (!o.n) await dropTenant(c.tenant.id).catch((e) => console.error("demo leave", e));
+        }
         return json(req, { ok: true });
       }
       case "/p/hello": return json(req, await hello(req, f));

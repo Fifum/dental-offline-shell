@@ -2908,12 +2908,32 @@ class Api:
     def stock_cloud_status(self):
         return self._scloud().status()
 
-    def stock_cloud_join(self, code, name=""):
+    def stock_cloud_join(self, code, name="", switch=False):
         self._director("Подключать склад к облаку")
-        r = self._scloud_call(self._scloud().join, code, name)
+        r = self._scloud_call(self._scloud().join, code, name, bool(switch))
         if self._stock_cloud_worker:
             self._stock_cloud_worker.trigger()
         return r
+
+    def stock_cloud_connect(self, again=False):
+        """3.18.2: «Телефон» connects this computer by itself — to the cloud of its clinic, or a new one: in the demo a demo
+        clinic of this computer; a real clinic is made only by the director. `again` — the director connects a computer
+        disconnected earlier."""
+        sc = self._scloud()
+        u = _acting_user()
+        director = u is None or u.get("role") == "director"
+        if sc.store.load().get("off") and not sc.configured():
+            if not again:
+                return {"ok": False, "off": True}
+            self._director("Подключать склад к облаку")
+        r = self._scloud_call(sc.connect, director or sc.demo_mode())
+        if r.get("ok") and self._stock_cloud_worker:
+            self._stock_cloud_worker.trigger()
+        return r
+
+    def stock_cloud_invite(self):
+        self._director("Подключать другие компьютеры к облаку склада")
+        return self._scloud_call(self._scloud().invite)
 
     def stock_cloud_leave(self):
         self._director("Отключать склад от облака")

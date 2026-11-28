@@ -137,6 +137,18 @@ textarea.inp{min-height:84px;resize:vertical}
 .pad button{height:64px;border-radius:18px;border:1px solid var(--line);background:var(--panel);font-size:26px;font-weight:600;cursor:pointer}
 .pad button:active{background:var(--accent-soft)}
 .pad button.fn{font-size:15px;color:var(--muted);background:none;border-color:transparent}
+/* 3.18.2: who signs in — on the same screen as the PIN */
+.who{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border-radius:var(--r);border:1px solid var(--line);background:var(--panel);text-align:left;cursor:pointer;box-shadow:var(--shadow)}
+.who .t{flex:1;min-width:0}
+.who .t b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who .t small{display:block;color:var(--muted);font-size:13px}
+.who .chg{color:var(--accent-ink);font-size:14px;font-weight:600}
+.av{flex:none;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent-ink);font-weight:700;font-size:15px}
+.av.none{background:var(--sunken);color:var(--muted)}
+.gate .dots{margin:22px 0 18px}
+.center{text-align:center}
+.gate .center{margin:10px 0 0}
+#q{margin-bottom:4px}
 
 /* scanner */
 .cam{position:relative;margin:4px 0 12px;border-radius:20px;overflow:hidden;background:#05100F;aspect-ratio:3/4}
