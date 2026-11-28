@@ -161,8 +161,9 @@ code, _ = call("auth", "staff_phone_pin_reset", nid, token=TM)
 check("only «Сотрудники» may reset it", code == 403 and d.one("SELECT phone_pin_hash FROM users WHERE id=?", (nid,))["phone_pin_hash"])
 code, _ = call("auth", "staff_phone_pin_reset", nid, token=TD)
 row3 = d.one("SELECT phone_pin_hash, phone_pin_at FROM users WHERE id=?", (nid,))
-check("the director resets it", code == 200 and row3["phone_pin_hash"] is None and row3["phone_pin_at"] is None, row3)
-check("the journal has it", d.one("SELECT 1 AS x FROM audit WHERE action='Сброс ПИН-кода телефона'") is not None)
+# 3.18.3: the time of the reset stays (no hash) — the cloud of the stock disconnects the phones bound to the person by it
+check("the director resets it", code == 200 and row3["phone_pin_hash"] is None and row3["phone_pin_at"], row3)
+check("the journal has it", d.one("SELECT 1 AS x FROM audit WHERE action='Сброс ПИН-кода телефона и отключение телефонов'") is not None)
 check("staff list shows it", call("auth", "staff_list", token=TD)[1]["staff"] and "has_phone_pin" in call("auth", "staff_list", token=TD)[1]["staff"][0])
 
 # ------------------------------------------------------- replication --
