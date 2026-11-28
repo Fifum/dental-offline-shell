@@ -1511,6 +1511,7 @@ document.addEventListener("keydown", e => {
 let started = false;
 async function startApp(user) {
   ME = user;
+  if (typeof rememberUser === "function") rememberUser(user);
   if (window.DDTheme) DDTheme.useFor(ME.login);
   $("#authScreen").hidden = true;
   $("#ucAv").textContent = initials(ME.name); $("#ucName").textContent = ME.name;
@@ -1679,7 +1680,8 @@ async function boot() {
   S.status = {...S.status, brand: st.brand};
   applyBrand(st.brand);
   if (st.user) return startApp(st.user);
-  if (st.has_pins && typeof renderPinLogin === "function") return renderPinLogin();  // shared computer: pick yourself, type the PIN
+  // shared computer: pick yourself, type the PIN — only where the last person signed in here has a PIN (3.18.4)
+  if (st.has_pins && typeof renderStartAuth === "function") return renderStartAuth();
   renderAuth(st.can_bootstrap ? "bootstrap" : "login");
 }
 boot();

@@ -411,6 +411,16 @@ with A:
     check("password sign-in unlocks the PIN", au.pin_login(tiles[0]["id"], "4826", "10.0.0.11", "t")["token"])
     au.clear_pin(u)
     check("PIN switched off", not au.pin_users())
+    # 3.18.4: «Кто работает?» opens by itself only where the last person signed in here has a PIN; names never break mid-word
+    ui = Path(__file__).resolve().parents[1] / "app" / "ui"
+    pjs, ajs = (ui / "platform.js").read_text(encoding="utf-8"), (ui / "app.js").read_text(encoding="utf-8")
+    pcss = (ui / "styles-platform.css").read_text(encoding="utf-8")
+    check("the start shows the tiles only to the last person if they have a PIN",
+          "async function renderStartAuth" in pjs and 'users.some(u => String(u.id) === last)) return renderPinLogin' in pjs
+          and "return renderStartAuth();" in ajs and "rememberUser(user)" in ajs and "renderStartAuth();\n};" in pjs)
+    tile = __import__("re").search(r"\.pin-tile \.pt-n\{([^}]*)\}", pcss)
+    check("a name on a tile breaks between words only", bool(tile) and "anywhere" not in tile.group(1)
+          and "word-break:normal" in tile.group(1) and "fitTileNames(box)" in pjs, tile and tile.group(1))
 
 # ======================================================================= import
 with A:

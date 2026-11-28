@@ -318,9 +318,27 @@ function renderImport() {
 }
 
 /* ------------------------------------------------------------ PIN */
-async function renderPinLogin(note) {
-  let users = [];
+/* 3.18.4: «Кто работает?» opens by itself only where the last person who signed in on this computer has a PIN of their own
+   (set in «Мой профиль»); anyone else gets the login and password, with «Вход по ПИН-коду» there for those who have one. */
+const LAST_USER_KEY = "dd.lastUser";
+function rememberUser(u) { try { localStorage.setItem(LAST_USER_KEY, String(u && u.id || "")); } catch (e) { /* storage off */ } }
+async function renderStartAuth(note) {
+  let users = [], last = "";
   try { users = await authApi.pin_users(); } catch (e) {}
+  try { last = localStorage.getItem(LAST_USER_KEY) || ""; } catch (e) { /* storage off */ }
+  if (last && users.some(u => String(u.id) === last)) return renderPinLogin(note, users);
+  return showLogin(note);
+}
+/* a name on a tile breaks between words only; a word too long for the tile gets a smaller font instead of a break */
+function fitTileNames(box) {
+  $$(".pin-tile .pt-n", box).forEach(n => {
+    let size = parseFloat(getComputedStyle(n).fontSize) || 13;
+    while (n.scrollWidth > n.clientWidth + 1 && size > 10) { size -= 0.5; n.style.fontSize = size + "px"; }
+  });
+}
+async function renderPinLogin(note, known) {
+  let users = known || [];
+  if (!known) { try { users = await authApi.pin_users(); } catch (e) {} }
   if (!users.length) return renderAuth("login", note);
   const box = $("#authBox");
   $("#authScreen").hidden = false;
@@ -329,6 +347,7 @@ async function renderPinLogin(note) {
       <span class="pt-n">${esc(u.name)}</span><span class="pt-p">${esc(u.locked ? "ПИН заблокирован" : u.position)}</span></button>`).join("")}</div>
     <div class="auth-err" id="aErr">${esc(note || "")}</div>
     <div class="auth-switch">Нет ПИН-кода? <button id="toLogin">Войти по паролю</button></div>`;
+  requestAnimationFrame(() => fitTileNames(box));
   $("#toLogin", box).onclick = () => renderAuth("login");
   $$(".pin-tile", box).forEach(t => t.onclick = () => {
     if (t.dataset.locked) return renderAuth("login", "ПИН-код заблокирован после 5 ошибок — войдите по паролю, и он снова заработает");
@@ -431,5 +450,5 @@ $("#ucSwitch").onclick = async () => {
   try { await authApi.logout(); } catch (e) {}
   ME = null; TOKEN = ""; sessionStorage.removeItem(SESSION_KEY);
   closeModal();
-  renderPinLogin();
+  renderStartAuth();
 };
