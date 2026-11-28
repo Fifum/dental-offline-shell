@@ -98,7 +98,7 @@ function signedOut(e) {  // 401: the session is over → the PIN; the phone was 
 }
 
 async function forget() {
-  for (const k of ["device", "session", "user", "clinic", "staff", "since", "last", "owner"]) LS.del(k);
+  for (const k of ["device", "session", "user", "clinic", "staff", "since", "last", "owner", "pcode"]) LS.del(k);
   Object.assign(S, { device: null, session: null, user: null, clinic: "", staff: [], since: 0, last: 0, rows: new Map(), queue: [], photos: [] });
   await idbClear("rows").catch(() => {}); await idbClear("queue").catch(() => {}); await idbClear("photos").catch(() => {});
   index();
@@ -280,9 +280,10 @@ function sheet(html, bind) {
 const go = (h) => { if (location.hash === h) route(); else location.hash = h; };
 
 /* ------------------------------------------------------------------------------------------------ sign-in */
+const PIN_WHERE = "в программе на компьютере: «Мой профиль» → «Телефон: склад и сканер» → «Создать ПИН»";
 function viewCode(err) {
   gate(`${brand()}<h1>Подключите телефон к клинике</h1>
-    <p>Код клиники есть в программе на компьютере: Склад → Телефон. Можно навести камеру на QR-код там же.</p>
+    <p>Наведите обычную камеру телефона на QR-код в программе на компьютере: Склад и материалы → Телефон. Или введите код клиники, он там же.</p>
     <label class="fld"><span>Код клиники</span><input id="code" class="inp codein" maxlength="9" autocomplete="off" autocapitalize="characters"
       spellcheck="false" placeholder="XXXX-XXXX" value="${esc(S.code)}"></label>
     ${err ? `<div class="note bad">${esc(err)}</div>` : ""}
@@ -295,49 +296,69 @@ function viewCode(err) {
       const r = await call("/p/hello", { code: inp.value, name: phoneName() });
       S.device = { id: r.device, token: r.token }; S.clinic = r.clinic || ""; S.staff = r.staff || []; S.code = "";
       LS.set("device", S.device); LS.set("clinic", S.clinic); LS.set("staff", S.staff);
-      go("#/who");
+      LS.set("pcode", inp.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));  // the QR of the same clinic later just opens it
+      go("#/pin");
     } catch (e) { S.code = inp.value; viewCode(e.message); }
   };
   if (S.code && S.code.replace(/-/g, "").length === 8 && !err) $("#join").click();
+}
+/* the QR of another clinic (say, the demo one first, then the real one): connect to it after a question */
+function viewSwitch() {
+  const n = S.queue.length;
+  gate(`${brand()}<h1>Подключить к другой клинике?</h1>
+    <p>Этот QR-код — другой клиники${S.clinic ? `, а телефон сейчас подключён к «${esc(S.clinic)}»` : ""}. Данные склада прежней клиники сотрутся с телефона.</p>
+    ${n ? `<div class="note warn">В очереди ${n} ${plural(n, "операция", "операции", "операций")} — они ещё не ушли и пропадут.</div>` : ""}
+    <button class="btn" id="yes">Подключить к новой клинике</button><button class="btn ghost mt8" id="no">Остаться</button>`);
+  $("#yes").onclick = async () => {
+    const code = S.switchTo;
+    S.switchTo = null;
+    await call("/p/leave", {}, "device").catch(() => {});
+    await forget();
+    S.code = code; route();
+  };
+  $("#no").onclick = () => { S.switchTo = null; route(); };
 }
 function phoneName() {
   const u = navigator.userAgent;
   return /iPhone/.test(u) ? "iPhone" : /Android/.test(u) ? "Android" + ((u.match(/;\s*([^;)]+)\s+Build/) || [])[1] ? " " + u.match(/;\s*([^;)]+)\s+Build/)[1] : "") : "Телефон";
 }
 
-async function viewWho() {
-  const draw = () => gate(`${brand()}<h1>Кто работает?</h1><p>Выберите себя и введите личный ПИН-код. Его задают в программе: Мой профиль → ПИН для телефона.</p>
-    <div class="list">${S.staff.length ? S.staff.map((u, i) => `<button class="row" data-u="${i}"><span class="t"><b>${esc(u.name || u.login)}</b>
-      <small>${esc(u.role_title || "")}</small></span>›</button>`).join("") : `<div class="empty"><b>Нет сотрудников с ПИН-кодом</b>
-      Задайте ПИН в программе на компьютере: Мой профиль → ПИН для телефона.</div>`}</div>
-    <p class="small muted mt18">Не та клиника? <a href="#" id="other">Подключить другую</a></p>`);
-  draw();
-  $$("[data-u]").forEach((b) => (b.onclick = () => { S.pick = S.staff[+b.dataset.u]; go("#/pin"); }));
-  $("#other").onclick = async (e) => { e.preventDefault(); await call("/p/leave", {}, "device").catch(() => {}); await forget(); route(); };
+/* sign-in on one screen: who you are (the phone remembers the last one; the only one is chosen by itself) and the PIN */
+const initials = (n) => String(n || "").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase() || "?";
+async function freshStaff() {  // → true when the list of who may sign in has changed
   try {
     const r = await call("/p/staff", {}, "device");
-    if (JSON.stringify(r.staff) !== JSON.stringify(S.staff) || r.clinic !== S.clinic) {
-      S.staff = r.staff; S.clinic = r.clinic; LS.set("staff", S.staff); LS.set("clinic", S.clinic);
-      if (location.hash === "#/who") viewWho();
-    }
-  } catch (e) { signedOut(e); }
+    if (JSON.stringify(r.staff || []) === JSON.stringify(S.staff) && (r.clinic || "") === S.clinic) return false;
+    S.staff = r.staff || []; S.clinic = r.clinic || ""; LS.set("staff", S.staff); LS.set("clinic", S.clinic);
+    return true;
+  } catch (e) { signedOut(e); return false; }
+}
+function chosen() {
+  if (S.pick) return S.pick;
+  if (S.user) return S.staff.find((x) => x.login === S.user.login) || (S.staff.length ? null : { login: S.user.login, name: S.user.name, role_title: S.user.role_title });
+  return S.staff.length === 1 ? S.staff[0] : null;
 }
 
-function viewPin() {
-  const u = S.pick || (S.user && S.staff.find((x) => x.login === S.user.login));
-  if (!u) return go("#/who");
-  let pin = "";
-  gate(`${brand()}<h1>${esc(u.name || u.login)}</h1><p>${esc(u.role_title || "")} · введите ПИН-код из 6 цифр</p>
+function viewPin(openList, draft = "") {
+  const u = chosen(), n = S.staff.length;
+  let pin = draft;
+  gate(`${brand()}<h1>Вход по ПИН-коду</h1><p>Выберите себя и введите свой ПИН из 6 цифр.</p>
+    <button class="who" id="who">${u ? `<span class="av">${esc(initials(u.name || u.login))}</span><span class="t"><b>${esc(u.name || u.login)}</b>
+      <small>${esc(u.role_title || "Сотрудник")}</small></span><span class="chg">Сменить</span>`
+      : `<span class="av none">?</span><span class="t"><b>Выберите себя</b><small>${n ? `${n} ${plural(n, "сотрудник", "сотрудника", "сотрудников")} с ПИН-кодом` : "Пока ни у кого нет ПИН-кода"}</small></span><span class="chg">›</span>`}</button>
     <div class="dots" id="dots">${"<i></i>".repeat(6)}</div><div id="err" class="note bad" hidden></div>
-    <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-k="${n}">${n}</button>`).join("")}
-      <button class="fn" data-k="who">Другой</button><button data-k="0">0</button><button class="fn" data-k="del">Стереть</button></div>`);
+    <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `<button data-k="${k}">${k}</button>`).join("")}
+      <span></span><button data-k="0">0</button><button class="fn" data-k="del">Стереть</button></div>
+    <p class="small muted mt18 center">Нет ПИН-кода? Его создают ${PIN_WHERE}.</p>
+    <p class="small muted center">Не та клиника? <a href="#" id="other">Подключить другую</a></p>`);
   const dots = () => $$("#dots i").forEach((d, i) => d.classList.toggle("on", i < pin.length));
-  const send = async () => {
+  dots();
+  const send = async (who) => {
     try {
-      const r = await call("/p/login", { login: u.login, pin }, "device");
-      if (LS.get("owner") !== u.login) { S.rows = new Map(); S.since = 0; LS.set("since", 0); await idbClear("rows"); index(); }
+      const r = await call("/p/login", { login: who.login, pin }, "device");
+      if (LS.get("owner") !== who.login) { S.rows = new Map(); S.since = 0; LS.set("since", 0); await idbClear("rows"); index(); }
       S.session = r.session; S.user = r.user; S.pick = null;
-      LS.set("session", S.session); LS.set("user", S.user); LS.set("owner", u.login);
+      LS.set("session", S.session); LS.set("user", S.user); LS.set("owner", who.login);
       go(S.after || "#/"); S.after = null; sync();
     } catch (e) {
       if (signedOut(e)) return;
@@ -345,13 +366,42 @@ function viewPin() {
       const er = $("#err"); er.hidden = false; er.textContent = e.net ? "Нет связи. Для входа нужен интернет." : e.message;
     }
   };
+  $("#who").onclick = () => pickWho(pin);
   $$(".pad button").forEach((b) => (b.onclick = () => {
     const k = b.dataset.k;
-    if (k === "who") { S.pick = null; return go("#/who"); }
     if (k === "del") pin = pin.slice(0, -1); else if (pin.length < 6) pin += k;
     dots();
-    if (pin.length === 6) send();
+    if (pin.length === 6) { if (u) send(u); else pickWho(pin); }  // the PIN typed first: whose it is, then it goes
   }));
+  $("#other").onclick = async (e) => { e.preventDefault(); await call("/p/leave", {}, "device").catch(() => {}); await forget(); route(); };
+  if (draft.length === 6 && u) send(u);
+  else if (openList || (!u && n > 1 && !draft)) pickWho(pin);
+  freshStaff().then((changed) => {
+    if (!changed || S.session || !/^#\/(pin|who)?$/.test(location.hash || "#/")) return;
+    if (S.pick && !S.staff.some((x) => x.login === S.pick.login)) S.pick = null;  // a PIN taken away meanwhile
+    if (!$(".sheet") && !pin) viewPin();
+  });
+}
+
+function pickWho(draft) {
+  const list = () => S.staff.length ? `<div class="list">${S.staff.map((u, i) => `<button class="row" data-u="${i}">
+      <span class="av">${esc(initials(u.name || u.login))}</span><span class="t"><b>${esc(u.name || u.login)}</b><small>${esc(u.role_title || "")}</small></span>›</button>`).join("")}</div>`
+    : `<div class="list"><div class="empty"><b>Нет сотрудников с ПИН-кодом</b>Создайте ПИН ${PIN_WHERE} и обновите список.</div></div>
+       <button class="btn soft mt16" id="again">Обновить список</button>`;
+  sheet(`<h3>Кто вы?</h3>${S.staff.length > 8 ? `<input class="inp" id="q" placeholder="Поиск по имени" autocomplete="off">` : ""}<div id="ppl" class="mt8">${list()}</div>
+    <button class="btn ghost mt16" data-close>Закрыть</button>`, (box, close) => {
+    const bind = () => {
+      $$("[data-u]", box).forEach((b) => (b.onclick = () => { S.pick = S.staff[+b.dataset.u]; close(); viewPin(false, draft || ""); }));
+      const a = $("#again", box);
+      if (a) a.onclick = async () => { a.disabled = true; await freshStaff(); $("#ppl", box).innerHTML = list(); bind(); };
+    };
+    bind();
+    const q = $("#q", box);
+    if (q) q.oninput = () => {
+      const t = q.value.trim().toLowerCase();
+      $$("[data-u]", box).forEach((b) => { const u = S.staff[+b.dataset.u]; b.hidden = !!t && !`${u.name} ${u.role_title}`.toLowerCase().includes(t); });
+    };
+  });
 }
 
 /* ------------------------------------------------------------------------------------------------ home */
@@ -804,9 +854,9 @@ function viewMe() {
       <button class="btn ghost mt8 short" data-drop="${esc(q.op)}">Убрать из очереди</button></div>`).join("")}</div>` : ""}
     <div class="acts mt16"><button class="btn soft" id="upd">Обновить данные</button><button class="btn ghost" id="out">Выйти</button></div>
     <button class="btn bad" id="leave">Отключить телефон от клиники</button>
-    <p class="small muted">Выйти — вернуться к выбору сотрудника и ПИН-коду. Отключить — стереть данные склада с этого телефона.</p>`, { tab: "#/me" });
+    <p class="small muted">Выйти — вернуться ко входу по ПИН-коду (например, чтобы вошёл другой сотрудник). Отключить — стереть данные склада с этого телефона.</p>`, { tab: "#/me" });
   $("#upd").onclick = () => sync(true);
-  $("#out").onclick = () => { call("/p/logout", {}, "session").catch(() => {}); S.session = null; LS.del("session"); go("#/who"); };
+  $("#out").onclick = () => { call("/p/logout", {}, "session").catch(() => {}); S.session = null; LS.del("session"); go("#/pin"); };
   $("#leave").onclick = async () => {
     if (!confirm("Отключить телефон? Данные склада на нём будут стёрты, для входа снова понадобится код клиники.")) return;
     await call("/p/leave", {}, "device").catch(() => {}); await forget(); go("#/");
@@ -817,14 +867,15 @@ function viewMe() {
 /* ------------------------------------------------------------------------------------------------ router */
 function route() {
   const h = location.hash.slice(1) || "/", [path, qstr] = h.split("?"), qs = new URLSearchParams(qstr || ""), p = path.split("/").filter(Boolean);
+  if (S.switchTo) return viewSwitch();
   if (!S.device) {
     if (["inv", "mat", "e", "m"].includes(p[0])) S.after = location.hash;  // a label scanned before the phone was connected
     return viewCode();
   }
-  if (p[0] === "who") return viewWho();
+  if (p[0] === "who") return viewPin(true);
   if (!S.session) {
     if (p[0] && p[0] !== "pin") S.after = location.hash;  // a label scanned before signing in opens after the PIN
-    return S.pick || S.user ? viewPin() : viewWho();
+    return viewPin();
   }
   if (p[0] === "pin") return viewPin();
   const id = decodeURIComponent(p[1] || "");
@@ -860,7 +911,10 @@ async function boot() {
   else if (path === "/j" || path === "/j/") {
     const code = decodeURIComponent(location.hash.slice(1)).toUpperCase().replace(/[^A-Z0-9]/g, "");
     history.replaceState(null, "", "/#/");
-    if (code.length === 8 && !S.device) S.code = code.slice(0, 4) + "-" + code.slice(4);
+    const pretty = code.slice(0, 4) + "-" + code.slice(4);
+    if (code.length === 8 && !S.device) S.code = pretty;
+    else if (code.length === 8 && LS.get("pcode") === null) LS.set("pcode", code);  // connected before 3.18.2: the same clinic
+    else if (code.length === 8 && LS.get("pcode") !== code) S.switchTo = pretty;     // the QR of another clinic: ask first
   }
   try {
     for (const r of await idbAll("rows")) S.rows.set(r.id, r);

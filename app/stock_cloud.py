@@ -15,15 +15,25 @@ hash goes) and a right of the stock; the cloud checks every operation against th
 3.16: photos of equipment taken on a phone wait in the cloud (a private bucket) until a laptop syncs: it takes each one into
 the gallery of its card (the first photo of a card becomes the main one), with who took it and when in the card's history,
 sends the new gallery rows up and then tells the cloud to forget the photo.
+
+3.18.2: no code to type. A laptop connects by a secret of its clinic made from the key of the clinic network (every computer
+of one clinic has that key, cloud.clinic_key; the secret is an HMAC of it, the key itself never leaves): the cloud finds the
+clinic another computer made, or — when the director opens «Телефон» — makes a new one. So the tab shows the QR for the phones
+at once, and the other computers of the clinic join the same clinic by themselves (the worker asks every few hours). A computer
+that is not in the clinic's network joins by a code a connected one makes («Код для другого компьютера», a day). A demo
+program has a demo clinic of its own (a random secret of this computer): the test stock never meets the real one, and the
+demo connection ends when the program leaves the demo. The provider's DDS-… codes keep working.
 """
 from __future__ import annotations
 
 import base64
 import datetime
 import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
 import socket
 import threading
 import time
@@ -44,6 +54,8 @@ STATUS_EVERY = 600     # the clinic's status (phone code, devices) and the staff
 PUSH_LIMIT = 400
 TIMEOUT = 25
 PHOTO_BATCH = 10       # photos of equipment taken from the cloud in one sync
+AUTO_EVERY = 6 * 3600  # 3.18.2: a computer not connected yet asks this often whether its clinic has a cloud of the stock
+SECRET_INFO = b"dd-stock-cloud-v1"
 
 
 def photo_note(p: dict) -> str:
@@ -83,19 +95,33 @@ class Http:
 
 
 class Store:
-    """Where the connection is kept: the settings of the program (the token encrypted with DPAPI)."""
+    """Where the connection is kept: the settings of the program (the token and the secrets encrypted with DPAPI).
+    3.18.2: `demo` — the connection was made in the demo (a demo clinic); `off` — the director disconnected this computer, it
+    does not connect by itself again; `demo_key` / `own_key` — this computer's own secret for its demo clinic / when it has no
+    key of a clinic network."""
+
+    SECRET = ("token", "demo_key", "own_key")
 
     def load(self) -> dict:
         s = config.load_settings()
         return {"url": s.get("stock_cloud_url") or "", "token": config.unprotect(s.get("stock_cloud_token") or ""),
                 "device": s.get("stock_cloud_device") or "", "tenant": s.get("stock_cloud_tenant") or "",
-                "name": s.get("stock_cloud_name") or "", "last_tenant": s.get("stock_cloud_last_tenant") or ""}
+                "name": s.get("stock_cloud_name") or "", "last_tenant": s.get("stock_cloud_last_tenant") or "",
+                "demo": bool(s.get("stock_cloud_demo")), "off": bool(s.get("stock_cloud_off")),
+                "demo_key": config.unprotect(s.get("stock_cloud_demo_key") or ""),
+                "own_key": config.unprotect(s.get("stock_cloud_own_key") or "")}
 
     def save(self, d: dict):
         out = {}
         for k, v in d.items():
-            out["stock_cloud_" + k] = config.protect(v) if k == "token" and v else v
+            out["stock_cloud_" + k] = config.protect(v) if k in self.SECRET and v else v
         config.save_settings(out)
+
+
+def clinic_secret(key: bytes) -> str:
+    """What the cloud of the stock knows a clinic by: the same on every computer with the key of the clinic network, and
+    telling nothing about the key (the key also opens the clinic's main cloud, which the cloud of the stock must never see)."""
+    return base64.urlsafe_b64encode(hmac.new(key, SECRET_INFO, hashlib.sha256).digest()).decode().rstrip("=")
 
 
 def _tz() -> int:
@@ -104,14 +130,16 @@ def _tz() -> int:
 
 
 class StockCloud:
-    def __init__(self, db, store=None, node=None, transport=None, files=None, stock=None):
+    def __init__(self, db, store=None, node=None, transport=None, files=None, stock=None, clinic_key=None):
         self.db = db
         self.store = store or Store()
         self.node = node or config.node_id()
         self.transport = transport or Http
         self._files, self._stock = files, stock  # 3.16: the photos of equipment from the phones (the program's own objects)
+        self._clinic_key = clinic_key            # 3.18.2: the key of the clinic network (tests give their own)
         replica.install(db)
         self._lock = threading.Lock()
+        self.next_auto = 0.0                     # when the worker asks again whether the clinic has a cloud
         self.state = {"last_ok": None, "last_try": None, "error": "", "offline": False, "running": False,
                       "pushed": 0, "pulled": 0, "photos": 0, "photos_waiting": 0}
 
@@ -127,6 +155,56 @@ class StockCloud:
     def configured(self) -> bool:
         s = self.store.load()
         return bool(s["url"] and s["token"])
+
+    # ---------------------------------------------- 3.18.2: the clinic's secret and the demo --
+    @staticmethod
+    def demo_mode() -> bool:
+        """The program shows the demo stock (DD_STOCK_CLOUD_DEMO: the tests' laptops count as real ones)."""
+        return bool(config.load_settings().get("demo")) and not os.environ.get("DD_STOCK_CLOUD_DEMO")
+
+    def _own(self, name) -> str:
+        k = self.store.load().get(name) or ""
+        if not k:
+            k = secrets.token_urlsafe(32)
+            self.store.save({name: k})
+        return k
+
+    def _network_key(self):
+        if self._clinic_key is not None:
+            return self._clinic_key() if callable(self._clinic_key) else self._clinic_key
+        try:
+            import cloud
+            return cloud.clinic_key()
+        except Exception:  # noqa: BLE001 — no clinic network on this computer
+            return None
+
+    def secrets_for(self, demo: bool) -> list:
+        """The secrets this computer knows its clinic of the cloud by: the one of the clinic network (or, without a network,
+        a random one of this computer); in the demo — a random one of this computer, so a demo clinic is never a real one."""
+        if demo:
+            return [self._own("demo_key")]
+        key = self._network_key()
+        return [clinic_secret(key)] if key else [self._own("own_key")]
+
+    @staticmethod
+    def _url() -> str:
+        return (os.environ.get("DD_STOCK_CLOUD_URL") or DEFAULT_URL).rstrip("/")
+
+    def _hello(self, demo: bool, **body) -> dict:
+        s = config.load_settings()
+        return {"name": socket.gethostname(), "version": config.VERSION, "tz": _tz(), "demo": demo,
+                "keys": self.secrets_for(demo), "clinic": s.get("clinic_name") or "", **body}
+
+    def _mode_ok(self) -> bool:
+        """The demo stock and the real one never meet: a connection made in the demo ends when the program leaves it (the
+        real stock connects then by itself), and a real connection is not used while the program shows the demo."""
+        s = self.store.load()
+        if not s["token"] or bool(s.get("demo")) == self.demo_mode():
+            return True
+        log.info("stock cloud: the %s connection ends — the program is %s the demo now",
+                 "demo" if s.get("demo") else "real", "out of" if s.get("demo") else "in")
+        self.leave(user=False)
+        return False
 
     def _http(self):
         s = self.store.load()
@@ -160,26 +238,32 @@ class StockCloud:
 
     # ------------------------------------------------------------ status --
     def status(self):
+        self._mode_ok()
         s = self.store.load()
         st = json.loads(self._meta("scloud_status") or "{}")
         devs = st.get("devices") or []
-        return {**self.state, "configured": self.configured(), "device": s["device"], "tenant": s["tenant"],
+        on = self.configured()
+        return {**self.state, "configured": on, "device": s["device"], "tenant": s["tenant"],
                 "name": st.get("name") or s["name"], "phone_code": st.get("phone_code") or "", "phone_url": self.phone_url(),
                 "laptops": sum(1 for d in devs if d.get("kind") == "laptop"),
                 "phones": sum(1 for d in devs if d.get("kind") == "phone"),
-                "staff": len(self._staff_list()), "pending": self.pending() if self.configured() else 0}
+                "staff": len(self._staff_list()), "pending": self.pending() if on else 0,
+                "demo": bool(s.get("demo")) if on else self.demo_mode(), "off": bool(s.get("off")) and not on,
+                "computer": socket.gethostname()}
 
     def refresh_status(self, h=None):
         h = h or self._http()
         r = h.post("/v1/status", {"version": config.VERSION, "tz": _tz(),
-                                  "clinic": config.load_settings().get("clinic_name") or ""})
+                                  "clinic": config.load_settings().get("clinic_name") or "",
+                                  "keys": self.secrets_for(bool(self.store.load().get("demo")))})
         self._meta_set("scloud_status", json.dumps(r, ensure_ascii=False))
         self._meta_set("scloud_status_at", str(int(time.time())))
         return r
 
     def phone(self):
-        """The clinic code for phones and a QR that opens the phone app with it."""
-        if not self.configured():
+        """The clinic code for phones and a QR that opens the phone app with it: an https link, so the ordinary camera of a
+        phone opens the stock of the clinic, where the employee enters the personal PIN."""
+        if not self._mode_ok() or not self.configured():
             raise StockCloudError("Сначала подключите облако склада")
         st = json.loads(self._meta("scloud_status") or "{}")
         if not st.get("phone_code"):
@@ -190,42 +274,94 @@ class StockCloud:
         return {"code": code, "url": url, "app": self.phone_url(), "qr": crm.qr_data_uri(url), "name": st.get("name") or ""}
 
     # ----------------------------------------------------------- connect --
-    def join(self, code, name=""):
-        if config.load_settings().get("demo") and not os.environ.get("DD_STOCK_CLOUD_DEMO"):
-            raise StockCloudError("Сначала выключите демо-режим: иначе тестовый склад попадёт в облако и на телефоны.")
-        if self.configured():
-            raise StockCloudError("Этот компьютер уже подключён к облаку склада. Сначала отключите его.")
-        code = "".join(str(code or "").split()).upper()
-        if not code:
-            raise StockCloudError("Введите код подключения склада (DDS-…)")
-        url = (os.environ.get("DD_STOCK_CLOUD_URL") or DEFAULT_URL).rstrip("/")
-        r = self.transport(url, "").post("/v1/join", {"code": code, "name": name or socket.gethostname(),
-                                                      "version": config.VERSION, "tz": _tz()})
+    def _connected(self, r: dict, url: str, demo: bool):
         prev = self.store.load()["last_tenant"]
         if prev != r["tenant"]:  # another clinic's cloud (or the first one): it has nothing of ours yet
             with self.db.tx() as c:
                 c.execute("UPDATE sync_rows SET sver=NULL")
                 c.execute("DELETE FROM sync_state WHERE k LIKE 'scloud_%'")
         self.store.save({"url": url, "token": r["token"], "device": r["device"], "tenant": r["tenant"],
-                         "name": r.get("name") or "", "last_tenant": r["tenant"]})
+                         "name": r.get("name") or "", "last_tenant": r["tenant"], "demo": bool(demo), "off": False})
+        if r.get("phone_code"):  # the QR at once, before the first sync
+            st = json.loads(self._meta("scloud_status") or "{}")
+            st.update(name=r.get("name") or "", phone_code=r["phone_code"], demo=bool(demo))
+            self._meta_set("scloud_status", json.dumps(st, ensure_ascii=False))
         self._meta_set("scloud_status_at", "0")
+        self.state.update(error="", offline=False)
+
+    def connect(self, create=True):
+        """3.18.2: connects without a code, by the secret of the clinic: to the clinic of the cloud another computer of the
+        clinic made, or — `create` — to a new one. {"ok": False, "none": True}: the clinic has no cloud yet."""
+        if self.configured() and self._mode_ok():
+            return {"ok": True, "already": True}
+        demo, url = self.demo_mode(), self._url()
+        r = self.transport(url, "").post("/v1/register", self._hello(demo, create=bool(create)))
+        if not r.get("tenant"):
+            return {"ok": False, "none": True}
+        self._connected(r, url, demo)
+        log.info("stock cloud: %s %s clinic %s as %s", "made" if r.get("created") else "joined", "demo" if demo else "the",
+                 r["tenant"], r["device"])
+        return {"ok": True, "created": bool(r.get("created")), "name": r.get("name") or "", "demo": demo}
+
+    def auto(self):
+        """The worker: a computer whose clinic another computer has connected joins it by itself. Never makes a clinic,
+        never in the demo, never after the director disconnected this computer."""
+        if self.configured() or self.demo_mode() or self.store.load().get("off") or replica.HOLD:
+            return None
+        try:
+            r = self.connect(create=False)
+        except StockCloudError as e:
+            log.info("stock cloud auto: %s", e)
+            return None
+        return r if r.get("ok") else None
+
+    def invite(self):
+        """A code for another computer of the clinic that is not in its network (typed there in «Телефон», works a day)."""
+        if not self._mode_ok() or not self.configured():
+            raise StockCloudError("Сначала подключите облако склада")
+        if self.store.load().get("demo"):
+            raise StockCloudError("В демо-режиме другие компьютеры не подключаются: у каждого свой демо-склад.")
+        return self._http().post("/v1/invite")
+
+    def join(self, code, name="", switch=False):
+        """By a code: the provider's DDS-… or one a connected computer of the clinic made. `switch` — this computer is
+        connected already (a cloud it made itself before it knew of the clinic's): it goes over to the clinic of the code."""
+        if self.demo_mode():
+            raise StockCloudError("Сначала выключите демо-режим: иначе тестовый склад попадёт в облако и на телефоны.")
+        if self.configured() and not switch:
+            raise StockCloudError("Этот компьютер уже подключён к облаку склада. Сначала отключите его.")
+        code = "".join(str(code or "").split()).upper()
+        if not code:
+            raise StockCloudError("Введите код подключения склада (DDS-…)")
+        url = self._url()
+        r = self.transport(url, "").post("/v1/join", self._hello(False, code=code, name=name or socket.gethostname()))
+        old = self.store.load()
+        if old["token"]:  # the old connection of this computer ends only now, when the code has worked
+            try:
+                self.transport(old["url"] or url, old["token"]).post("/v1/leave")
+            except StockCloudError as e:
+                log.info("switch, leave: %s", e)
+        self._connected(r, url, False)
         log.info("joined the stock cloud %s as %s", r["tenant"], r["device"])
         return {"ok": True, "name": r.get("name") or ""}
 
-    def leave(self):
+    def leave(self, user=True):
+        """`user` — the director disconnected this computer: it does not connect by itself again (until «Подключить»)."""
         s = self.store.load()
         if s["token"]:
             try:
                 self._http().post("/v1/leave")
             except StockCloudError as e:
                 log.info("leave: %s", e)
-        self.store.save({"url": "", "token": "", "device": "", "tenant": "", "name": ""})
+        self.store.save({"url": "", "token": "", "device": "", "tenant": "", "name": "", "demo": False, "off": bool(user)})
         self.state.update(error="", last_ok=None)
+        if not user:
+            self.next_auto = 0.0
         return True
 
     # -------------------------------------------------------------- sync --
     def sync(self, force_status=False):
-        if not self.configured():
+        if not self._mode_ok() or not self.configured():
             return {"ok": False, "message": "Облако склада не подключено"}
         if replica.HOLD:
             return {"ok": False, "message": replica.HOLD}
@@ -442,10 +578,21 @@ class StockCloudWorker(threading.Thread):
     def trigger(self):
         self._wake.set()
 
+    def step(self):
+        """One turn: sync; a computer not connected yet asks now and then whether its clinic has a cloud (3.18.2)."""
+        c = self.cloud
+        if not c.configured() and time.time() >= c.next_auto:
+            c.next_auto = time.time() + AUTO_EVERY
+            c.auto()
+        if c.configured():
+            c.sync()
+
     def run(self):
         time.sleep(float(os.environ.get("DD_STOCK_CLOUD_DELAY", "25")))  # let the window open first
         while not self.stop_flag:
-            if self.cloud.configured():
-                self.cloud.sync()
+            try:
+                self.step()
+            except Exception:  # noqa: BLE001 — the worker never stops
+                log.exception("stock cloud worker")
             self._wake.wait(INTERVAL)
             self._wake.clear()

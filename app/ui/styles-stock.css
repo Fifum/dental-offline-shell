@@ -162,3 +162,14 @@ td.wrap{white-space:normal}
 .sp-qr img{width:180px;height:180px;border-radius:10px;border:1px solid var(--line);background:#fff;image-rendering:pixelated}
 .sp-qr>div{flex:1;min-width:200px}
 .sp-code{font-size:22px;font-weight:700;letter-spacing:.08em;margin:6px 0 10px}
+/* 3.18.2: the QR at once, the steps for the employee, a code for a computer outside the clinic's network */
+.sp-qr img{width:200px;height:200px}
+.sp-steps{margin:0 0 12px;padding-left:20px;font-size:13.5px;line-height:1.5}
+.sp-steps li{margin:0 0 6px}
+.sp-demo{margin:4px 0 10px;line-height:1.45}
+.sp-h4{margin:18px 0 6px;font-size:14px}
+.sp-more{margin-top:14px;font-size:13px}
+.sp-more summary{cursor:pointer;color:var(--muted)}
+.sp-more[open] summary{margin-bottom:8px}
+.sp-more .input{width:240px;max-width:100%;text-transform:uppercase}
+.sp-invite .sp-code{user-select:all}

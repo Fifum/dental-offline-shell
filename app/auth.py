@@ -426,7 +426,9 @@ METHOD_PERMS = {
     # 3.13: the cloud of the stock (connecting is checked for the director in Api) and the QR for the phones
     "stock_cloud_status": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
     "stock_cloud_phone": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
-    "stock_cloud_join": "settings", "stock_cloud_leave": "settings",
+    "stock_cloud_join": "settings", "stock_cloud_leave": "settings", "stock_cloud_invite": "settings",
+    # 3.18.2: the tab connects by itself (a new clinic of the cloud only for the director, checked in Api)
+    "stock_cloud_connect": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
     "stock_cloud_sync": ("settings", "stock_edit", "stock_approve"),
     # 3.0: the clinic network (accepting a computer and merging laptops are checked for the director in Api)
     "dp_main_status": ANY_USER, "dp_main_claim": "settings",
@@ -489,6 +491,7 @@ AUDITED = {
     "stock_request_reject": "Заявка на материалы отклонена", "stock_request_accept": "Заявка на материалы принята", "stock_use": "Расход материалов (медсестра — на согласование)",
     "stock_approval_decide": "Согласование списания материалов", "stock_approval_cancel": "Отмена списания на согласовании",
     "stock_cloud_join": "Склад подключён к облаку (телефоны)", "stock_cloud_leave": "Склад отключён от облака",
+    "stock_cloud_invite": "Код подключения другого компьютера к облаку склада",
     "stock_photo_set": "Фото материала или оборудования", "stock_photo_clear": "Фото материала или оборудования убрано",
     "amort_settings_save": "Амортизация оборудования в ОПиУ",
     "expenses_to_capex": "Расходы перенесены в «Покупку оборудования»",
