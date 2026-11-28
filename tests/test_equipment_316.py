@@ -182,8 +182,41 @@ for part in ("Справочники оборудования", "Быстрые 
              "Настройки системы", "Пользователи и права", "Интеграции", "Журнал изменений"):
     check(f"UI: {part}", part in sec)
 
-if __name__ == "__main__" and "--block1" in sys.argv:
-    print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
-    for f in FAIL:
-        print("  FAIL", f)
-    sys.exit(1 if FAIL else 0)
+# ================================================ block 2: «Журнал действий» --
+lg = a.equipment_log({"from": day(0), "to": day(0)})
+check("the log of today", lg["rows"] and all(x["at"][:10] == day(0) for x in lg["rows"]))
+check("tiles", lg["tiles"]["total"] == len(lg["rows"]) and lg["tiles"]["users"] >= 1 and lg["tiles"]["today"] >= lg["tiles"]["total"])
+ed = next(x for x in lg["rows"] if x["action"] == "edit" and x["equipment_id"] == eid)
+check("an edit: the action, the module, the cabinet, the changes", ed["action_title"] == "Редактирование" and ed["module"] == "Оборудование"
+      and ed["changes"] and ed["object"] == "Установка Sirona C8" and ed["inv_number"] == "СТ-001", ed)
+check("the suspicious edit", ed["suspicious"] and lg["tiles"]["suspicious"] >= 1)
+check("only the suspicious", all(x["suspicious"] for x in a.equipment_log({"from": day(0), "suspicious": True})["rows"]))
+st = next(x for x in lg["rows"] if x["kind"] == "settings")
+check("a change of the settings: its object and module", st["object"] and st["module"] in ("Настройки", "Справочники") and st["equipment_id"] == "")
+check("filters: user, action, object, module", all(x["user_name"] == "Ковалев А.В." for x in a.equipment_log({"user": "Ковалев А.В."})["rows"])
+      and all(x["action_title"] == "Редактирование" for x in a.equipment_log({"action": "Редактирование"})["rows"])
+      and all(x["equipment_id"] == eid for x in a.equipment_log({"object": eid})["rows"])
+      and all(x["module"] == "Обслуживание" for x in a.equipment_log({"module": "Обслуживание"})["rows"]))
+check("lists of the filters", {"users", "actions", "objects", "modules", "places"} <= set(lg["lists"]) and any(o["id"] == eid for o in lg["lists"]["objects"]))
+hidden = S.eq_log({"object": eid}, money=False)
+ch = [c for x in hidden["rows"] for c in x["changes"] if c.get("m")]
+check("without «Бухгалтерия» the sums are hidden", ch and all(c["old"] == "скрыто" and c["new"] == "скрыто" for c in ch) and all(not x["cost"] for x in hidden["rows"]))
+rq_ = next(x for x in a.equipment_log({"object": eid})["rows"] if x["kind"] == "service")
+check("the checklist of a work in the log", rq_["checklist"] and rq_["module"] == "Обслуживание")
+pid_ = a.equipment_purchase_save({"name": "Новый автоклав", "budget": 500000, "year": date.today().year + 1, "quarter": 1, "justification": "Старый изношен"})
+a.equipment_purchase_status(pid_, "send")
+pu = [x for x in a.equipment_log({"module": "Планирование"})["rows"] if x["kind"] == "purchase"]
+check("the purchase plan in the log", len(pu) >= 2 and any(x["action_title"] == "Создание" and "План закупок" in x["object"] for x in pu)
+      and any(x["action_title"] == "На согласование" for x in pu), pu[:2])
+ev_ = d.one("SELECT id FROM equipment_events WHERE equipment_id=? ORDER BY id DESC", (eid,))["id"]
+d.conn.execute("UPDATE equipment_events SET created_at=? WHERE id=?", (day(0) + " 23:40:00", ev_)); d.conn.commit()
+check("an action at night is suspicious", "ночью" in next(x for x in a.equipment_log({"object": eid})["rows"] if x["id"] == ev_)["suspicious"])
+old_card = {"ownership": None, "accounting": None, "qty": None, "name": "x"}
+check("an empty column of an old card is not a change", stockm.eq_changes(old_card, {"ownership": "own", "accounting": "amort", "qty": 1, "name": "x"}) == [])
+for part in ("Журнал действий", "Детали действия", "История изменений по объекту", "Подозрительных действий", "Активных пользователей"):
+    check(f"UI log: {part}", part in sec)
+
+print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
+for f in FAIL:
+    print("  FAIL", f)
+sys.exit(1 if FAIL else 0)

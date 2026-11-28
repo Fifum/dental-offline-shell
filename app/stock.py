@@ -275,8 +275,10 @@ def _fmt_val(v, kind):
 def eq_changes(old, new):
     """3.16: what changed in a card: [{f, t, old, new, m}] (m — money: hidden from someone without «Бухгалтерия»)."""
     out = []
+    dflt = {"ownership": "own", "accounting": "amort", "qty": 1}  # an empty column of an old card is its default, not a change
     for f, t, kind in EQ_DIFF:
         a, b = old.get(f), new.get(f)
+        a, b = (dflt[f] if a in (None, "") else a, dflt[f] if b in (None, "") else b) if f in dflt else (a, b)
         if kind == "m" or f in ("qty", "useful_months"):
             same = round(float(a or 0), 2) == round(float(b or 0), 2)
         else:

@@ -470,3 +470,9 @@
 .eqs-check label svg{width:16px;height:16px;color:var(--accent)}
 @media screen{:root[data-theme="dark"] .eqs-sus{background:#3A1B18;color:#F29C90}}
 @media (max-width:1250px){.eqs-lgrid.with{grid-template-columns:1fr}.eqs-det{position:static}}
+.eqs-filters .eqs-f{min-width:0}
+.eqs-filters .eqs-f select{width:100%;min-width:0}
+.eqs-reset[hidden]{display:none}
+.eqs-logt :is(th,td){padding:8px 8px}
+.eqs-logt td{font-size:13px}
+.eqs-logt td:nth-child(4){min-width:150px}
