@@ -11,9 +11,14 @@ patients. `sync_rows.sver` = the version the cloud of the stock has, so it gets 
 
 The staff who may sign in on a phone: active employees with a personal PIN of the stock app (users.phone_pin_hash, only its
 hash goes) and a right of the stock; the cloud checks every operation against their rights.
+
+3.16: photos of equipment taken on a phone wait in the cloud (a private bucket) until a laptop syncs: it takes each one into
+the gallery of its card (the first photo of a card becomes the main one), with who took it and when in the card's history,
+sends the new gallery rows up and then tells the cloud to forget the photo.
 """
 from __future__ import annotations
 
+import base64
 import datetime
 import hashlib
 import json
@@ -38,6 +43,16 @@ INTERVAL = 60          # seconds between syncs
 STATUS_EVERY = 600     # the clinic's status (phone code, devices) and the staff at least this often
 PUSH_LIMIT = 400
 TIMEOUT = 25
+PHOTO_BATCH = 10       # photos of equipment taken from the cloud in one sync
+
+
+def photo_note(p: dict) -> str:
+    """The line of the card's history for a photo from a phone: who took it (and the position) and when."""
+    who = (p.get("taken_name") or p.get("taken_by") or "сотрудник").strip()
+    role = (p.get("taken_role") or "").strip()
+    at = str(p.get("taken_at") or "")
+    when = f"{at[8:10]}.{at[5:7]}.{at[:4]} {at[11:16]}".strip() if len(at) >= 10 and at[4] == "-" else ""
+    return f"Фото с телефона: снял(а) {who}" + (f" ({role})" if role else "") + (f", {when}" if when else "")
 
 
 class StockCloudError(Exception):
@@ -89,15 +104,16 @@ def _tz() -> int:
 
 
 class StockCloud:
-    def __init__(self, db, store=None, node=None, transport=None):
+    def __init__(self, db, store=None, node=None, transport=None, files=None, stock=None):
         self.db = db
         self.store = store or Store()
         self.node = node or config.node_id()
         self.transport = transport or Http
+        self._files, self._stock = files, stock  # 3.16: the photos of equipment from the phones (the program's own objects)
         replica.install(db)
         self._lock = threading.Lock()
         self.state = {"last_ok": None, "last_try": None, "error": "", "offline": False, "running": False,
-                      "pushed": 0, "pulled": 0}
+                      "pushed": 0, "pulled": 0, "photos": 0, "photos_waiting": 0}
 
     # ------------------------------------------------------------ helpers --
     def _meta(self, k, default=None):
@@ -226,12 +242,15 @@ class StockCloud:
                 pushed += n
                 if not rejected and not full:
                     break
+            photos = self._photos(h)
             due = force_status or time.time() - int(self._meta("scloud_status_at", "0") or 0) > STATUS_EVERY
             self._send_staff(h, force=due)
             if due:
                 self.refresh_status(h)
             self.state.update(last_ok=time.strftime("%Y-%m-%d %H:%M:%S"), error="", offline=False, pushed=pushed, pulled=pulled)
-            return {"ok": True, "pushed": pushed, "pulled": pulled}
+            if photos:
+                self.state["photos"] = int(self.state.get("photos") or 0) + photos
+            return {"ok": True, "pushed": pushed, "pulled": pulled, "photos": photos}
         except StockCloudError as e:
             self.state.update(error=str(e), offline=e.code == -1)
             return {"ok": False, "message": str(e)}
@@ -312,6 +331,71 @@ class StockCloud:
                 c.execute("UPDATE sync_rows SET sver=ver WHERE tbl=? AND k=? AND ver=?", (r["tbl"], r["k"], r["ver"]))
         return len(acc), rejected, len(rows) >= PUSH_LIMIT
 
+    # ------------------------------------------------------------ photos --
+    def _photo_tools(self):
+        if self._files is None:
+            from files import Files
+            self._files = Files(self.db)
+        if self._stock is None:
+            from stock import Stock
+            self._stock = Stock(self.db)
+        return self._files, self._stock
+
+    def _photos(self, h) -> int:
+        """3.16: the photos of equipment the phones sent: into the galleries of the cards, then the cloud forgets them. The rows
+        of the gallery go up before the cloud is told, so a laptop syncing next sees the photo is in the card already."""
+        try:
+            r = h.post("/v1/photos", {"limit": PHOTO_BATCH})
+        except StockCloudError as e:
+            if e.code == -1:
+                raise
+            log.info("photos: %s", e)  # a cloud without photos yet: the stock itself is synced all the same
+            return 0
+        done, got = [], 0
+        for p in r.get("photos") or []:
+            try:
+                n = self._take_photo(h, p)
+            except StockCloudError as e:
+                if e.code == -1:
+                    raise
+                log.info("photo %s: %s", p.get("id"), e)
+                continue
+            except Exception:  # noqa: BLE001 — one bad photo does not stop the others
+                log.exception("photo %s", p.get("id"))
+                continue
+            if n is not None:
+                done.append(p["id"])
+                got += n
+        if done:
+            if got:
+                self._push(h)
+            h.post("/v1/photo_done", {"ids": done})
+        self.state["photos_waiting"] = max(0, int(r.get("waiting") or 0) - len(done))
+        return got
+
+    def _take_photo(self, h, p):
+        """1 — the photo is now in the card; 0 — nothing to add (in the card already, or the piece was disposed of, or the
+        file is not a picture), the cloud may forget it; None — the piece is not on this computer yet: later."""
+        files, stock = self._photo_tools()
+        did = "EDP-" + str(p.get("id") or "")[:80]  # the same photo is the same row of the gallery on every laptop
+        if self.db.one("SELECT 1 AS x FROM equipment_docs WHERE id=?", (did,)):
+            return 0
+        e = self.db.one("SELECT id, status, inv_number FROM equipment WHERE id=?", (str(p.get("equipment_id") or ""),))
+        if not e:
+            return None
+        if e["status"] == "written_off":
+            log.info("photo %s of a disposed piece %s is dropped", p.get("id"), e["id"])
+            return 0
+        data = base64.b64decode(h.post("/v1/photo", {"id": p["id"]}).get("data") or "")
+        who = (p.get("taken_name") or p.get("taken_by") or "").strip()
+        try:
+            ph = files.add_stock_photo(f"Фото с телефона {e['inv_number'] or ''}".strip() + ".jpg", data, who)
+        except ValueError as er:
+            log.warning("photo %s is not a picture: %s", p.get("id"), er)
+            return 0
+        stock.equipment_photo_add(e["id"], ph["id"], "Фото с телефона", who, doc_id=did, note=photo_note(p))
+        return 1
+
     # ------------------------------------------------------------- staff --
     def _staff_list(self, closed=False):
         """Who may sign in on a phone. `closed`: also everyone else of the clinic, with an empty PIN — the cloud never
@@ -349,9 +433,9 @@ class StockCloud:
 class StockCloudWorker(threading.Thread):
     """Syncs the cloud of the stock every minute while it is connected; `trigger()` asks for a sync right now."""
 
-    def __init__(self, db):
+    def __init__(self, db, files=None, stock=None):
         super().__init__(name="stock-cloud", daemon=True)
-        self.cloud = StockCloud(db)
+        self.cloud = StockCloud(db, files=files, stock=stock)
         self._wake = threading.Event()
         self.stop_flag = False
 

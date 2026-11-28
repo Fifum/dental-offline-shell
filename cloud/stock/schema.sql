@@ -218,3 +218,34 @@ begin
 end $$;
 
 revoke all on all functions in schema dd from public, anon, authenticated;
+
+-- 3.16 (migration «dd_equipment_photos»): photos of equipment taken on a phone. The picture lies in the private bucket
+-- «dd-photos» (no policies: only the edge function with the secret key reads and writes it) at <tenant>/<id>.jpg; this row
+-- says which piece it is of, who took it and when. A laptop takes it into the gallery of the card (claimed for 10 minutes,
+-- so two laptops do not take it at once) and confirms — then the row and the picture are deleted. `id` is the phone's id of
+-- the operation, so a photo sent twice is one photo.
+create table if not exists dd.photos(
+  tenant_id text not null references dd.tenants(id) on delete cascade,
+  id text not null,
+  equipment_id text not null,
+  inv_number text not null default '',
+  path text not null,
+  size int not null,
+  width int,
+  height int,
+  taken_by text not null default '',
+  taken_name text not null default '',
+  taken_role text not null default '',
+  taken_at text not null default '',
+  device_id text,
+  created_at timestamptz not null default now(),
+  claimed_by text,
+  claimed_at timestamptz,
+  primary key(tenant_id, id));
+create index if not exists photos_tenant on dd.photos(tenant_id, created_at);
+alter table dd.photos enable row level security;
+revoke all on dd.photos from public, anon, authenticated;
+
+insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
+values ('dd-photos', 'dd-photos', false, 3145728, array['image/jpeg'])
+on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;

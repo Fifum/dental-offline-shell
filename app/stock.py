@@ -3581,16 +3581,28 @@ class Stock:
                                           f"AND id IN ({','.join('?' * len(ids))})", tuple(ids))}
         return [i for i in ids if i in own]
 
-    def equipment_photo_add(self, eid, file_id, title="", user="", main=False):
+    def equipment_photo_add(self, eid, file_id, title="", user="", main=False, doc_id=None, note=""):
         """A photo into the gallery (a row of equipment_docs of the kind «photo»): the first one becomes the main one; the same
-        picture twice stays one photo."""
+        picture twice stays one photo. 3.16, a photo from a phone (stock_cloud.py): `doc_id` is the row's id made from the
+        cloud's photo, so two laptops taking the same photo make one row, and `note` is the line of the card's history (from a
+        phone, who took it, when)."""
         e = self._eq_live(eid)
         if not self.stock_photo_ids([file_id]):
             raise ValueError("Фото не найдено")
-        have = self.db.one("SELECT id FROM equipment_docs WHERE equipment_id=? AND kind='photo' AND file_id=? AND deleted=0", (e["id"], file_id))
+        have = self.db.one("SELECT id FROM equipment_docs WHERE (equipment_id=? AND kind='photo' AND file_id=? AND deleted=0) OR id=?",
+                           (e["id"], file_id, doc_id or ""))
         if not have:
             title = title or (self.db.one("SELECT title FROM patient_files WHERE id=?", (file_id,)) or {}).get("title") or "Фото"
-            self.equipment_doc_add(e["id"], "photo", title, file_id, user)
+            if doc_id:
+                title = _clean(title, 200)
+                with self.db.tx() as c:
+                    c.execute("INSERT INTO equipment_docs(id, equipment_id, kind, title, file_id, created_by, created_at, deleted) "
+                              "VALUES(?,?,'photo',?,?,?,?,0)", (doc_id, e["id"], title, file_id, user, _now()))
+                    if not e["photo_id"]:
+                        c.execute("UPDATE equipment SET photo_id=? WHERE id=?", (file_id, e["id"]))
+                    self._ev(c, e["id"], "doc", note or f"Фото: {title}", user)
+            else:
+                self.equipment_doc_add(e["id"], "photo", title, file_id, user)
         if main and e["photo_id"] != file_id:
             self.equipment_photo_main(e["id"], file_id, user)
         return e["id"]

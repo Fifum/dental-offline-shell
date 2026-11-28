@@ -10,6 +10,8 @@
 //          (header X-DD-Token: the laptop's token)
 // Phone:   POST /p/hello {code, name} → device token · /p/login {login, pin} (X-DD-Device) → session ·
 //          /p/me · /p/pull {since} · /p/op {op, kind, id, …} · /p/logout (X-DD-Session)
+// Photos:  a phone sends a photo of equipment (/p/op kind «equipment_photo»); it waits in the private bucket «dd-photos» until
+//          a laptop takes it: /v1/photos (the list, claimed for this laptop) · /v1/photo {id} · /v1/photo_done {ids}.
 import postgres from "npm:postgres@3.4.5";
 
 const sql = postgres(Deno.env.get("SUPABASE_DB_URL")!, { prepare: false, max: 3, idle_timeout: 20, connect_timeout: 10 });
@@ -27,6 +29,12 @@ const PIN_FAILS = 5;
 const LOCK_MIN = 15;
 const SESSION_H = 12;
 const MAIN = "Основной склад";
+const BUCKET = "dd-photos";
+const PHOTO_MAX = 3_000_000;          // bytes of one photo (the phone sends ~1200 px JPEG, 150–300 KB)
+const PHOTO_WAITING = 300;            // photos of a clinic no laptop has taken yet
+const PHOTO_BYTES = 250_000_000;      // and their bytes (the free plan has 1 GB of storage)
+const PHOTO_CLAIM_MIN = 10;           // a laptop that took the list has the photos to itself this long
+const PHOTO_KEEP_DAYS = 30;           // a photo nobody took is not kept for ever
 
 // ------------------------------------------------------------------------------------------------------------- helpers --
 class E extends Error {
@@ -112,6 +120,56 @@ function hide(t: string, row: any): any {
   return r;
 }
 
+// ------------------------------------------------------------------------------------------------- photos: the bucket --
+const SB_URL = (Deno.env.get("SUPABASE_URL") || "").replace(/\/+$/, "");
+function storageAuth(): Record<string, string> {
+  let secret = "";
+  try { secret = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}").default || ""; } catch { /* no new keys */ }
+  if (secret) return { apikey: secret };
+  const legacy = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  return { apikey: legacy, Authorization: `Bearer ${legacy}` };
+}
+async function storage(method: string, path: string, body?: BodyInit, headers: Record<string, string> = {}) {
+  const r = await fetch(`${SB_URL}/storage/v1/${path}`, { method, headers: { ...storageAuth(), ...headers }, body });
+  if (!r.ok) throw new Error(`storage ${method} ${path.split("/")[0]}: ${r.status} ${(await r.text().catch(() => "")).slice(0, 200)}`);
+  return r;
+}
+const putObject = (p: string, bytes: Uint8Array) =>
+  storage("POST", `object/${BUCKET}/${p}`, bytes, { "Content-Type": "image/jpeg", "x-upsert": "true", "Cache-Control": "no-store" });
+const getObject = async (p: string) => new Uint8Array(await (await storage("GET", `object/authenticated/${BUCKET}/${p}`)).arrayBuffer());
+const dropObjects = (paths: string[]) => paths.length
+  ? storage("DELETE", `object/${BUCKET}`, JSON.stringify({ prefixes: paths }), { "Content-Type": "application/json" }) : null;
+
+function unb64(s: string): Uint8Array {
+  const bin = atob(s), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+function b64(u: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+/** The width and height of a JPEG from its frame header, or null when the bytes are not a JPEG. */
+function jpegSize(u: Uint8Array): { w: number; h: number } | null {
+  if (u.length < 64 || u[0] !== 0xff || u[1] !== 0xd8 || u[2] !== 0xff) return null;
+  let i = 2;
+  while (i + 9 < u.length) {
+    if (u[i] !== 0xff) return null;
+    const m = u[i + 1];
+    if (m === 0xff) { i++; continue; }
+    if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+    const len = (u[i + 2] << 8) | u[i + 3];
+    if (len < 2) return null;
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      const h = (u[i + 5] << 8) | u[i + 6], w = (u[i + 7] << 8) | u[i + 8];
+      return w > 0 && h > 0 ? { w, h } : null;
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
 function ip(req: Request) {
   return (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "?";
 }
@@ -189,8 +247,9 @@ async function status(ctx: Ctx, f: any) {
   const devices = await sql`select id, kind, name, version, created_at, last_seen from dd.devices
                             where tenant_id = ${t.id} and not revoked order by kind, created_at`;
   const pc = String(t.phone_code || "");
+  const [ph] = await sql`select count(*)::int as n from dd.photos where tenant_id = ${t.id}`;
   return { tenant: t.id, name: t.name, seq: Number(t.seq), phone_code: pc ? pc.slice(0, 4) + "-" + pc.slice(4) : "",
-    device: ctx.device.id, devices, api: API };
+    device: ctx.device.id, devices, photos: ph.n, api: API };
 }
 
 function checkKey(k: unknown) {
@@ -233,6 +292,43 @@ async function staff(ctx: Ctx, f: any) {
   })).filter((u: any) => u.login);
   const [r] = await sql`select dd.set_staff(${ctx.tenant.id}, ${sql.json(list)}::jsonb) as n`;
   return { ok: true, staff: r.n };
+}
+
+// The photos of equipment waiting for a laptop, oldest first. Those given are claimed for this laptop for a while, so another
+// laptop syncing at the same moment does not take the same photo too.
+async function photos(ctx: Ctx, f: any) {
+  const lim = Math.max(1, Math.min(Number(f.limit) || 10, 50));
+  const old = await sql`delete from dd.photos where tenant_id = ${ctx.tenant.id}
+                        and created_at < now() - ${PHOTO_KEEP_DAYS + " days"}::interval returning path`;
+  if (old.length) await Promise.resolve(dropObjects(old.map((r: any) => r.path))).catch((e) => console.error("photos: old", e));
+  const rows = await sql`update dd.photos p set claimed_by = ${ctx.device.id}, claimed_at = now()
+                         where p.tenant_id = ${ctx.tenant.id} and p.id in (
+                           select id from dd.photos where tenant_id = ${ctx.tenant.id}
+                           and (claimed_by is null or claimed_by = ${ctx.device.id}
+                                or claimed_at < now() - ${PHOTO_CLAIM_MIN + " minutes"}::interval)
+                           order by created_at limit ${lim} for update skip locked)
+                         returning id, equipment_id, inv_number, size, width, height, taken_by, taken_name, taken_role, taken_at, created_at`;
+  const [n] = await sql`select count(*)::int as n from dd.photos where tenant_id = ${ctx.tenant.id}`;
+  rows.sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)));
+  return { photos: rows, waiting: n.n };
+}
+
+async function photo(ctx: Ctx, f: any) {
+  const [p] = await sql`select id, path from dd.photos where tenant_id = ${ctx.tenant.id} and id = ${clean(f.id, 80)}`;
+  if (!p) throw new E("Снимка уже нет в облаке", 404);
+  return { id: p.id, data: b64(await getObject(p.path)) };
+}
+
+// The laptop has the photos in the gallery of their cards: the cloud forgets them (the picture first, then the row, so a
+// failure leaves the row and the laptop confirms again next time).
+async function photoDone(ctx: Ctx, f: any) {
+  const ids = (Array.isArray(f.ids) ? f.ids : []).slice(0, 100).map((x: unknown) => clean(x, 80)).filter(Boolean);
+  if (!ids.length) return { done: 0 };
+  const rows = await sql`select id, path from dd.photos where tenant_id = ${ctx.tenant.id} and id = any(${sql.array(ids)}::text[])`;
+  await dropObjects(rows.map((r: any) => r.path));
+  const del = await sql`delete from dd.photos where tenant_id = ${ctx.tenant.id} and id = any(${sql.array(rows.map((r: any) => r.id))}::text[])
+                        returning id`;
+  return { done: del.length };
 }
 
 // ----------------------------------------------------------------------------------------------------- phone routes --
@@ -295,7 +391,7 @@ function me(ctx: Ctx) {
       receive: p.has("stock_edit") || p.has("stock_ops"), use: p.has("stock_edit") || p.has("stock_ops"),
       direct: p.has("stock_edit") || p.has("stock_approve"), approve: p.has("stock_approve"),
       request: p.has("stock_edit") || p.has("stock_ops"), handle_requests: p.has("stock_edit") || p.has("stock_approve"),
-      transfer: p.has("stock_edit") || p.has("stock_ops"), barcode: p.has("stock_edit") } };
+      transfer: p.has("stock_edit") || p.has("stock_ops"), barcode: p.has("stock_edit"), photo: p.has("equipment") } };
 }
 
 async function ppull(ctx: Ctx, f: any) {
@@ -741,6 +837,40 @@ async function opEquipmentEvent(ctx: Ctx, f: any) {
   return { id: e.data.id, message: "Записано" };
 }
 
+// A photo of equipment from the camera of a phone (made smaller there, ~1200 px JPEG): into the private bucket, with who took it
+// and when; a laptop takes it into the gallery of the card. The id of the operation is the photo's id, so a repeat is one photo.
+async function opEquipmentPhoto(ctx: Ctx, f: any) {
+  need(ctx, "equipment");
+  const e = await liveEq(ctx, f.id);
+  const raw = String(f.data ?? "").replace(/^data:image\/[a-z]+;base64,/, "").replace(/\s+/g, "");
+  if (!raw) throw new E("Нет снимка — сфотографируйте ещё раз");
+  if (raw.length > Math.ceil(PHOTO_MAX / 3) * 4 + 4) throw new E("Снимок больше 3 МБ — сфотографируйте ещё раз", 413);
+  let bytes: Uint8Array;
+  try { bytes = unb64(raw); } catch { throw new E("Снимок повреждён — сфотографируйте ещё раз"); }
+  if (bytes.length > PHOTO_MAX) throw new E("Снимок больше 3 МБ — сфотографируйте ещё раз", 413);
+  const dim = jpegSize(bytes);
+  if (!dim) throw new E("Можно отправить только фото в формате JPEG");
+  const [w] = await sql`select count(*)::int as n, coalesce(sum(size), 0)::bigint as b from dd.photos where tenant_id = ${ctx.tenant.id}`;
+  if (w.n >= PHOTO_WAITING || Number(w.b) + bytes.length > PHOTO_BYTES)
+    throw new E("В облаке много снимков, которые компьютер клиники ещё не забрал. Снимок подождёт в очереди телефона.", 507);
+  const id = clean(f.op, 80), path = `${ctx.tenant.id}/${id}.jpg`, now = localNow(ctx);
+  // the phone's own time of the picture (it may have waited in the queue without the network), never ahead of the clinic's
+  const t = String(f.taken_at ?? "").replace("T", " ").slice(0, 19);
+  const at = /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(t) && t <= now ? t : now;
+  await putObject(path, bytes);
+  try {
+    await sql`insert into dd.photos(tenant_id, id, equipment_id, inv_number, path, size, width, height, taken_by, taken_name, taken_role,
+                                    taken_at, device_id)
+              values (${ctx.tenant.id}, ${id}, ${e.data.id}, ${clean(e.data.inv_number, 40)}, ${path}, ${bytes.length}, ${dim.w}, ${dim.h},
+                      ${ctx.user.login}, ${who(ctx)}, ${clean(ctx.user.role_title, 80)}, ${at}, ${ctx.device.id})
+              on conflict (tenant_id, id) do nothing`;
+  } catch (er) {
+    await Promise.resolve(dropObjects([path])).catch(() => {});
+    throw er;
+  }
+  return { id: e.data.id, photo: id, message: "Фото отправлено — появится в карточке на компьютере клиники" };
+}
+
 async function opBarcode(ctx: Ctx, f: any) {
   need(ctx, "stock_edit");
   const m = await one(ctx, "materials", clean(f.id, 60));
@@ -758,6 +888,7 @@ const OPS: Record<string, (ctx: Ctx, f: any) => Promise<any>> = {
   receive: opReceive, use: opUse, decide: opDecide, approval_cancel: opApprovalCancel, request: opRequest,
   request_accept: opRequestStatus, request_reject: opRequestStatus, request_cancel: opRequestStatus, transfer: opTransfer,
   equipment_set: opEquipmentSet, equipment_inventory: opEquipmentInventory, equipment_event: opEquipmentEvent, barcode: opBarcode,
+  equipment_photo: opEquipmentPhoto,
 };
 
 // {op: the phone's own id of the operation (a repeat after a lost answer is done once), kind, id: the row it is about, …}
@@ -802,6 +933,9 @@ Deno.serve(async (req: Request) => {
       case "/v1/push": return json(req, await push(await laptop(req), f));
       case "/v1/pull": return json(req, await lpull(await laptop(req), f));
       case "/v1/staff": return json(req, await staff(await laptop(req), f));
+      case "/v1/photos": return json(req, await photos(await laptop(req), f));
+      case "/v1/photo": return json(req, await photo(await laptop(req), f));
+      case "/v1/photo_done": return json(req, await photoDone(await laptop(req), f));
       case "/v1/leave": {
         const c = await laptop(req);
         await sql`update dd.devices set revoked = true, token_hash = null where id = ${c.device.id}`;

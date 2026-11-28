@@ -379,6 +379,38 @@ def live():
     code_, ev = post("/p/op", {"op": f"lt{run}-eve-0001", "kind": "equipment_event", "id": eq, "event": "service",
                                "text": "ТО живой тест", "next_service": "30.06.2027"}, hdir)
     check("live: a service of the equipment", code_ == 200, ev)
+    # 3.16: a photo of the equipment from the phone's camera — only with the right «Оборудование», only a JPEG, at most 3 MB
+    import base64
+    import datetime
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (1200, 900), (180, 40, 40)).save(buf, "JPEG", quality=80)
+    jb64 = base64.b64encode(buf.getvalue()).decode()
+    code_, no_ph = post("/p/op", {"op": f"lt{run}-pho-0000", "kind": "equipment_photo", "id": eq, "data": jb64}, hs)
+    check("live: a nurse without «Оборудование» may not send a photo", code_ == 403, no_ph)
+    code_, bad_ph = post("/p/op", {"op": f"lt{run}-pho-0001", "kind": "equipment_photo", "id": eq,
+                                   "data": base64.b64encode(b"GIF89a" + b"x" * 300).decode()}, hdir)
+    check("live: not a JPEG is refused", code_ == 400 and "JPEG" in bad_ph.get("error", ""), (code_, bad_ph))
+    code_, big = post("/p/op", {"op": f"lt{run}-pho-0003", "kind": "equipment_photo", "id": eq,
+                                "data": base64.b64encode(b"\xff\xd8\xff" + os.urandom(3_100_000)).decode()}, hdir)
+    check("live: a photo over 3 MB is refused", code_ == 413, (code_, big))
+    shot = (datetime.datetime.now() - datetime.timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    code_, ph = post("/p/op", {"op": f"lt{run}-pho-0002", "kind": "equipment_photo", "id": eq, "data": jb64, "taken_at": shot}, hdir)
+    check("live: the director sends a photo", code_ == 200 and ph.get("photo") == f"lt{run}-pho-0002", (code_, ph))
+    _, again_ph = post("/p/op", {"op": f"lt{run}-pho-0002", "kind": "equipment_photo", "id": eq, "data": jb64}, hdir)
+    check("live: the same photo twice is one photo", again_ph.get("repeated") and again_ph.get("photo") == ph.get("photo"), again_ph)
+    check("live: the cloud has one photo waiting", c1.refresh_status().get("photos") == 1)
+    c1.sync()
+    dph = L1.one("SELECT * FROM equipment_docs WHERE id=?", ("EDP-" + str(ph.get("photo")),))
+    check("live: laptop 1 took the photo into the card", dph and dph["kind"] == "photo" and dph["equipment_id"] == eq and not dph["deleted"], dph)
+    fph = L1.one("SELECT width, height, patient_id FROM patient_files WHERE id=?", ((dph or {}).get("file_id") or "-",))
+    check("live: the photo is a stock photo of 1200 px", fph and fph["patient_id"] == "_stock" and fph["width"] == 1200, fph)
+    evp = L1.one("SELECT text, user_name FROM equipment_events WHERE equipment_id=? AND kind='doc' ORDER BY id DESC LIMIT 1", (eq,))
+    want_ev = f"Фото с телефона: снял(а) Директор Тест ({udir.get('role_title')}), {shot[8:10]}.{shot[5:7]}.{shot[:4]} {shot[11:16]}"
+    check("live: the history says it is from a phone and who took it", evp and evp["text"] == want_ev and evp["user_name"] == "Директор Тест",
+          (evp, want_ev))
+    check("live: the cloud forgot the photo", c1.refresh_status().get("photos") == 0)
     c1.sync()
     wa = L1.one("SELECT kind, status, doc_id FROM stock_approvals WHERE id=?", (wo.get("id"),)) or {}
     wd = L1.one("SELECT kind, reason FROM stock_docs WHERE id=?", (wa.get("doc_id") or "-",)) or {}

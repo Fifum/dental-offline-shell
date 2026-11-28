@@ -2869,7 +2869,7 @@ class Api:
     def _scloud(self):
         if self._stock_cloud is None:
             from stock_cloud import StockCloud
-            self._stock_cloud = StockCloud(self._db)
+            self._stock_cloud = StockCloud(self._db, files=self._files, stock=self._stock)
         return self._stock_cloud
 
     @staticmethod
@@ -3230,7 +3230,7 @@ def start_platform(api, db, holder=None):
     api._cloud, api._cloud_worker = w.cloud, w
     w.start()
     from stock_cloud import StockCloudWorker  # 3.13: the cloud of the stock for the phones of the staff
-    sw = StockCloudWorker(db)
+    sw = StockCloudWorker(db, files=api._files, stock=api._stock)  # 3.16: photos of equipment from the phones
     api._stock_cloud, api._stock_cloud_worker = sw.cloud, sw
     sw.start()
     updates.UpdateWorker().start()
