@@ -1,8 +1,8 @@
-/* ===== 3.13 «читабельный шрифт» and the stock's teal palette (loaded last) =====
+/* ===== 3.13 «читабельный шрифт» and the palette of the program (loaded last but one, before styles-skin.css) =====
    Inter (SIL OFL, fonts/Inter-OFL.txt) is built into the program, so it works offline; only 400–700 are shipped, so no
    thin weights can appear (a lighter weight asked anywhere falls to 400). Headings lose the serif small caps; the clinic's
-   brand mark and printed documents keep Playfair. The teal colors of the equipment card mockup are, after 3.13.0, the
-   palette of the whole program (light and dark); before they were only the stock's. */
+   brand mark and printed documents keep Playfair. The colors are the client's red and white mockup since 3.18.0
+   (teal of the equipment card mockup in 3.13–3.17): red on white in the light theme, red on graphite in the dark. */
 @font-face{font-family:"Inter";src:url("fonts/inter-cyrillic-400-normal.woff2") format("woff2");font-weight:400;font-style:normal;font-display:block;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
 @font-face{font-family:"Inter";src:url("fonts/inter-cyrillic-500-normal.woff2") format("woff2");font-weight:500;font-style:normal;font-display:block;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
 @font-face{font-family:"Inter";src:url("fonts/inter-cyrillic-600-normal.woff2") format("woff2");font-weight:600;font-style:normal;font-display:block;unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
@@ -25,31 +25,36 @@ h1,h2,.m-h h3,.panel h3,.phead2 h2,.ph-main h2,.sub-h,.cal-sub h1,.g-day,.doc-ca
 .brandmark b,.brand b{font-family:var(--font-brand)}
 :is(.doc-page,#printArea) :is(h1,h2,h3){font-family:var(--font-brand);font-variant:small-caps;letter-spacing:.02em;font-weight:500}
 
-/* --------------------------------------------- the whole program in teal (after 3.13.0; in 3.13.0 — the stock only) */
+/* --------------------------------------------- the whole program in red and white (3.18; teal 3.13–3.17) */
 :root{
-  --bg:#F2F6F7; --panel:#FFFFFF; --panel2:#F7FAFA; --hover:#F1F7F7; --sunken:#E6EEF0; --faint:#C5D3D6;
-  --line:#DFE8EA; --line2:#EBF1F2;
-  --ink:#13292D; --ink2:#3E5559; --muted:#6E8286;
-  --accent:#167C76; --accent-ink:#11645F; --accent-soft:#E4F3F1; --accent-line:#B9DEDA; --on-accent:#FFFFFF;
-  --primary:#167C76; --primary-hover:#11645F; --on-primary:#FFFFFF;
-  --graphite:#145F5C; --graphite-hover:#0E4A47; --on-graphite:#FFFFFF;
-  --beige:#E2EFEE; --beige2:#EEF6F5;
-  --ok:#1F8A4C; --ok-soft:#E2F5E8; --ok-line:#B7E0C5;
-  --focus-ring:rgba(22,124,118,.16);
-  --side:#102A2C; --side-ink:#C3D6D7; --side-mut:#7F9A9C; --side-hover:rgba(255,255,255,.06); --side-on:#167C76; --side-line:#2DB3A5;
-  --teal-bar:#2DB3A5; --teal-deep:#0E4F52; --teal-tile:#F5F9FA}
+  --bg:#F3F4F6; --panel:#FFFFFF; --panel2:#F8F9FA; --hover:#F5F6F8; --sunken:#EEF0F3; --faint:#C8CDD4;
+  --line:#E3E6EA; --line2:#EDEFF2; --gray-soft:#F1F2F4;
+  --ink:#1B1E23; --ink2:#454B54; --muted:#6B7280;
+  --accent:#D9262B; --accent-ink:#B81E23; --accent-soft:#FDEDED; --accent-line:#F5C6C8; --on-accent:#FFFFFF;
+  --primary:#D9262B; --primary-hover:#BD1F24; --on-primary:#FFFFFF;
+  --graphite:#2A2E35; --graphite-hover:#14171B; --on-graphite:#FFFFFF;
+  --beige:#ECEEF1; --beige2:#F5F6F8;
+  --ok:#1E8A4C; --ok-soft:#E5F5EB; --ok-line:#BDE3CA;
+  --focus-ring:rgba(217,38,43,.14);
+  --side:#FFFFFF; --side-ink:#2A2E35; --side-mut:#8A919B; --side-hover:#F5F6F8; --side-on:#FDEDED; --side-line:#D9262B;
+  --sw-on:#D9262B; --watermark:rgba(217,38,43,.035);
+  --shadow:0 1px 2px rgba(20,24,31,.05); --shadow-card:0 1px 3px rgba(20,24,31,.06),0 1px 2px rgba(20,24,31,.03);
+  --r:12px;
+  --teal-bar:#EF6B6F; --teal-deep:#8F1418; --teal-tile:#F8F9FA}
 body[data-view="stock"] #view-stock{background:var(--bg)}
 @media screen{
   :root[data-theme="dark"]{
-    --bg:#0E1719; --panel:#142124; --panel2:#182729; --hover:#1B2C2F; --sunken:#0B1314; --faint:#3A5155;
-    --line:#26393C; --line2:#1F3134;
-    --ink:#E4EEEE; --ink2:#B9CBCC; --muted:#8CA2A5;
-    --accent:#4FC5B8; --accent-ink:#6FD3C7; --accent-soft:#173634; --accent-line:#285A55; --on-accent:#08201E;
-    --primary:#3FB3A6; --primary-hover:#5CC9BC; --on-primary:#06201D;
-    --graphite:#4FC5B8; --graphite-hover:#79D8CD; --on-graphite:#08201E;
-    --beige:#203A3A; --beige2:#1A2E2F;
-    --ok:#6FD39A; --ok-soft:#173222; --ok-line:#2C5A3C;
-    --focus-ring:rgba(79,197,184,.22);
-    --side:#0A1516; --side-ink:#BFD0D1; --side-mut:#7A9395; --side-hover:rgba(255,255,255,.05); --side-on:#167C76; --side-line:#3FC2B3;
-    --teal-bar:#3FC2B3; --teal-deep:#0A3437; --teal-tile:#172628}
+    --bg:#111316; --panel:#191C20; --panel2:#1D2125; --hover:#22262B; --sunken:#0D0F12; --faint:#3D434B;
+    --line:#2A2F35; --line2:#22272C; --gray-soft:#22262B;
+    --ink:#ECEEF1; --ink2:#BCC2CA; --muted:#8C939C;
+    --accent:#DC3439; --accent-ink:#FF7A7E; --accent-soft:#3A1D20; --accent-line:#5E2A2E; --on-accent:#FFFFFF;
+    --primary:#DC3439; --primary-hover:#E8484D; --on-primary:#FFFFFF;
+    --graphite:#E4E7EB; --graphite-hover:#FFFFFF; --on-graphite:#16191D;
+    --beige:#2A2F35; --beige2:#22262B;
+    --ok:#6FD39A; --ok-soft:#163222; --ok-line:#2C5A3C;
+    --focus-ring:rgba(255,122,126,.22);
+    --side:#16191D; --side-ink:#C9CED5; --side-mut:#7F8790; --side-hover:#22262B; --side-on:#3A1D20; --side-line:#FF7A7E;
+    --sw-on:#DC3439; --watermark:rgba(255,122,126,.045);
+    --shadow:0 1px 2px rgba(0,0,0,.35); --shadow-card:none;
+    --teal-bar:#E8484D; --teal-deep:#5E1A1D; --teal-tile:#1D2125}
 }

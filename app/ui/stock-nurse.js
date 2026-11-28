@@ -74,8 +74,16 @@ function stockPicBy(rules, cats, name, category, fallback) {
   const key = r ? r[0] : cats[c] || (c.startsWith("хоз") && cats["хозяйственные товары"]) || fallback;
   return key ? STOCK_PIC_DIR + key + ".webp" : "";
 }
-/** The picture of a piece of equipment by its name and category («» — nothing fits: the usual placeholder). */
-const eqPic = (name, category) => stockPicBy(EQ_PIC_RULES, EQ_PIC_CATS, name, category, "");
+/** The picture of a piece of equipment («» — nothing fits: the usual placeholder): the words of its name decide first (they
+    are sure), then the picture the AI of the program chose for that name (STK.eq_pics, 3.18 — for the names the words do
+    not know), then the category. */
+const eqPicName = n => String(n || "").toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();  // as stock.eq_pic_name
+const eqPic = (name, category) => {
+  const n = ` ${eqPicName(name)} `, byWords = EQ_PIC_RULES.find(([, words]) => words.some(w => n.includes(w)));
+  if (byWords) return STOCK_PIC_DIR + byWords[0] + ".webp";
+  const ai = typeof STK !== "undefined" && STK && STK.eq_pics ? STK.eq_pics[eqPicName(name)] : "";
+  return ai && EQ_PIC_RULES.some(r => r[0] === ai) ? STOCK_PIC_DIR + ai + ".webp" : stockPicBy(EQ_PIC_RULES, EQ_PIC_CATS, name, category, "");
+};
 /** The picture of a material by its name and category; anything else — a plain carton box. */
 const matPic = (name, category) => stockPicBy(MAT_PIC_RULES, MAT_PIC_CATS, name, category, "box");
 /** Previews of the photos on the screen: the ones not loaded yet are fetched in one call. */

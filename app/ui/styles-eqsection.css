@@ -600,3 +600,11 @@
 @media (max-width:900px){.eqs-dgrid,.eqs-dgrid.with{grid-template-columns:1fr}}
 .eqs-doct .eqs-dtype{white-space:normal;line-height:1.2;text-align:center}
 .eqs-doct td:nth-child(3){min-width:110px}
+/* 3.18: bigger pictures of the equipment in the lists of the section (32 px were hard to make out), like the mockup;
+   a picture without a photo of its own stands free, without a frame */
+.eqs .sn-mat.sm{gap:12px}
+.eqs .sn-mat.sm .sn-ph{width:56px;height:56px;border-radius:10px}
+.eqs .sn-mat.sm .sn-ph svg{width:24px;height:24px}
+.eqs .sn-mat.sm .sn-ph.def{border-color:transparent;background:transparent}
+.eqs .sn-mat.sm .sn-ph.def img{padding:0}
+.eqs-ph{height:150px}

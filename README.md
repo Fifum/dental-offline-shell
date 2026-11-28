@@ -387,6 +387,17 @@ right the tasks of this person, critical balances, the nearest expiry dates and 
 
 `app/stock_flow.py` holds requests and approvals, `app/stock.py` the depreciation, `app/ui/stock-nurse.js` the screens.
 
+## Red and white, and pictures the AI chooses (3.18)
+
+* **The look only.** The client's mockup is a palette and a skin, not a new layout: the tokens of `styles-type.css` (red on
+  white; red on graphite in the dark theme) and `styles-skin.css`, loaded after every other sheet — a white menu with waves
+  drawn in CSS, a solid red main button, white secondary buttons with a hairline and a soft shadow, the chosen tab red.
+  `tests/test_skin_318.py` checks that the skin carries no layout properties and that the reds pass WCAG AA.
+* **Pictures of equipment without a photo.** A new or renamed piece asks the AI set in «Голос и ИИ» (local Ollama or a
+  service) in the background which of the 20 pictures of `ui/img/stock` fits; the key goes to `equipment.pic` and syncs
+  with the card. The window takes the words of the name first (they are sure), then the AI's choice for names the words do
+  not know, then the category (`eqPic` in `stock-nurse.js`, `tests/test_eq_ai_pic.py`).
+
 ## Architecture
 
 ```
