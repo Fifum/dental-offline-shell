@@ -23,9 +23,9 @@ const sql = postgres(Deno.env.get("SUPABASE_DB_URL")!, { prepare: false, max: 3,
 
 const API = 1;
 const TABLES = ["materials", "suppliers", "stock_locations", "stock_docs", "stock_moves", "stock_lots", "stock_settings",
-  "equipment", "equipment_events", "equipment_docs", "stock_requests", "stock_approvals"];
+  "equipment", "equipment_events", "equipment_docs", "stock_requests", "stock_approvals", "material_docs"];
 const STOCK_T = new Set(["materials", "suppliers", "stock_locations", "stock_docs", "stock_moves", "stock_lots", "stock_settings",
-  "stock_requests", "stock_approvals"]);
+  "stock_requests", "stock_approvals", "material_docs"]);
 const EQUIP_T = new Set(["equipment", "equipment_events", "equipment_docs", "stock_locations", "stock_settings"]);
 const EQ_MONEY = ["price", "salvage", "market_value", "replace_cost", "reserve_monthly", "disposal_amount", "residual"];
 const PHONE_PERMS = ["stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment", "accounting"];
@@ -444,10 +444,11 @@ async function photos(ctx: Ctx, f: any) {
   const rows = await sql`update dd.photos p set claimed_by = ${ctx.device.id}, claimed_at = now()
                          where p.tenant_id = ${ctx.tenant.id} and p.id in (
                            select id from dd.photos where tenant_id = ${ctx.tenant.id}
+                           and (${!!f.materials}::boolean or material_id = '')
                            and (claimed_by is null or claimed_by = ${ctx.device.id}
                                 or claimed_at < now() - ${PHOTO_CLAIM_MIN + " minutes"}::interval)
                            order by created_at limit ${lim} for update skip locked)
-                         returning id, equipment_id, inv_number, size, width, height, taken_by, taken_name, taken_role, taken_at, created_at`;
+                         returning id, equipment_id, material_id, inv_number, size, width, height, taken_by, taken_name, taken_role, taken_at, created_at`;
   const [n] = await sql`select count(*)::int as n from dd.photos where tenant_id = ${ctx.tenant.id}`;
   rows.sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)));
   return { photos: rows, waiting: n.n };
@@ -469,6 +470,15 @@ async function photoDone(ctx: Ctx, f: any) {
   const del = await sql`delete from dd.photos where tenant_id = ${ctx.tenant.id} and id = any(${sql.array(rows.map((r: any) => r.id))}::text[])
                         returning id`;
   return { done: del.length };
+}
+
+// 3.19: the phones of the clinic for a laptop's own copy — a phone on the clinic's Wi-Fi signs in at the computer by the same
+// PIN without the internet (the laptop checks the device's token and the PIN's hash; the rights come from its own staff).
+async function phones(ctx: Ctx) {
+  const rows = await sql`select id, name, login, pin_hash, token_hash, revoked, bound_at from dd.devices
+                         where tenant_id = ${ctx.tenant.id} and kind = 'phone' order by created_at`;
+  return { phones: rows.map((r: any) => ({ id: r.id, name: r.name || "", login: r.login || "", pin_hash: r.pin_hash || "",
+    token_hash: r.token_hash || "", revoked: !!r.revoked || !r.token_hash, bound_at: r.bound_at || null })) };
 }
 
 // ----------------------------------------------------------------------------------------------------- phone routes --
@@ -603,7 +613,8 @@ function me(ctx: Ctx) {
       receive: p.has("stock_edit") || p.has("stock_ops"), use: p.has("stock_edit") || p.has("stock_ops"),
       direct: p.has("stock_edit") || p.has("stock_approve"), approve: p.has("stock_approve"),
       request: p.has("stock_edit") || p.has("stock_ops"), handle_requests: p.has("stock_edit") || p.has("stock_approve"),
-      transfer: p.has("stock_edit") || p.has("stock_ops"), barcode: p.has("stock_edit"), photo: p.has("equipment") } };
+      transfer: p.has("stock_edit") || p.has("stock_ops"), barcode: p.has("stock_edit"), photo: p.has("equipment"),
+      photo_mat: p.has("stock_edit") || p.has("stock_ops") } };
 }
 
 async function ppull(ctx: Ctx, f: any) {
@@ -1049,26 +1060,38 @@ async function opEquipmentEvent(ctx: Ctx, f: any) {
   return { id: e.data.id, message: "Записано" };
 }
 
-// A photo of equipment from the camera of a phone (made smaller there, ~1200 px JPEG): into the private bucket, with who took it
-// and when; a laptop takes it into the gallery of the card. The id of the operation is the photo's id, so a repeat is one photo.
-async function opEquipmentPhoto(ctx: Ctx, f: any) {
-  need(ctx, "equipment");
-  const e = await liveEq(ctx, f.id);
+function photoBytes(f: any): Uint8Array {
   const raw = String(f.data ?? "").replace(/^data:image\/[a-z]+;base64,/, "").replace(/\s+/g, "");
   if (!raw) throw new E("Нет снимка — сфотографируйте ещё раз");
   if (raw.length > Math.ceil(PHOTO_MAX / 3) * 4 + 4) throw new E("Снимок больше 3 МБ — сфотографируйте ещё раз", 413);
   let bytes: Uint8Array;
   try { bytes = unb64(raw); } catch { throw new E("Снимок повреждён — сфотографируйте ещё раз"); }
   if (bytes.length > PHOTO_MAX) throw new E("Снимок больше 3 МБ — сфотографируйте ещё раз", 413);
+  return bytes;
+}
+
+async function roomForPhoto(ctx: Ctx, size: number) {
+  const [w] = await sql`select count(*)::int as n, coalesce(sum(size), 0)::bigint as b from dd.photos where tenant_id = ${ctx.tenant.id}`;
+  if (w.n >= PHOTO_WAITING || Number(w.b) + size > PHOTO_BYTES)
+    throw new E("В облаке много снимков, которые компьютер клиники ещё не забрал. Снимок подождёт в очереди телефона.", 507);
+}
+
+// the phone's own time of the picture (it may have waited in the queue without the network), never ahead of the clinic's
+function takenAt(ctx: Ctx, f: any): string {
+  const now = localNow(ctx), t = String(f.taken_at ?? "").replace("T", " ").slice(0, 19);
+  return /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(t) && t <= now ? t : now;
+}
+
+// A photo of equipment from the camera of a phone (made smaller there, ~1200 px JPEG): into the private bucket, with who took it
+// and when; a laptop takes it into the gallery of the card. The id of the operation is the photo's id, so a repeat is one photo.
+async function opEquipmentPhoto(ctx: Ctx, f: any) {
+  need(ctx, "equipment");
+  const e = await liveEq(ctx, f.id);
+  const bytes = photoBytes(f);
   const dim = jpegSize(bytes);
   if (!dim) throw new E("Можно отправить только фото в формате JPEG");
-  const [w] = await sql`select count(*)::int as n, coalesce(sum(size), 0)::bigint as b from dd.photos where tenant_id = ${ctx.tenant.id}`;
-  if (w.n >= PHOTO_WAITING || Number(w.b) + bytes.length > PHOTO_BYTES)
-    throw new E("В облаке много снимков, которые компьютер клиники ещё не забрал. Снимок подождёт в очереди телефона.", 507);
-  const id = clean(f.op, 80), path = `${ctx.tenant.id}/${id}.jpg`, now = localNow(ctx);
-  // the phone's own time of the picture (it may have waited in the queue without the network), never ahead of the clinic's
-  const t = String(f.taken_at ?? "").replace("T", " ").slice(0, 19);
-  const at = /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(t) && t <= now ? t : now;
+  await roomForPhoto(ctx, bytes.length);
+  const id = clean(f.op, 80), path = `${ctx.tenant.id}/${id}.jpg`, at = takenAt(ctx, f);
   await putObject(path, bytes);
   try {
     await sql`insert into dd.photos(tenant_id, id, equipment_id, inv_number, path, size, width, height, taken_by, taken_name, taken_role,
@@ -1081,6 +1104,30 @@ async function opEquipmentPhoto(ctx: Ctx, f: any) {
     throw er;
   }
   return { id: e.data.id, photo: id, message: "Фото отправлено — появится в карточке на компьютере клиники" };
+}
+
+// 3.19: a photo of a material, as one of equipment: the laptop puts it into the card's photos (material_docs «MDP-<op>»).
+async function opMaterialPhoto(ctx: Ctx, f: any) {
+  need(ctx, "stock_edit", "stock_ops");
+  const m = await one(ctx, "materials", clean(f.id, 60));
+  if (!m || Number(m.data.active ?? 1) !== 1) throw new E("Материал не найден или убран из справочника", 404);
+  const bytes = photoBytes(f);
+  const dim = jpegSize(bytes);
+  if (!dim) throw new E("Можно отправить только фото в формате JPEG");
+  await roomForPhoto(ctx, bytes.length);
+  const id = clean(f.op, 80), path = `${ctx.tenant.id}/${id}.jpg`;
+  await putObject(path, bytes);
+  try {
+    await sql`insert into dd.photos(tenant_id, id, equipment_id, material_id, inv_number, path, size, width, height, taken_by, taken_name,
+                                    taken_role, taken_at, device_id)
+              values (${ctx.tenant.id}, ${id}, '', ${m.data.id}, ${clean(m.data.number || m.data.code, 40)}, ${path}, ${bytes.length}, ${dim.w},
+                      ${dim.h}, ${ctx.user.login}, ${who(ctx)}, ${clean(ctx.user.role_title, 80)}, ${takenAt(ctx, f)}, ${ctx.device.id})
+              on conflict (tenant_id, id) do nothing`;
+  } catch (er) {
+    await Promise.resolve(dropObjects([path])).catch(() => {});
+    throw er;
+  }
+  return { id: m.data.id, photo: id, message: "Фото отправлено — появится в карточке материала на компьютере клиники" };
 }
 
 async function opBarcode(ctx: Ctx, f: any) {
@@ -1100,7 +1147,7 @@ const OPS: Record<string, (ctx: Ctx, f: any) => Promise<any>> = {
   receive: opReceive, use: opUse, decide: opDecide, approval_cancel: opApprovalCancel, request: opRequest,
   request_accept: opRequestStatus, request_reject: opRequestStatus, request_cancel: opRequestStatus, transfer: opTransfer,
   equipment_set: opEquipmentSet, equipment_inventory: opEquipmentInventory, equipment_event: opEquipmentEvent, barcode: opBarcode,
-  equipment_photo: opEquipmentPhoto,
+  equipment_photo: opEquipmentPhoto, material_photo: opMaterialPhoto,
 };
 
 // {op: the phone's own id of the operation (a repeat after a lost answer is done once), kind, id: the row it is about, …}
@@ -1151,6 +1198,7 @@ Deno.serve(async (req: Request) => {
       case "/v1/photos": return json(req, await photos(await laptop(req), f));
       case "/v1/photo": return json(req, await photo(await laptop(req), f));
       case "/v1/photo_done": return json(req, await photoDone(await laptop(req), f));
+      case "/v1/phones": return json(req, await phones(await laptop(req)));
       case "/v1/leave": {
         const c = await laptop(req);
         await sql`update dd.devices set revoked = true, token_hash = null where id = ${c.device.id}`;

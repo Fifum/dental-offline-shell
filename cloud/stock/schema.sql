@@ -392,3 +392,8 @@ begin
 end $$;
 
 revoke all on all functions in schema dd from public, anon, authenticated;
+
+-- 3.19 (migration «dd_material_photos»): photos of materials taken on a phone wait here as those of equipment do (`equipment_id`
+-- is empty, `material_id` says which material; `inv_number` is the material's number). A laptop of 3.19 takes them into the
+-- photos of the card (material_docs «MDP-<id>»); laptops before 3.19 are not given them (they would not know where to put them).
+alter table dd.photos add column if not exists material_id text not null default '';

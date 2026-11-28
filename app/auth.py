@@ -427,6 +427,8 @@ METHOD_PERMS = {
     "stock_cloud_status": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
     "stock_cloud_phone": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
     "stock_cloud_join": "settings", "stock_cloud_leave": "settings", "stock_cloud_invite": "settings",
+    "phone_wifi_state": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),  # 3.19
+    "phone_wifi_full": "settings",
     # 3.18.2: the tab connects by itself (a new clinic of the cloud only for the director, checked in Api)
     "stock_cloud_connect": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
     "stock_cloud_sync": ("settings", "stock_edit", "stock_approve"),

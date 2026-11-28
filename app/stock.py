@@ -878,12 +878,16 @@ class Stock:
                   (json.dumps(got), json.dumps(docs + [did]), "received" if full else "partial", _now(), oid))
 
     # ------------------------------------------------- 3.14: documents and analogs --
-    def material_doc_add(self, mid, kind, title, file_id, user=""):
+    def material_doc_add(self, mid, kind, title, file_id, user="", doc_id=None):
+        """3.19, a photo from a phone: `doc_id` is made from the phone's operation («MDP-<op>»), so the same photo taken by two
+        laptops from the cloud (or sent again) is one row."""
         m = self.db.one("SELECT id, photo_id FROM materials WHERE id=? AND active=1", (str(mid or ""),))
         if not m:
             raise ValueError("Материал не найден или убран из справочника")
         kind = kind if kind in MAT_DOC_KINDS else "other"
-        did = _id("MD")
+        if doc_id and self.db.one("SELECT 1 AS x FROM material_docs WHERE id=?", (doc_id,)):
+            return doc_id
+        did = doc_id or _id("MD")
         with self.db.tx() as c:
             c.execute("INSERT INTO material_docs(id, material_id, kind, title, file_id, created_by, created_at, deleted) VALUES(?,?,?,?,?,?,?,0)",
                       (did, m["id"], kind, _clean(title, 200) or MAT_DOC_KINDS[kind], file_id, user, _now()))

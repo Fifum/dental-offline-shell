@@ -30,6 +30,11 @@ by that PIN alone. So everyone active with a right of the stock goes to the clou
 at the computer (the old way: the clinic's QR, «Кто вы?», that PIN). A PIN reset by the director (users.phone_pin_at = the time
 of the reset), a dismissal or the rights taken away disconnect the bound phones in the cloud. The staff go up right after a
 change (the server wakes the worker), not only with the minute's sync.
+
+3.19: the phones on the clinic's Wi-Fi without the internet (phone_lan.py). With every sync this computer takes the list of the
+phones of the clinic (/v1/phones: the hashes of their tokens and of their own PINs) for its own copy, and says where it answers
+the phones on the Wi-Fi (the replicated setting of the stock `lan:<node>`: the cloud app shows «Склад через Wi-Fi клиники»).
+Photos of materials from the phones come into the photos of the card (material_docs «MDP-<id>»), as those of equipment do.
 """
 from __future__ import annotations
 
@@ -53,7 +58,7 @@ log = logging.getLogger("stock_cloud")
 DEFAULT_URL = "https://jdqlcvmcfqtvzuymxhgg.supabase.co/functions/v1/stock"
 PHONE_URL = "https://dental-desk-stock.vercel.app"
 TABLES = ("materials", "suppliers", "stock_locations", "stock_docs", "stock_moves", "stock_lots", "stock_settings",
-          "equipment", "equipment_events", "equipment_docs", "stock_requests", "stock_approvals")
+          "equipment", "equipment_events", "equipment_docs", "stock_requests", "stock_approvals", "material_docs")
 PHONE_PERMS = ("stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment", "accounting")
 STOCK_RIGHTS = {"stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment"}
 INTERVAL = 60          # seconds between syncs
@@ -386,6 +391,8 @@ class StockCloud:
                 if not rejected and not full:
                     break
             photos = self._photos(h)
+            self._phones(h)
+            self._publish_lan()
             due = force_status or time.time() - int(self._meta("scloud_status_at", "0") or 0) > STATUS_EVERY
             self._send_staff(h, force=due)
             if due:
@@ -488,7 +495,7 @@ class StockCloud:
         """3.16: the photos of equipment the phones sent: into the galleries of the cards, then the cloud forgets them. The rows
         of the gallery go up before the cloud is told, so a laptop syncing next sees the photo is in the card already."""
         try:
-            r = h.post("/v1/photos", {"limit": PHOTO_BATCH})
+            r = h.post("/v1/photos", {"limit": PHOTO_BATCH, "materials": True})  # 3.19: of materials too
         except StockCloudError as e:
             if e.code == -1:
                 raise
@@ -520,6 +527,8 @@ class StockCloud:
         """1 — the photo is now in the card; 0 — nothing to add (in the card already, or the piece was disposed of, or the
         file is not a picture), the cloud may forget it; None — the piece is not on this computer yet: later."""
         files, stock = self._photo_tools()
+        if p.get("material_id"):
+            return self._take_material_photo(h, p, files, stock)
         did = "EDP-" + str(p.get("id") or "")[:80]  # the same photo is the same row of the gallery on every laptop
         if self.db.one("SELECT 1 AS x FROM equipment_docs WHERE id=?", (did,)):
             return 0
@@ -538,6 +547,70 @@ class StockCloud:
             return 0
         stock.equipment_photo_add(e["id"], ph["id"], "Фото с телефона", who, doc_id=did, note=photo_note(p))
         return 1
+
+    def _take_material_photo(self, h, p, files, stock):
+        """3.19: a photo of a material → the photos of its card (the first one becomes the main photo)."""
+        did = "MDP-" + str(p.get("id") or "")[:80]
+        if self.db.one("SELECT 1 AS x FROM material_docs WHERE id=?", (did,)):
+            return 0
+        m = self.db.one("SELECT id, active, number, code FROM materials WHERE id=?", (str(p.get("material_id") or ""),))
+        if not m:
+            return None
+        if not int(m["active"] if m["active"] is not None else 1):
+            log.info("photo %s of a material removed from the list %s is dropped", p.get("id"), m["id"])
+            return 0
+        data = base64.b64decode(h.post("/v1/photo", {"id": p["id"]}).get("data") or "")
+        who = (p.get("taken_name") or p.get("taken_by") or "").strip()
+        try:
+            ph = files.add_stock_photo(f"Фото с телефона {m['number'] or m['code'] or ''}".strip() + ".jpg", data, who)
+        except ValueError as er:
+            log.warning("photo %s is not a picture: %s", p.get("id"), er)
+            return 0
+        stock.material_doc_add(m["id"], "photo", photo_note(p), ph["id"], who, doc_id=did)
+        return 1
+
+    # ---------------------------------------- 3.19: the phones on the clinic's Wi-Fi --
+    def _phones(self, h):
+        """The phones of the clinic for this computer's own copy (a phone on the Wi-Fi signs in here without the internet)."""
+        try:
+            r = h.post("/v1/phones")
+        except StockCloudError as e:
+            if e.code == -1:
+                raise
+            log.info("phones: %s", e)  # a cloud before 3.19
+            return 0
+        import phone_lan
+        return phone_lan.store_devices(self.db, r.get("phones") or [])
+
+    def _publish_lan(self):
+        """Where this computer answers the phones on the Wi-Fi: the replicated setting `lan:<node>` (changed only when the
+        address or the mode changes, so it does not make a new version every minute)."""
+        try:
+            import phone_lan
+            info = phone_lan.lan_info()
+        except Exception as e:  # noqa: BLE001
+            log.info("lan info: %s", e)
+            return False
+        if not info.get("http"):
+            return False
+        key = "lan:" + self.node
+        v = {"name": info["name"], "http": info["http"], "https": info["https"]}
+        try:
+            old = self.db.one("SELECT v FROM stock_settings WHERE k=?", (key,))
+            try:
+                same = old and {k: (json.loads(old["v"]) or {}).get(k) for k in v} == v
+            except (ValueError, TypeError, AttributeError):
+                same = False
+            if same:
+                return False
+            with self.db.tx() as c:
+                c.execute("INSERT OR REPLACE INTO stock_settings(k, v, updated_at) VALUES(?, ?, ?)",
+                          (key, json.dumps({**v, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
+                           time.strftime("%Y-%m-%d %H:%M:%S")))
+            return True
+        except Exception as e:  # noqa: BLE001 — no stock tables yet
+            log.info("lan setting: %s", e)
+            return False
 
     # ------------------------------------------------- 3.18.3: my phone --
     def pair(self, login):

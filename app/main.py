@@ -2963,6 +2963,55 @@ class Api:
             self._stock_cloud_worker.trigger()
         return r
 
+    # ------------------------------------------------- 3.19: the phones on the clinic's Wi-Fi --
+    def phone_wifi_state(self):
+        """Склад → Телефон, «Без интернета — через Wi-Fi клиники»: the addresses of this computer for the phones, the mode
+        with the scanner (the clinic's certificate) and the QR of the page the phones install it from."""
+        import clinic_ca
+        import crm
+        import phone_lan
+        srv = getattr(self, "_clinic_server", None)
+        info = phone_lan.lan_info()
+        full = bool(srv is not None and srv.httpsd is not None)
+        ca = clinic_ca.get()
+        ca_url = (info["http"] + "ca") if info.get("http") else ""
+        phones = 0
+        try:
+            phones = self._db.one("SELECT COUNT(*) AS n FROM phone_local_devices WHERE revoked=0")["n"]
+        except Exception:  # noqa: BLE001 — no table yet
+            pass
+        fw = None
+        if getattr(sys, "frozen", False) and os.name == "nt":
+            import installer
+            fw = installer.firewall_ok(sys.executable)
+        sc = getattr(self, "_stock_cloud", None)
+        return {"ip": info["ip"], "ips": info["ips"], "name": info["name"], "http": info["http"],
+                "https": info["https"] if full else "", "full": full, "want_full": bool(config.load_settings().get("phone_https")),
+                "ca": ca.state() if ca.exists() else {"ca": False}, "ca_url": ca_url if full else "",
+                "ca_qr": crm.qr_data_uri(ca_url) if full and ca_url else "", "phones": phones, "firewall": fw,
+                "cloud": bool(sc and sc.configured()), "director": self._is_director()}
+
+    @staticmethod
+    def _is_director():
+        u = _acting_user()
+        return u is None or u.get("role") == "director"
+
+    def phone_wifi_full(self, on=True):
+        """«Со сканером»: the clinic's certificate (made once), https on port+2; off — only the simple mode stays."""
+        self._director("Включать склад со сканером по Wi-Fi")
+        srv = getattr(self, "_clinic_server", None)
+        if srv is None:
+            raise ValueError("Сервер программы не запущен")
+        config.save_settings({"phone_https": bool(on)})
+        if on and not srv.start_https():
+            config.save_settings({"phone_https": False})
+            raise ValueError(f"Не удалось открыть защищённый адрес для телефонов (порт {srv.https_port} занят другой программой?)")
+        if not on:
+            srv.stop_https()
+        if self._stock_cloud_worker:  # the cloud app learns the new address at once
+            self._stock_cloud_worker.trigger()
+        return self.phone_wifi_state()
+
     def cloud_conflicts(self, show_seen=False):
         import replica
         return replica.conflicts(self._db, bool(show_seen))
@@ -3609,7 +3658,7 @@ class Setup:
         """Ask Windows (UAC prompt) to let other clinic computers reach this one (3.0: the installer does it too)."""
         import installer
         port = self._host.port()
-        return {"ok": installer.add_firewall_rule(sys.executable, port, port + 1)}
+        return {"ok": installer.add_firewall_rule(sys.executable, f"{port},{port + 2}", port + 1)}  # 3.19: https for phones
 
     def _go(self, url):
         self._error = ""

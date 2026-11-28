@@ -5,6 +5,11 @@ HTTP  :8765  — UI files, /api/<method> (data), /auth/<method> (login, staff), 
                /p2p/<method> (3.0: the clinic's computers exchange changes, sealed with the clinic key — p2p.py),
                GET /p2p/upd/<sha256> (3.12: a checked update file for another computer of the clinic)
 UDP   :8766  — answers "who is there?" broadcasts: this computer's node id and the clinic id (no patient data)
+HTTPS :8767  — 3.19: only the stock app of the phones (/s/...), with the certificate of the clinic (clinic_ca.py)
+
+3.19: /s/ — the stock app of a phone on the clinic's Wi-Fi, without the internet (the files of phone/, the same as on Vercel;
+its API /s/api/p/... is answered by phone_lan.py). On http (:8765) there is no camera scanner (a phone's browser gives the
+camera only to a secure page); on https (:8767, «со сканером») there is, once the phone trusts the clinic's certificate.
 
 3.0: every computer runs this server for itself (its own window, tablets, the other computers of the clinic).
 """
@@ -118,10 +123,42 @@ class _ExclusiveServer(ThreadingHTTPServer):
     allow_reuse_address = False
     request_queue_size = 128
 
+    def handle_error(self, request, client_address):  # a dropped connection is not a traceback on stderr
+        log.debug("connection from %s failed", client_address, exc_info=True)
+
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
+
+
+def phone_dir():
+    """The files of the phone app: bundled next to ui/ in the exe, the repository's phone/ while developing."""
+    from pathlib import Path
+    for d in (config.resource_dir() / "phone", Path(__file__).resolve().parent.parent / "phone"):
+        if (d / "index.html").exists():
+            return d
+    return None
+
+
+PHONE_CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; "
+             "connect-src 'self' https://cdn.jsdelivr.net https://fastly.jsdelivr.net; img-src 'self' data: blob:; "
+             "media-src 'self' blob:; style-src 'self'; font-src 'self'; worker-src 'self' blob:; manifest-src 'self'; "
+             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+PHONE_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+               ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png",
+               ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".json": "application/json"}
+CLOUD_APP = "https://dental-desk-stock.vercel.app"
+
+
+def phone_config(secure: bool) -> bytes:
+    """config.js of the app on this computer: its API is here, not in the cloud."""
+    return ("/* The stock app on the clinic's Wi-Fi: its API is this computer (app/phone_lan.py). */\n"
+            "window.DD_API = location.origin + \"/s/api\";\n"
+            "window.DD_LOCAL = true;\nwindow.DD_BASE = \"/s/\";\n"
+            f"window.DD_SECURE = {'true' if secure else 'false'};\n"
+            f"window.DD_CLOUD_APP = {json.dumps(CLOUD_APP)};\n"
+            "window.DD_SCAN_POLYFILL = \"https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/+esm\";\n").encode("utf-8")
 
 
 class ClinicServer:
@@ -129,7 +166,23 @@ class ClinicServer:
         self.api, self.db, self.port, self.host = api, db, port, host
         self.auth = Auth(db)
         self.httpd = None
+        self.httpsd = None  # 3.19: the stock app with the scanner (the clinic's certificate)
         self.ui_dir = str(config.resource_dir() / "ui")
+        self._phone = None
+        try:
+            api._clinic_server = self
+        except Exception:  # noqa: BLE001 — a test double without attributes
+            pass
+
+    @property
+    def https_port(self):
+        return self.port + 2
+
+    def phone(self):
+        if self._phone is None:
+            import phone_lan
+            self._phone = phone_lan.PhoneLan(self.api, self.db, self.auth)
+        return self._phone
 
     # ------------------------------------------------------------ dispatch --
     def call_auth(self, name, args, token, ip, agent, is_local):
@@ -244,7 +297,63 @@ class ClinicServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            secure = False  # the https server's handler: only the stock app of the phones
+
+            def _send(self, code, body, ctype, extra=()):
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                for k, v in extra:
+                    self.send_header(k, v)
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+
+            def _phone_get(self, path):
+                """3.19: the files of the phone app, its config for this computer, the clinic's certificate."""
+                head = (("Content-Security-Policy", PHONE_CSP), ("Referrer-Policy", "no-referrer"),
+                        ("Permissions-Policy", "camera=(self), microphone=(), geolocation=()"))
+                if path in ("/s", ""):
+                    self.send_response(302)
+                    self.send_header("Location", "/s/")
+                    self.end_headers()
+                    return None
+                rel = path[len("/s/"):]
+                if rel == "config.js":
+                    return self._send(200, phone_config(self.secure), PHONE_TYPES[".js"], head)
+                if rel in ("ca", "ca/", "ca.crt", "ca.pem", "ca.mobileconfig"):
+                    import phone_cert_page
+                    code, body, ctype, extra = phone_cert_page.serve(srv, rel, self.secure)
+                    return self._send(code, body, ctype, (*head, *extra))
+                d = phone_dir()
+                if d is None:
+                    return self._send(404, "Нет файлов приложения склада".encode(), "text/plain; charset=utf-8")
+                if rel in ("", "index.html", "j", "j/") or rel.startswith(("e/", "m/")):
+                    rel = "index.html"
+                f = (d / rel).resolve()
+                try:
+                    f.relative_to(d.resolve())
+                except ValueError:
+                    return self._send(404, b"", "text/plain")
+                if not f.is_file() or rel.startswith(".") or "/." in rel or f.name in ("vercel.json", "deploy.ps1") \
+                        or f.suffix in (".py", ".ps1"):
+                    return self._send(404, "Не найдено".encode(), "text/plain; charset=utf-8")
+                body = f.read_bytes()
+                if f.name == "index.html":  # the same page as on Vercel, its files under /s/
+                    body = body.replace(b'="/', b'="/s/')
+                elif f.name == "manifest.webmanifest":
+                    body = body.replace(b'"/', b'"/s/')
+                return self._send(200, body, PHONE_TYPES.get(f.suffix, "application/octet-stream"), head)
+
             def do_GET(self):
+                p = self.path.split("?")[0].split("#")[0]
+                if p == "/s" or p.startswith("/s/"):
+                    return self._phone_get(p)
+                if self.secure:  # the https port is only for the stock app
+                    self.send_response(302)
+                    self.send_header("Location", "/s/")
+                    self.end_headers()
+                    return None
                 if self.path.split("?")[0] == "/ping":
                     return self._json(200, server_info(srv.port))
                 if self.path.startswith("/p2p/upd/"):  # 3.12: an update file for a computer of the clinic
@@ -274,6 +383,11 @@ class ClinicServer:
                         args = [args]
                 except ValueError:
                     return self._json(400, {"error": "Неверный запрос"})
+                p = self.path.split("?")[0]
+                if p.startswith("/s/api/p/"):  # 3.19: the stock app of a phone on the clinic's Wi-Fi
+                    return self._phone_post(p[len("/s/api/p/"):], args[0] if args and isinstance(args[0], dict) else {}, ip)
+                if self.secure:
+                    return self._json(404, {"error": "Не найдено"})
                 token = self.headers.get("X-Session", "")
                 agent = self.headers.get("User-Agent", "")
                 kind, _, name = self.path.split("?")[0].lstrip("/").partition("/")
@@ -308,15 +422,104 @@ class ClinicServer:
                     log.exception("api %s failed", name)
                     return self._json(500, {"error": f"Ошибка на сервере: {e}"})
 
+            def _phone_post(self, name, body, ip):
+                import phone_lan
+                from auth import AuthError as AE
+                try:
+                    return self._json(200, srv.phone().handle(name, body, self.headers, ip))
+                except phone_lan.PhoneError as e:
+                    return self._json(e.code, {"error": str(e)})
+                except AE as e:
+                    return self._json(e.code, {"error": str(e)})
+                except (ValueError, KeyError, TypeError) as e:
+                    log.info("phone %s: %s", name, e)
+                    return self._json(400, {"error": str(e) or "Неверные данные"})
+                except Exception as e:  # noqa: BLE001
+                    log.exception("phone %s failed", name)
+                    return self._json(500, {"error": f"Ошибка на компьютере клиники: {e}"})
+
             def log_message(self, *a):
                 pass
 
+        class SecureHandler(Handler):
+            secure = True
+
+            def setup(self):  # the TLS handshake in this connection's own thread, never in the one that accepts
+                super().setup()
+                try:
+                    self.connection.do_handshake()
+                    self.tls_ok = True
+                except (OSError, ValueError):  # a phone that does not trust the clinic yet closes it here
+                    self.tls_ok = False
+
+            def handle(self):
+                if self.tls_ok:
+                    super().handle()
+
+            def finish(self):
+                try:
+                    super().finish()
+                except (OSError, ValueError):
+                    pass
+
+        self._handlers = (Handler, SecureHandler)
         self.httpd = _ExclusiveServer((self.host, self.port), Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, name="http", daemon=True).start()
         threading.Thread(target=self._discovery, name="discovery", daemon=True).start()
+        import phone_lan
+        phone_lan.SERVER["port"] = self.port
+        if self.https_on():
+            self.start_https()
+        threading.Thread(target=self._addresses_watch, name="cert-watch", daemon=True).start()
         log.info("server on %s:%s", self.host, self.port)
         return self
+
+    # ------------------------------------------- 3.19: https for the phones --
+    def https_on(self) -> bool:
+        return bool(config.load_settings().get("phone_https"))
+
+    def start_https(self):
+        """The stock app with the scanner: https on port+2 with the certificate of this computer from the clinic's root."""
+        if self.httpsd is not None or not getattr(self, "_handlers", None):
+            return self.httpsd is not None
+        import clinic_ca
+        import phone_lan
+        try:
+            ctx = clinic_ca.get().ssl_context(local_addresses())
+            httpsd = _ExclusiveServer((self.host, self.https_port), self._handlers[1], bind_and_activate=False)
+            httpsd.socket = ctx.wrap_socket(httpsd.socket, server_side=True, do_handshake_on_connect=False)
+            httpsd.server_bind()
+            httpsd.server_activate()
+        except Exception as e:  # noqa: BLE001 — the port is taken, a broken certificate: the http one works all the same
+            log.warning("https for the phones: %s", e)
+            return False
+        httpsd.daemon_threads = True
+        self.httpsd = httpsd
+        phone_lan.SERVER["https_port"] = self.https_port
+        threading.Thread(target=httpsd.serve_forever, name="https", daemon=True).start()
+        log.info("https for the phones on %s:%s", self.host, self.https_port)
+        return True
+
+    def stop_https(self):
+        import phone_lan
+        if self.httpsd is not None:
+            h, self.httpsd = self.httpsd, None
+            phone_lan.SERVER["https_port"] = 0
+            threading.Thread(target=lambda: (h.shutdown(), h.server_close()), daemon=True).start()
+
+    def _addresses_watch(self):
+        """A new address of this computer (another Wi-Fi, a router that gave another one): a new certificate for it."""
+        import time
+        while True:
+            time.sleep(600)
+            if self.httpsd is None:
+                continue
+            try:
+                import clinic_ca
+                clinic_ca.get().ensure_server(local_addresses())
+            except Exception:  # noqa: BLE001
+                log.exception("certificate of this computer")
 
     def _discovery(self):
         try:
@@ -335,6 +538,7 @@ class ClinicServer:
                 continue
 
     def stop(self):
+        self.stop_https()
         if self.httpd:
             self.httpd.shutdown()
 

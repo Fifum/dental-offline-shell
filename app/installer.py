@@ -103,13 +103,15 @@ def install_zip(zip_path, target_dir) -> str:
 
 # ------------------------------------------------------------- firewall (3.0) --
 TCP_PORT, UDP_PORT = 8765, 8766   # the program's server and the «who is there?» broadcasts of the clinic network
+HTTPS_PORT = 8767                  # 3.19: the stock app of the phones with the scanner (the clinic's certificate)
+TCP_PORTS = f"{TCP_PORT},{HTTPS_PORT}"
 
 
 def firewall_rule_name() -> str:
     return f"{config.BRAND['name']} — сеть клиники"
 
 
-def firewall_commands(exe, tcp=TCP_PORT, udp=UDP_PORT) -> list[str]:
+def firewall_commands(exe, tcp=TCP_PORTS, udp=UDP_PORT) -> list[str]:
     """netsh commands for an inbound rule: the program's ports, Private and Public networks (and a domain one).
     Without it Windows shows «Разрешить доступ?» on the first start, and on a «Public» network blocks the clinic.
     Public stays open on purpose: many clinic Wi-Fi networks are «Public» in Windows and the computers must see
@@ -129,10 +131,11 @@ def firewall_ok(exe) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     out = (r.stdout or b"").decode("cp866", "replace").lower()
-    return r.returncode == 0 and os.path.normcase(exe).lower() in out and str(TCP_PORT) in out and str(UDP_PORT) in out
+    return (r.returncode == 0 and os.path.normcase(exe).lower() in out and str(TCP_PORT) in out and str(UDP_PORT) in out
+            and str(HTTPS_PORT) in out)  # 3.19: an older rule without the phones' https → the program offers to update it
 
 
-def add_firewall_rule(exe, tcp=TCP_PORT, udp=UDP_PORT, wait=True) -> bool:
+def add_firewall_rule(exe, tcp=TCP_PORTS, udp=UDP_PORT, wait=True) -> bool:
     """One UAC prompt («Разрешить этому приложению вносить изменения?») when the rule is missing; nothing otherwise."""
     if os.name != "nt" or firewall_ok(exe):
         return True
