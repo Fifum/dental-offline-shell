@@ -2,8 +2,54 @@
 /* 3.13: «Телефон и облако склада» — the stock and the equipment for the phones of the staff (stock_cloud.py).
    3.18.2: nothing to type — the tab connects this computer by itself (to the cloud of its clinic, a new one only for the
    director; in the demo a demo clinic of this computer) and shows the QR at once. A computer outside the clinic's network
-   joins by a code a connected one makes. */
-const SP_PIN = "«Мой профиль» → «Телефон: склад и сканер» → «Создать ПИН»";
+   joins by a code a connected one makes.
+   3.18.3: «Подключить мой телефон» first — a one-time QR of the employee signed in here: the camera of the phone opens it, the
+   person makes up a PIN of their own, and that phone is theirs. The clinic's QR with a PIN made at the computer is second. */
+const SP_PIN = "«Мой профиль» → «Телефон: склад и сканер» → «ПИН для общего QR клиники»";
+const SP_STOCK = ["stock_view", "stock_ops", "stock_edit", "stock_approve", "equipment"];
+const spMine = () => !!(ME && ME.login && (ME.perms || []).some(p => SP_STOCK.includes(p)));
+
+/* the personal QR in `box`: 15 minutes, one phone; «Новый QR-код» replaces it (a forgotten PIN, another phone) */
+async function spPair(box) {
+  box.innerHTML = `<p class="hint">Готовим ваш QR-код…</p>`;
+  let r;
+  try { r = await api.stock_cloud_pair(); } catch (e) {
+    box.innerHTML = `<div class="warn-line bad">${esc(errText(e))}</div><div class="row"><button class="btn" data-again>Повторить</button></div>`;
+    $("[data-again]", box).onclick = () => spPair(box);
+    return;
+  }
+  if (!box.isConnected) return;
+  const until = Date.now() + (r.minutes || 15) * 60000;
+  box.innerHTML = `<div class="sp-qr sp-mine"><img src="${r.qr}" alt="Ваш QR-код для телефона">
+    <div><ol class="sp-steps">
+        <li>Откройте <b>обычную камеру</b> телефона, наведите на этот QR-код и нажмите на ссылку.</li>
+        <li>Придумайте <b>свой ПИН из 6 цифр</b> и повторите его. Телефон запомнит, что он ваш${r.name ? ` (${esc(r.name)})` : ""}.</li>
+        <li>Дальше склад на этом телефоне открывается только вашим ПИН-кодом. «Поделиться» → «На экран Домой» — как приложение.</li></ol>
+      <p class="hint sp-left" data-left></p>
+      <div class="row"><button class="btn ghost small" data-new>Новый QR-код</button></div></div></div>`;
+  const left = $("[data-left]", box), img = $("img", box);
+  const tick = () => {
+    if (!left.isConnected) return clearInterval(t);
+    const s = Math.max(0, Math.round((until - Date.now()) / 1000));
+    left.textContent = s ? `QR-код ваш и одноразовый — не показывайте его другим. Действует ещё ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}.`
+      : "QR-код устарел — нажмите «Новый QR-код».";
+    img.classList.toggle("sp-old", !s);
+    if (!s) clearInterval(t);
+  };
+  const t = setInterval(tick, 1000); tick();
+  $("[data-new]", box).onclick = () => spPair(box);
+}
+
+/* «Мой профиль» and the tab: the block «Подключить мой телефон» (one press — the QR) */
+function spMyPhoneHtml(id) {
+  return `<p class="hint">Наведите камеру телефона на ваш личный QR-код и придумайте свой ПИН из 6 цифр — больше ничего не нужно.
+    Забыли ПИН или новый телефон — подключите ещё раз.</p>
+    <div id="${id}"><div class="row"><button class="btn" data-pair>Подключить мой телефон</button></div></div>`;
+}
+function spBindMyPhone(root, id) {
+  const b = $(`#${id} [data-pair]`, root);
+  if (b) b.onclick = () => spPair($(`#${id}`, root));
+}
 
 async function stockPhone(again) {
   const body = $("#stockBody");
@@ -82,8 +128,11 @@ function spBindCode(switching) {
 function spConnected(body, st) {
   const dir = isDirector();
   const others = Math.max(0, (st.laptops || 0) - 1);
+  const mine = spMine();
   body.innerHTML = `<div class="sp-grid">
-    <div class="panel sp-panel" id="spPhone"><h3>Подключить телефон</h3><p class="hint">Загружаем QR-код…</p></div>
+    <div class="sp-col">
+    ${mine ? `<div class="panel sp-panel" id="spMy"><h3>Подключить мой телефон</h3>${spMyPhoneHtml("spMyBox")}</div>` : ""}
+    <div class="panel sp-panel" id="spPhone"><h3>${mine ? "Общий QR-код клиники" : "Подключить телефон"}</h3><p class="hint">Загружаем QR-код…</p></div></div>
     <div class="panel sp-panel">
       <h3>Облако склада</h3>
       ${st.demo ? `<div class="warn-line sp-demo"><b>Демо-режим.</b> Телефон увидит тестовый склад этого компьютера — это отдельная демо-клиника облака, настоящего склада в ней нет.
@@ -94,7 +143,7 @@ function spConnected(body, st) {
         <dt>Ждёт отправки</dt><dd id="spPending">${st.pending ? `${st.pending} строк` : "ничего"}</dd>
         <dt>Компьютеров</dt><dd>${st.laptops || 1}</dd>
         <dt>Телефонов</dt><dd>${st.phones || 0}</dd>
-        <dt>Могут войти</dt><dd>${st.staff ? `${st.staff} сотр. с ПИН-кодом` : `никто: ПИН создают в ${SP_PIN}`}</dd>
+        <dt>С правами склада</dt><dd>${st.staff ? `${st.staff} сотр.` : "никого"}</dd>
       </dl>
       <p class="hint">Склад, оборудование, заявки и списания на согласовании ходят туда и обратно раз в минуту. Пациентов в облаке нет.</p>
       <div class="row"><button class="btn" id="spSync">Синхронизировать</button>${dir ? `<button class="btn ghost" id="spLeave">Отключить этот компьютер</button>` : ""}<span class="msg" id="spMsg"></span></div>
@@ -126,7 +175,8 @@ function spConnected(body, st) {
     } catch (e) { out.innerHTML = `<div class="warn-line bad">${esc(errText(e))}</div>`; }
   };
   spBindCode(true);
-  spLoadQr();
+  spBindMyPhone(body, "spMyBox");
+  spLoadQr(mine);
 }
 
 const spStatePill = (st) => st.error ? `<span class="pill st-cancel">${esc(st.error)}</span>` : st.last_ok ? `<span class="pill st-ok">Синхронизировано ${esc(st.last_ok.slice(11, 16))}</span>` : `<span class="pill">Ждёт первой синхронизации</span>`;
@@ -139,17 +189,20 @@ async function spRefreshState() {
   } catch (e) { /* the next opening shows it */ }
 }
 
-async function spLoadQr() {
+/* the clinic's QR (before 3.18.3 the only way): for whoever has no own QR — the person chooses themselves on the phone and
+   types a PIN made at the computer. Each employee connects their own phone easier at their own computer session. */
+async function spLoadQr(mine) {
+  const h = mine ? "Общий QR-код клиники" : "Подключить телефон";
   try {
     const p = await api.stock_cloud_phone();
     if (!$("#spPhone")) return;
-    $("#spPhone").innerHTML = `<h3>Подключить телефон</h3>
-      <div class="sp-qr">${p.qr ? `<img src="${p.qr}" alt="QR-код склада клиники для телефона">` : ""}
-        <div><ol class="sp-steps">
-            <li>Сотрудник наводит <b>обычную камеру телефона</b> на QR-код и открывает ссылку — откроется склад клиники.</li>
-            <li>Выбирает себя и вводит свой <b>ПИН из 6 цифр</b>. ПИН каждый создаёт себе в программе: ${SP_PIN}.</li>
-            <li>«Поделиться» → «На экран Домой» — склад откроется как приложение.</li></ol>
+    const qr = `<div class="sp-qr">${p.qr ? `<img src="${p.qr}" alt="QR-код склада клиники для телефона">` : ""}
+        <div><p class="hint"><b>Проще всего:</b> каждый сотрудник входит в программу под своим именем и нажимает «Подключить мой телефон»
+          (здесь или в «Мой профиль») — свой QR-код, свой ПИН.</p>
+          <ol class="sp-steps">
+            <li>Общий QR-код: сотрудник наводит камеру телефона, выбирает себя и вводит ПИН из 6 цифр, созданный в программе: ${SP_PIN}.</li></ol>
           <p class="hint">Камера не открывает ссылку? Откройте на телефоне <b>${esc(p.app.replace(/^https?:\/\//, ""))}</b> и введите код клиники:</p>
           <div class="sp-code mono">${esc(p.code)}</div></div></div>`;
-  } catch (e) { if ($("#spPhone")) $("#spPhone").innerHTML = `<h3>Подключить телефон</h3><div class="warn-line bad">${esc(errText(e))}</div>`; }
+    $("#spPhone").innerHTML = mine ? `<details class="sp-more sp-clinic"><summary>${h}: для тех, кто создал ПИН на компьютере</summary>${qr}</details>` : `<h3>${h}</h3>${qr}`;
+  } catch (e) { if ($("#spPhone")) $("#spPhone").innerHTML = `<h3>${h}</h3><div class="warn-line bad">${esc(errText(e))}</div>`; }
 }

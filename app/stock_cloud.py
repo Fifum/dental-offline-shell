@@ -23,6 +23,13 @@ at once, and the other computers of the clinic join the same clinic by themselve
 that is not in the clinic's network joins by a code a connected one makes («Код для другого компьютера», a day). A demo
 program has a demo clinic of its own (a random secret of this computer): the test stock never meets the real one, and the
 demo connection ends when the program leaves the demo. The provider's DDS-… codes keep working.
+
+3.18.3: «Подключить мой телефон». The employee signed in at the computer gets a one-time QR of their own (15 minutes, `pair`):
+the camera of the phone opens it, the person makes up a PIN of their own there, and the phone is bound to them — later it opens
+by that PIN alone. So everyone active with a right of the stock goes to the cloud with their rights, with or without a PIN made
+at the computer (the old way: the clinic's QR, «Кто вы?», that PIN). A PIN reset by the director (users.phone_pin_at = the time
+of the reset), a dismissal or the rights taken away disconnect the bound phones in the cloud. The staff go up right after a
+change (the server wakes the worker), not only with the minute's sync.
 """
 from __future__ import annotations
 
@@ -532,6 +539,29 @@ class StockCloud:
         stock.equipment_photo_add(e["id"], ph["id"], "Фото с телефона", who, doc_id=did, note=photo_note(p))
         return 1
 
+    # ------------------------------------------------- 3.18.3: my phone --
+    def pair(self, login):
+        """«Подключить мой телефон»: a one-time QR of this employee (an https link the ordinary camera opens; 15 minutes, a new
+        one replaces it). The staff go up first, so the cloud knows the person's rights right now."""
+        if not self._mode_ok() or not self.configured():
+            raise StockCloudError("Сначала подключите облако склада")
+        login = str(login or "").lower()
+        me = next((x for x in self._staff_list() if x["login"] == login), None)
+        if not me:
+            raise StockCloudError("У вашей должности нет прав склада — телефону нечего показать")
+        h = self._http()
+        self._send_staff(h, force=True)
+        r = h.post("/v1/pair", {"login": login})
+        url = f"{self.phone_url()}/j#{r['token']}"
+        import crm
+        return {"url": url, "qr": crm.qr_data_uri(url), "minutes": int(r.get("minutes") or 15), "name": me["name"],
+                "app": self.phone_url(), "demo": bool(self.store.load().get("demo"))}
+
+    def phones_of(self, login) -> int:
+        """How many phones are bound to this employee (from the last status of the cloud)."""
+        st = json.loads(self._meta("scloud_status") or "{}")
+        return sum(1 for d in st.get("devices") or [] if d.get("kind") == "phone" and (d.get("login") or "") == str(login or "").lower())
+
     # ------------------------------------------------------------- staff --
     def _staff_list(self, closed=False):
         """Who may sign in on a phone. `closed`: also everyone else of the clinic, with an empty PIN — the cloud never
@@ -546,14 +576,14 @@ class StockCloud:
         out = []
         for u in users:
             perms = set(auth.Auth.effective_perms(u)) & set(PHONE_PERMS)
-            if u.get("status") != "active" or not u.get("phone_pin_hash") or not perms & STOCK_RIGHTS:
+            if u.get("status") != "active" or not perms & STOCK_RIGHTS:
                 if closed and u.get("login"):
                     out.append({"login": u["login"].lower(), "name": "", "role": "", "role_title": "", "perms": [],
                                 "pin_hash": None, "pin_at": ""})
                 continue
             out.append({"login": (u["login"] or "").lower(), "name": u.get("name") or u["login"], "role": u.get("role") or "",
                         "role_title": titles.get(u.get("role") or "", u.get("position") or ""), "perms": sorted(perms),
-                        "pin_hash": u["phone_pin_hash"], "pin_at": u.get("phone_pin_at") or ""})
+                        "pin_hash": u.get("phone_pin_hash") or None, "pin_at": u.get("phone_pin_at") or ""})
         return out
 
     def _send_staff(self, h, force=False):
@@ -561,7 +591,7 @@ class StockCloud:
         sig = hashlib.sha256(json.dumps(staff, sort_keys=True).encode()).hexdigest()
         if not force and sig == self._meta("scloud_staff"):
             return False
-        h.post("/v1/staff", {"staff": staff})
+        h.post("/v1/staff", {"staff": staff, "v": 2})  # 3.18.3: the whole list (with or without a PIN made here)
         self._meta_set("scloud_staff", sig)
         return True
 

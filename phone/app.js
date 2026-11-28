@@ -1,7 +1,9 @@
 "use strict";
 /* Dental Desk — склад в телефоне. A static PWA over the cloud of the stock (cloud/stock/functions/stock/index.ts):
    the clinic code once → who are you → a personal 6-digit PIN; rows of the stock live in IndexedDB (works offline),
-   operations go to a queue with their own id (`op`), so a repeat after a lost answer is done once. */
+   operations go to a queue with their own id (`op`), so a repeat after a lost answer is done once.
+   3.18.3: the personal QR («Подключить мой телефон» at the computer, /j#<20 letters>): the person makes up a PIN of their own,
+   the phone is bound to them (S.device.login) and later opens by that PIN alone, with their name shown. */
 const API = window.DD_API;
 const MAIN = "Основной склад", SOON = 30, DAY = 864e5;
 const $ = (s, el = document) => el.querySelector(s), $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -14,7 +16,7 @@ const LS = {
 };
 const S = { device: LS.get("device"), session: LS.get("session"), user: LS.get("user"), clinic: LS.get("clinic") || "",
   staff: LS.get("staff") || [], since: LS.get("since") || 0, last: LS.get("last") || 0, rows: new Map(), queue: [],
-  syncing: false, stopCam: null, code: "", form: null, photos: [] };
+  syncing: false, stopCam: null, code: "", form: null, photos: [], pair: null };
 let D = {};
 
 /* ------------------------------------------------------------------------------------------------ small helpers */
@@ -265,7 +267,7 @@ function page(title, body, opt = {}) {
   window.scrollTo(0, 0);
 }
 function gate(body) { stopCam(); app.className = "bare"; app.innerHTML = `<div class="gate">${body}</div>`; }
-const brand = () => `<div class="brand"><i>${ico("scan").replace('class="ico"', 'class="ico c-brand"')}</i>Склад клиники${S.clinic ? " · " + esc(S.clinic) : ""}</div>`;
+const brand = (clinic = S.clinic) => `<div class="brand"><i>${ico("scan").replace('class="ico"', 'class="ico c-brand"')}</i>Склад клиники${clinic ? " · " + esc(clinic) : ""}</div>`;
 const empty = (b, s = "") => `<div class="list"><div class="empty"><b>${esc(b)}</b>${esc(s)}</div></div>`;
 function sheet(html, bind) {
   const s = document.createElement("div");
@@ -280,14 +282,20 @@ function sheet(html, bind) {
 const go = (h) => { if (location.hash === h) route(); else location.hash = h; };
 
 /* ------------------------------------------------------------------------------------------------ sign-in */
-const PIN_WHERE = "в программе на компьютере: «Мой профиль» → «Телефон: склад и сканер» → «Создать ПИН»";
+const PIN_WHERE = "в программе на компьютере: «Мой профиль» → «Телефон: склад и сканер» → «ПИН для общего QR клиники»";
+const MY_QR = "на компьютере клиники войдите в программу под своим именем и нажмите «Подключить мой телефон»";
 function viewCode(err) {
-  gate(`${brand()}<h1>Подключите телефон к клинике</h1>
-    <p>Наведите обычную камеру телефона на QR-код в программе на компьютере: Склад и материалы → Телефон. Или введите код клиники, он там же.</p>
+  gate(`${brand()}<h1>Подключите свой телефон</h1>
+    <ol class="steps"><li><b>На компьютере</b> клиники войдите в программу под своим именем и нажмите <b>«Подключить мой телефон»</b>
+        (Склад → Телефон или «Мой профиль»).</li>
+      <li>Наведите <b>обычную камеру</b> телефона на QR-код и откройте ссылку.</li>
+      <li>Придумайте <b>свой ПИН</b> из 6 цифр — телефон запомнит, что он ваш.</li></ol>
+    <details class="more"${err || S.code ? " open" : ""}><summary>Есть код клиники?</summary>
     <label class="fld"><span>Код клиники</span><input id="code" class="inp codein" maxlength="9" autocomplete="off" autocapitalize="characters"
       spellcheck="false" placeholder="XXXX-XXXX" value="${esc(S.code)}"></label>
     ${err ? `<div class="note bad">${esc(err)}</div>` : ""}
-    <button class="btn" id="join">Подключить</button>`);
+    <button class="btn ghost" id="join">Подключить по коду</button>
+    <p class="small muted">Код клиники и общий QR — для тех, кто создал ПИН на компьютере.</p></details>`);
   const inp = $("#code");
   inp.oninput = () => { const v = inp.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8); inp.value = v.length > 4 ? v.slice(0, 4) + "-" + v.slice(4) : v; };
   $("#join").onclick = async () => {
@@ -333,24 +341,30 @@ async function freshStaff() {  // → true when the list of who may sign in has 
     return true;
   } catch (e) { signedOut(e); return false; }
 }
+const bound = () => !!(S.device && S.device.login);
 function chosen() {
+  if (bound()) return { login: S.device.login, name: S.device.name, role_title: S.device.role_title };
   if (S.pick) return S.pick;
   if (S.user) return S.staff.find((x) => x.login === S.user.login) || (S.staff.length ? null : { login: S.user.login, name: S.user.name, role_title: S.user.role_title });
   return S.staff.length === 1 ? S.staff[0] : null;
 }
 
 function viewPin(openList, draft = "") {
-  const u = chosen(), n = S.staff.length;
+  const u = chosen(), n = S.staff.length, own = bound();
   let pin = draft;
-  gate(`${brand()}<h1>Вход по ПИН-коду</h1><p>Выберите себя и введите свой ПИН из 6 цифр.</p>
-    <button class="who" id="who">${u ? `<span class="av">${esc(initials(u.name || u.login))}</span><span class="t"><b>${esc(u.name || u.login)}</b>
+  gate(`${brand()}<h1>${own ? `Здравствуйте, ${esc(String(u.name || u.login).split(" ")[0])}` : "Вход по ПИН-коду"}</h1>
+    <p>${own ? "Введите свой ПИН-код из 6 цифр." : "Выберите себя и введите свой ПИН из 6 цифр."}</p>
+    ${own ? `<div class="who own"><span class="av">${esc(initials(u.name || u.login))}</span><span class="t"><b>${esc(u.name || u.login)}</b>
+      <small>${esc(u.role_title || "Сотрудник")} · это ваш телефон</small></span></div>`
+    : `<button class="who" id="who">${u ? `<span class="av">${esc(initials(u.name || u.login))}</span><span class="t"><b>${esc(u.name || u.login)}</b>
       <small>${esc(u.role_title || "Сотрудник")}</small></span><span class="chg">Сменить</span>`
-      : `<span class="av none">?</span><span class="t"><b>Выберите себя</b><small>${n ? `${n} ${plural(n, "сотрудник", "сотрудника", "сотрудников")} с ПИН-кодом` : "Пока ни у кого нет ПИН-кода"}</small></span><span class="chg">›</span>`}</button>
+      : `<span class="av none">?</span><span class="t"><b>Выберите себя</b><small>${n ? `${n} ${plural(n, "сотрудник", "сотрудника", "сотрудников")} с ПИН-кодом` : "Пока ни у кого нет ПИН-кода"}</small></span><span class="chg">›</span>`}</button>`}
     <div class="dots" id="dots">${"<i></i>".repeat(6)}</div><div id="err" class="note bad" hidden></div>
-    <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `<button data-k="${k}">${k}</button>`).join("")}
-      <span></span><button data-k="0">0</button><button class="fn" data-k="del">Стереть</button></div>
-    <p class="small muted mt18 center">Нет ПИН-кода? Его создают ${PIN_WHERE}.</p>
-    <p class="small muted center">Не та клиника? <a href="#" id="other">Подключить другую</a></p>`);
+    ${padHtml()}
+    ${own ? `<p class="small muted mt18 center">Забыли ПИН? ${MY_QR} ещё раз — и придумайте новый.</p>
+      <p class="small muted center">Не ваш телефон? <a href="#" id="other">Отключить его</a></p>`
+    : `<p class="small muted mt18 center">Нет ПИН-кода? Проще всего: ${MY_QR} — и наведите камеру на свой QR-код.</p>
+      <p class="small muted center">Не та клиника? <a href="#" id="other">Подключить другую</a></p>`}`);
   const dots = () => $$("#dots i").forEach((d, i) => d.classList.toggle("on", i < pin.length));
   dots();
   const send = async (who) => {
@@ -366,17 +380,21 @@ function viewPin(openList, draft = "") {
       const er = $("#err"); er.hidden = false; er.textContent = e.net ? "Нет связи. Для входа нужен интернет." : e.message;
     }
   };
-  $("#who").onclick = () => pickWho(pin);
+  if ($("#who")) $("#who").onclick = () => pickWho(pin);
   $$(".pad button").forEach((b) => (b.onclick = () => {
     const k = b.dataset.k;
     if (k === "del") pin = pin.slice(0, -1); else if (pin.length < 6) pin += k;
     dots();
     if (pin.length === 6) { if (u) send(u); else pickWho(pin); }  // the PIN typed first: whose it is, then it goes
   }));
-  $("#other").onclick = async (e) => { e.preventDefault(); await call("/p/leave", {}, "device").catch(() => {}); await forget(); route(); };
+  $("#other").onclick = async (e) => {
+    e.preventDefault();
+    if (own && !confirm("Отключить этот телефон? Данные склада на нём сотрутся; подключить снова можно своим QR-кодом с компьютера.")) return;
+    await call("/p/leave", {}, "device").catch(() => {}); await forget(); route();
+  };
   if (draft.length === 6 && u) send(u);
-  else if (openList || (!u && n > 1 && !draft)) pickWho(pin);
-  freshStaff().then((changed) => {
+  else if (!own && (openList || (!u && n > 1 && !draft))) pickWho(pin);
+  if (!own) freshStaff().then((changed) => {
     if (!changed || S.session || !/^#\/(pin|who)?$/.test(location.hash || "#/")) return;
     if (S.pick && !S.staff.some((x) => x.login === S.pick.login)) S.pick = null;  // a PIN taken away meanwhile
     if (!$(".sheet") && !pin) viewPin();
@@ -386,8 +404,9 @@ function viewPin(openList, draft = "") {
 function pickWho(draft) {
   const list = () => S.staff.length ? `<div class="list">${S.staff.map((u, i) => `<button class="row" data-u="${i}">
       <span class="av">${esc(initials(u.name || u.login))}</span><span class="t"><b>${esc(u.name || u.login)}</b><small>${esc(u.role_title || "")}</small></span>›</button>`).join("")}</div>`
-    : `<div class="list"><div class="empty"><b>Нет сотрудников с ПИН-кодом</b>Создайте ПИН ${PIN_WHERE} и обновите список.</div></div>
-       <button class="btn soft mt16" id="again">Обновить список</button>`;
+    : `<div class="list"><div class="empty"><b>Нет сотрудников с ПИН-кодом</b>Проще всего: ${MY_QR} и наведите камеру на свой QR-код.
+       Или создайте ПИН ${PIN_WHERE} — список обновится сам.</div></div>
+       <button class="btn ghost mt16" id="again">Обновить список</button>`;
   sheet(`<h3>Кто вы?</h3>${S.staff.length > 8 ? `<input class="inp" id="q" placeholder="Поиск по имени" autocomplete="off">` : ""}<div id="ppl" class="mt8">${list()}</div>
     <button class="btn ghost mt16" data-close>Закрыть</button>`, (box, close) => {
     const bind = () => {
@@ -396,12 +415,90 @@ function pickWho(draft) {
       if (a) a.onclick = async () => { a.disabled = true; await freshStaff(); $("#ppl", box).innerHTML = list(); bind(); };
     };
     bind();
+    // 3.18.3: a PIN made at the computer right now comes in a few seconds — the list looks again by itself
+    const auto = setInterval(async () => {
+      if (!box.isConnected) return clearInterval(auto);
+      if (S.staff.length || document.visibilityState !== "visible") return;
+      if (await freshStaff() && box.isConnected) { $("#ppl", box).innerHTML = list(); bind(); }
+    }, 4000);
     const q = $("#q", box);
     if (q) q.oninput = () => {
       const t = q.value.trim().toLowerCase();
       $$("[data-u]", box).forEach((b) => { const u = S.staff[+b.dataset.u]; b.hidden = !!t && !`${u.name} ${u.role_title}`.toLowerCase().includes(t); });
     };
   });
+}
+
+const padHtml = () => `<div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `<button data-k="${k}">${k}</button>`).join("")}
+      <span></span><button data-k="0">0</button><button class="fn" data-k="del">Стереть</button></div>`;
+/* the same rule as the cloud and app/auth.py: no same digits, no runs, no repeated pairs or triples */
+const weakPin = (p) => new Set(p).size <= 2 || "01234567890123".includes(p) || "98765432109876".includes(p) || p.slice(0, 3) === p.slice(3) || p.slice(0, 2).repeat(3) === p;
+
+async function viewPair() {
+  const tok = S.pair;
+  gate(`${brand("")}<h1>Подключаю телефон…</h1><p class="muted">Проверяю QR-код.</p>`);
+  let info;
+  try { info = await call("/p/pair_info", { token: tok }); }
+  catch (e) {
+    S.pair = null;
+    gate(`${brand()}<h1>QR-код не подошёл</h1><div class="note bad">${esc(e.net ? "Нет связи. Для подключения нужен интернет — попробуйте ещё раз." : e.message)}</div>
+      <button class="btn" id="ok">${S.device ? "Вернуться" : "Понятно"}</button>`);
+    $("#ok").onclick = () => route();
+    return;
+  }
+  const first = String(info.name || "").split(" ")[0];
+  let one = "";
+  const draw = (again, err) => {
+    let pin = "";
+    const n = S.queue.length;
+    gate(`${brand(info.clinic)}<h1>Здравствуйте${first ? ", " + esc(first) : ""}!</h1>
+      <p>${again ? "Повторите ПИН-код, чтобы не ошибиться." : "Придумайте ПИН-код из 6 цифр — им вы будете открывать склад на этом телефоне."}</p>
+      <div class="who own"><span class="av">${esc(initials(info.name))}</span><span class="t"><b>${esc(info.name || "")}</b>
+        <small>${esc(info.role_title || "Сотрудник")}${info.demo ? " · демо-склад" : ""}</small></span></div>
+      ${S.device && n ? `<div class="note warn">На телефоне в очереди ${n} ${plural(n, "операция", "операции", "операций")} прежнего входа — если это другой человек или другая клиника, они пропадут.</div>` : ""}
+      <div class="dots" id="dots">${"<i></i>".repeat(6)}</div><div id="err" class="note bad"${err ? "" : " hidden"}>${esc(err || "")}</div>
+      ${padHtml()}
+      <p class="small muted mt18 center">${again ? `<a href="#" id="back">Начать заново</a>` : "Не берите дату рождения или 123456 — ПИН знаете только вы."}</p>`);
+    const dots = () => $$("#dots i").forEach((d, i) => d.classList.toggle("on", i < pin.length));
+    const fail = (m) => { pin = ""; dots(); const d = $("#dots"); d.classList.remove("shake"); void d.offsetWidth; d.classList.add("shake"); const er = $("#err"); er.hidden = false; er.textContent = m; };
+    const b = $("#back");
+    if (b) b.onclick = (e) => { e.preventDefault(); one = ""; draw(false); };
+    $$(".pad button").forEach((x) => (x.onclick = async () => {
+      const k = x.dataset.k;
+      if (k === "del") pin = pin.slice(0, -1); else if (pin.length < 6) pin += k;
+      dots();
+      if (pin.length < 6) return;
+      if (!again) {
+        if (weakPin(pin)) return fail("Слишком простой ПИН-код (одинаковые цифры или подряд) — придумайте другой");
+        one = pin; return draw(true);
+      }
+      if (pin !== one) { one = ""; return draw(false, "ПИН-коды не совпали — придумайте ещё раз"); }
+      $$(".pad button").forEach((y) => (y.disabled = true));
+      try { await bind(pin); }
+      catch (e) {
+        $$(".pad button").forEach((y) => (y.disabled = false));
+        if (e.status === 410 || e.status === 403) { S.pair = null; gate(`${brand(info.clinic)}<h1>QR-код не подошёл</h1><div class="note bad">${esc(e.message)}</div><button class="btn" id="ok">Понятно</button>`); $("#ok").onclick = () => route(); return; }
+        fail(e.net ? "Нет связи. Для подключения нужен интернет." : e.message);
+      }
+    }));
+  };
+  const bind = async (pin) => {
+    const r = await call("/p/pair", { token: tok, pin, name: phoneName() });
+    const same = LS.get("owner") === r.login && S.clinic === r.clinic;
+    if (S.device) await call("/p/leave", {}, "device").catch(() => {});  // the phone's previous connection ends
+    if (!same) {
+      S.rows = new Map(); S.since = 0; S.queue = []; S.photos = [];
+      await idbClear("rows").catch(() => {}); await idbClear("queue").catch(() => {}); await idbClear("photos").catch(() => {});
+      index();
+    }
+    S.device = { id: r.device, token: r.token, login: r.login, name: r.user.name, role_title: r.user.role_title };
+    S.session = r.session; S.user = r.user; S.clinic = r.clinic || ""; S.staff = []; S.pair = null; S.pick = null;
+    LS.set("device", S.device); LS.set("session", S.session); LS.set("user", S.user); LS.set("clinic", S.clinic);
+    LS.set("owner", r.login); LS.set("since", S.since); LS.del("staff");
+    toast("Телефон подключён — теперь он ваш");
+    go(S.after || "#/"); S.after = null; sync();
+  };
+  draw(false);
 }
 
 /* ------------------------------------------------------------------------------------------------ home */
@@ -853,8 +950,10 @@ function viewMe() {
       <small>${new Date(q.at).toLocaleString("ru-RU")}${q.error ? " · не прошло: " + esc(q.error) : " · ждёт связи"}</small>
       <button class="btn ghost mt8 short" data-drop="${esc(q.op)}">Убрать из очереди</button></div>`).join("")}</div>` : ""}
     <div class="acts mt16"><button class="btn soft" id="upd">Обновить данные</button><button class="btn ghost" id="out">Выйти</button></div>
+    ${bound() ? `<button class="btn ghost mb10" id="newpin">Сменить ПИН-код</button>` : ""}
     <button class="btn bad" id="leave">Отключить телефон от клиники</button>
-    <p class="small muted">Выйти — вернуться ко входу по ПИН-коду (например, чтобы вошёл другой сотрудник). Отключить — стереть данные склада с этого телефона.</p>`, { tab: "#/me" });
+    <p class="small muted">${bound() ? "Это ваш телефон: он открывается вашим ПИН-кодом. Выйти — закрыть склад до следующего ввода ПИН." : "Выйти — вернуться ко входу по ПИН-коду (например, чтобы вошёл другой сотрудник)."} Отключить — стереть данные склада с этого телефона.</p>`, { tab: "#/me" });
+  if ($("#newpin")) $("#newpin").onclick = newPinSheet;
   $("#upd").onclick = () => sync(true);
   $("#out").onclick = () => { call("/p/logout", {}, "session").catch(() => {}); S.session = null; LS.del("session"); go("#/pin"); };
   $("#leave").onclick = async () => {
@@ -864,9 +963,32 @@ function viewMe() {
   $$("[data-drop]").forEach((b) => (b.onclick = async () => { await dropQ(b.dataset.drop); viewMe(); }));
 }
 
+function newPinSheet() {
+  sheet(`<h3>Сменить ПИН-код</h3>
+    <label class="fld"><span>Текущий ПИН</span><input class="inp pinin" id="p0" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></label>
+    <label class="fld"><span>Новый ПИН из 6 цифр</span><input class="inp pinin" id="p1" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></label>
+    <label class="fld"><span>Новый ПИН ещё раз</span><input class="inp pinin" id="p2" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></label>
+    <div id="perr" class="note bad" hidden></div>
+    <button class="btn" id="psave">Сменить</button><button class="btn ghost mt8" data-close>Отмена</button>`, (el, close) => {
+    const v = (id) => $(id, el).value.replace(/\D/g, "");
+    const err = (m) => { const e = $("#perr", el); e.hidden = false; e.textContent = m; };
+    $$(".pinin", el).forEach((i) => (i.oninput = () => { i.value = i.value.replace(/\D/g, "").slice(0, 6); }));
+    $("#p0", el).focus();
+    $("#psave", el).onclick = async () => {
+      const [a, b, c] = [v("#p0"), v("#p1"), v("#p2")];
+      if (a.length !== 6 || b.length !== 6) return err("ПИН-код — 6 цифр");
+      if (b !== c) return err("Новые ПИН-коды не совпали");
+      if (weakPin(b)) return err("Слишком простой ПИН-код (одинаковые цифры или подряд) — придумайте другой");
+      try { await call("/p/pin", { old: a, pin: b }, "session"); close(); toast("ПИН-код изменён"); }
+      catch (e) { if (!signedOut(e)) err(e.net ? "Нет связи. Для смены ПИН нужен интернет." : e.message); }
+    };
+  });
+}
+
 /* ------------------------------------------------------------------------------------------------ router */
 function route() {
   const h = location.hash.slice(1) || "/", [path, qstr] = h.split("?"), qs = new URLSearchParams(qstr || ""), p = path.split("/").filter(Boolean);
+  if (S.pair) return viewPair();
   if (S.switchTo) return viewSwitch();
   if (!S.device) {
     if (["inv", "mat", "e", "m"].includes(p[0])) S.after = location.hash;  // a label scanned before the phone was connected
@@ -899,7 +1021,7 @@ function route() {
 }
 let rt;
 function render() {  // after new data: redraw the screen, except a form being filled or a camera
-  if (S.stopCam || /^#\/(do|pin|who)/.test(location.hash) || $(".sheet") || document.activeElement?.matches("input,textarea,select")) return badge();
+  if (S.pair || S.stopCam || /^#\/(do|pin|who)/.test(location.hash) || $(".sheet") || document.activeElement?.matches("input,textarea,select")) return badge();
   clearTimeout(rt); rt = setTimeout(route, 30);
 }
 
@@ -912,7 +1034,9 @@ async function boot() {
     const code = decodeURIComponent(location.hash.slice(1)).toUpperCase().replace(/[^A-Z0-9]/g, "");
     history.replaceState(null, "", "/#/");
     const pretty = code.slice(0, 4) + "-" + code.slice(4);
-    if (code.length === 8 && !S.device) S.code = pretty;
+    if (code.length === 20) S.pair = code;  // 3.18.3: the personal QR «Подключить мой телефон»
+    else if (code.length === 8 && bound()) { /* a phone of one person: the clinic's QR changes nothing */ }
+    else if (code.length === 8 && !S.device) S.code = pretty;
     else if (code.length === 8 && LS.get("pcode") === null) LS.set("pcode", code);  // connected before 3.18.2: the same clinic
     else if (code.length === 8 && LS.get("pcode") !== code) S.switchTo = pretty;     // the QR of another clinic: ask first
   }

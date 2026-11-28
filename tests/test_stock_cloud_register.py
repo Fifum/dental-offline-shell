@@ -346,11 +346,11 @@ check("the network of a computer joined by the provider's code comes to that cli
 check("API: the new methods have rights", auth.METHOD_PERMS.get("stock_cloud_invite") == "settings"
       and "stock_view" in auth.METHOD_PERMS.get("stock_cloud_connect", ()))
 ui = (ROOT / "app" / "ui" / "stock-phone.js").read_text(encoding="utf-8")
-check("the tab: no code field before the QR, the PIN as in the profile",
-      "stock_cloud_connect" in ui and "«Телефон: склад и сканер» → «Создать ПИН»" in ui and "ПИН для телефона" not in ui)
+check("the tab: no code field before the QR, the PIN as in the profile (3.18.3: «ПИН для общего QR клиники»)",
+      "stock_cloud_connect" in ui and "«Телефон: склад и сканер» → «ПИН для общего QR клиники»" in ui and "ПИН для телефона" not in ui)
 ph = (ROOT / "phone" / "app.js").read_text(encoding="utf-8")
 check("the phone: one screen for who and the PIN, the same words for the PIN",
-      "function viewWho" not in ph and "«Телефон: склад и сканер» → «Создать ПИН»" in ph and "ПИН для телефона" not in ph)
+      "function viewWho" not in ph and "«Телефон: склад и сканер» → «ПИН для общего QR клиники»" in ph and "ПИН для телефона" not in ph)
 
 
 # ------------------------------------------------------------------------- the real cloud --

@@ -9,9 +9,12 @@
 // Laptop:  POST /v1/register {keys, create, demo, name, clinic, version, tz} — 3.18.2: no code; the secret of the clinic
 //          (from the key of the clinic network) finds its clinic or, with `create`, makes one · /v1/join {code, …} — a code
 //          (the provider's DDS-… or one from /v1/invite) · /v1/status {keys} · /v1/push {changes} · /v1/pull {since} ·
-//          /v1/staff · /v1/invite (a code for another computer, 24 h) · /v1/leave   (header X-DD-Token: the laptop's token)
+//          /v1/staff · /v1/invite (a code for another computer, 24 h) · /v1/leave · /v1/pair {login} (3.18.3: a one-time
+//          token of one person for «Подключить мой телефон», 15 min)   (header X-DD-Token: the laptop's token)
 // Phone:   POST /p/hello {code, name} → device token · /p/login {login, pin} (X-DD-Device) → session ·
 //          /p/me · /p/pull {since} · /p/op {op, kind, id, …} · /p/logout (X-DD-Session)
+//          3.18.3: /p/pair_info {token} · /p/pair {token, pin, name} → a phone bound to that person, signed in at once ·
+//          /p/login {pin} on a bound phone (the person is the phone's) · /p/pin {old, pin} (X-DD-Session) — a new PIN
 // Photos:  a phone sends a photo of equipment (/p/op kind «equipment_photo»); it waits in the private bucket «dd-photos» until
 //          a laptop takes it: /v1/photos (the list, claimed for this laptop) · /v1/photo {id} · /v1/photo_done {ids}.
 import postgres from "npm:postgres@3.4.5";
@@ -41,6 +44,8 @@ const NEW_PER_IP = 5;                 // new clinics from one address a day (3.1
 const NEW_PER_HOUR = 60;              // and from everywhere an hour
 const DEMO_KEEP_DAYS = 30;            // a demo clinic no laptop has opened this long goes
 const INVITE_H = 24;                  // a code for another computer of the clinic
+const PAIR_MIN = 15;                  // 3.18.3: the personal QR «Подключить мой телефон»
+const PIN_ROUNDS = 240_000;           // the PIN a person makes up on a bound phone: PBKDF2-SHA256, as the laptops hash theirs
 
 // ------------------------------------------------------------------------------------------------------------- helpers --
 class E extends Error {
@@ -105,6 +110,27 @@ async function checkPin(pin: string, stored: string | null): Promise<boolean> {
   let diff = got.length ^ p[3].length;
   for (let i = 0; i < got.length && i < p[3].length; i++) diff |= got.charCodeAt(i) ^ p[3].charCodeAt(i);
   return diff === 0;
+}
+
+// 3.18.3: the PIN a person makes up on their phone — hashed here (PBKDF2-SHA256, the format of the laptops: checkPin reads it).
+async function makePin(pin: string): Promise<string> {
+  const salt = rnd(16);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: PIN_ROUNDS }, key, 256);
+  return `pbkdf2$${PIN_ROUNDS}$${hex(salt)}$${hex(bits)}`;
+}
+
+// Same digits, a run up or down («123456», «987654») or a repeated pair/triple («121212», «123123») — as app/auth.py _weak_pin.
+function weakPin(pin: string): boolean {
+  return new Set(pin).size <= 2 || "01234567890123".includes(pin) || "98765432109876".includes(pin)
+    || pin.slice(0, 3) === pin.slice(3) || pin.slice(0, 2).repeat(3) === pin;
+}
+
+function checkNewPin(pin: unknown): string {
+  const p = String(pin ?? "");
+  if (!/^\d{6}$/.test(p)) throw new E("ПИН-код — 6 цифр");
+  if (weakPin(p)) throw new E("Слишком простой ПИН-код (одинаковые цифры или подряд) — придумайте другой");
+  return p;
 }
 
 // Rows of patients never stay here: `patient_id`/`patient_name` are dropped (in stock_approvals.payload they are emptied —
@@ -199,7 +225,8 @@ async function phoneDevice(req: Request) {
   if (!t) throw new E("Телефон не подключён к клинике", 401);
   const [d] = await sql`select d.*, row_to_json(t.*) as tenant from dd.devices d join dd.tenants t on t.id = d.tenant_id
                         where d.token_hash = ${await sha(t)} and d.kind = 'phone' and not d.revoked`;
-  if (!d || d.tenant.status !== "active") throw new E("Телефон отключён от клиники. Введите код клиники заново.", 401);
+  if (!d || d.tenant.status !== "active")
+    throw new E("Телефон отключён от клиники. Подключите его заново: на компьютере «Подключить мой телефон».", 401);
   return d;
 }
 
@@ -210,7 +237,10 @@ async function phone(req: Request): Promise<Ctx> {
                         from dd.sessions s join dd.staff st on st.tenant_id = s.tenant_id and st.login = s.login
                         join dd.tenants t on t.id = s.tenant_id join dd.devices d on d.id = s.device_id
                         where s.token_hash = ${await sha(s)} and s.expires_at > now()`;
-  if (!r || !r.staff.pin_hash || r.device.revoked || r.tenant.status !== "active") throw new E("Войдите по ПИН-коду заново", 401);
+  // 3.18.3: the person still has rights of the stock, and either a PIN made at the computer or this phone bound to them
+  const bound = r && r.device.login === r.login && !!r.device.pin_hash;
+  if (!r || !(r.staff.perms || []).length || !(r.staff.pin_hash || bound) || r.device.revoked || r.tenant.status !== "active")
+    throw new E("Войдите по ПИН-коду заново", 401);
   sql`update dd.sessions set last_seen = now() where token_hash = ${r.token_hash}`.catch(() => {});
   return { tenant: r.tenant, device: r.device, user: r.staff, perms: new Set(r.staff.perms || []), node: "p" + r.device.id };
 }
@@ -338,7 +368,7 @@ async function status(ctx: Ctx, f: any) {
   if (Number.isFinite(Number(f.tz))) await sql`update dd.tenants set tz_offset = ${Math.round(Number(f.tz))} where id = ${t.id}`;
   if (clean(f.clinic, 120)) await sql`update dd.tenants set name = ${clean(f.clinic, 120)} where id = ${t.id} and name = ''`;
   await bindKeys(t.id, f);  // 3.18.2: a laptop connected by a code tells the secret of its clinic — its other computers come here by themselves
-  const devices = await sql`select id, kind, name, version, created_at, last_seen from dd.devices
+  const devices = await sql`select id, kind, name, version, created_at, last_seen, login from dd.devices
                             where tenant_id = ${t.id} and not revoked order by kind, created_at`;
   const pc = String(t.phone_code || "");
   const [ph] = await sql`select count(*)::int as n from dd.photos where tenant_id = ${t.id}`;
@@ -384,8 +414,24 @@ async function staff(ctx: Ctx, f: any) {
     perms: (Array.isArray(u.perms) ? u.perms : []).filter((p: string) => PHONE_PERMS.includes(p)),
     pin_hash: /^pbkdf2\$\d+\$[0-9a-f]+\$[0-9a-f]+$/.test(String(u.pin_hash || "")) ? u.pin_hash : null, pin_at: clean(u.pin_at, 20) || null,
   })).filter((u: any) => u.login);
-  const [r] = await sql`select dd.set_staff(${ctx.tenant.id}, ${sql.json(list)}::jsonb) as n`;
+  // 3.18.3: `v` 2 — the whole list (everyone with rights, with or without a PIN made at the computer)
+  const [r] = await sql`select dd.set_staff(${ctx.tenant.id}, ${sql.json(list)}::jsonb, ${Number(f.v) >= 2}::boolean) as n`;
   return { ok: true, staff: r.n };
+}
+
+// 3.18.3 «Подключить мой телефон»: a one-time token of the person signed in at the laptop (the laptop sent the staff just
+// before, so the cloud knows their rights). A new one replaces the person's unused ones; only its hash is kept.
+async function pair(ctx: Ctx, f: any) {
+  const lg = clean(f.login, 60).toLowerCase();
+  const [u] = await sql`select login, name, perms from dd.staff where tenant_id = ${ctx.tenant.id} and login = ${lg}`;
+  if (!u || !(u.perms || []).length) throw new E("У этого сотрудника нет прав склада — телефон не подключить", 403);
+  await sql`delete from dd.pairs where expires_at < now() - interval '1 day'`;
+  await sql`delete from dd.pairs where tenant_id = ${ctx.tenant.id} and login = ${lg} and used_at is null`;
+  const [r] = await sql`select dd.rand_code(20) as c`;
+  const raw = String(r.c);
+  await sql`insert into dd.pairs(hash, tenant_id, login, expires_at)
+            values (${await sha("DDP" + raw)}, ${ctx.tenant.id}, ${lg}, now() + ${PAIR_MIN + " minutes"}::interval)`;
+  return { token: raw, minutes: PAIR_MIN, name: u.name };
 }
 
 // The photos of equipment waiting for a laptop, oldest first. Those given are claimed for this laptop for a while, so another
@@ -446,7 +492,8 @@ async function hello(req: Request, f: any) {
 }
 
 async function staffList(tenant: string) {
-  return (await sql`select login, name, role_title from dd.staff where tenant_id = ${tenant} and pin_hash is not null order by name`)
+  return (await sql`select login, name, role_title from dd.staff where tenant_id = ${tenant} and pin_hash is not null
+                    and perms <> '[]'::jsonb order by name`)
     .map((r: any) => ({ login: r.login, name: r.name, role_title: r.role_title }));
 }
 
@@ -455,10 +502,13 @@ async function login(req: Request, f: any) {
   const wait = (u: string | null) => u && new Date(u).getTime() > Date.now() ? Math.ceil((new Date(u).getTime() - Date.now()) / 60000) : 0;
   let w = wait(d.locked_until);
   if (w) throw new E(`Слишком много неверных ПИН-кодов. Подождите ${w} мин.`, 429);
-  const [u] = await sql`select * from dd.staff where tenant_id = ${d.tenant_id} and login = ${clean(f.login, 60).toLowerCase()}`;
+  // 3.18.3: a phone bound to a person signs in only as them, by the PIN they made up on it
+  const own = !!(d.login && d.pin_hash);
+  const [u] = await sql`select * from dd.staff where tenant_id = ${d.tenant_id} and login = ${own ? d.login : clean(f.login, 60).toLowerCase()}`;
   if (u && (w = wait(u.locked_until))) throw new E(`Слишком много неверных ПИН-кодов. Подождите ${w} мин.`, 429);
+  if (u && !(u.perms || []).length) throw new E("У вашей должности больше нет доступа к складу", 403);
   const pin = String(f.pin ?? "");
-  const ok = !!u && /^\d{6}$/.test(pin) && await checkPin(pin, u.pin_hash);
+  const ok = !!u && /^\d{6}$/.test(pin) && await checkPin(pin, own ? d.pin_hash : u.pin_hash);
   if (!ok) {
     // 5 wrong PINs — on this phone (whoever was tried) or for this person (on any phone) — and a pause of 15 minutes
     await sql`update dd.devices set fails = case when fails + 1 >= ${PIN_FAILS} then 0 else fails + 1 end,
@@ -475,6 +525,74 @@ async function login(req: Request, f: any) {
   await sql`insert into dd.sessions(token_hash, tenant_id, device_id, login, expires_at, last_seen)
             values (${await sha(tok)}, ${d.tenant_id}, ${d.id}, ${u.login}, now() + ${SESSION_H + " hours"}::interval, now())`;
   return { session: tok, hours: SESSION_H, user: me({ user: u, perms: new Set(u.perms), tenant: d.tenant } as Ctx) };
+}
+
+// 3.18.3: the personal QR. Wrong tokens count against the address, as wrong clinic codes do.
+async function pairFail(req: Request) {
+  await sql`insert into dd.ip_fails(ip, n, since) values (${"q:" + ip(req)}, 1, now()) on conflict (ip) do update set
+            n = case when dd.ip_fails.since < now() - interval '15 minutes' then 1 else dd.ip_fails.n + 1 end,
+            since = case when dd.ip_fails.since < now() - interval '15 minutes' then now() else dd.ip_fails.since end`;
+}
+
+const AGAIN = "Нажмите на компьютере «Подключить мой телефон» ещё раз.";
+
+async function pairOf(req: Request, f: any) {
+  const [b] = await sql`select n, since from dd.ip_fails where ip = ${"q:" + ip(req)}`;
+  if (b && b.n >= 10 && Date.now() - new Date(b.since).getTime() < LOCK_MIN * 60000)
+    throw new E(`Слишком много попыток. Подождите ${LOCK_MIN} минут.`, 429);
+  const raw = norm(f.token);
+  const [p] = raw.length === 20 ? await sql`select p.*, row_to_json(t.*) as tenant, row_to_json(st.*) as staff from dd.pairs p
+                                            join dd.tenants t on t.id = p.tenant_id
+                                            left join dd.staff st on st.tenant_id = p.tenant_id and st.login = p.login
+                                            where p.hash = ${await sha("DDP" + raw)}` : [];
+  if (!p) { await pairFail(req); throw new E("QR-код не подходит. " + AGAIN, 403); }
+  if (p.used_at) throw new E("Этот QR-код уже использован. " + AGAIN, 410);
+  if (new Date(p.expires_at).getTime() < Date.now()) throw new E("QR-код устарел. " + AGAIN, 410);
+  if (p.tenant.status !== "active") throw new E("Облако склада клиники отключено. Свяжитесь с поддержкой.", 403);
+  if (!p.staff || !(p.staff.perms || []).length) throw new E("У вашей должности нет доступа к складу", 403);
+  return p;
+}
+
+async function pairInfo(req: Request, f: any) {
+  const p = await pairOf(req, f);
+  return { clinic: p.tenant.name, demo: !!p.tenant.demo, name: p.staff.name, role_title: p.staff.role_title,
+    minutes: Math.max(1, Math.ceil((new Date(p.expires_at).getTime() - Date.now()) / 60000)) };
+}
+
+// The person made up a PIN: the token is spent (one phone per QR), the phone is bound to them and signed in.
+async function pairPhone(req: Request, f: any) {
+  const p = await pairOf(req, f);
+  const pin = checkNewPin(f.pin);
+  const [ok] = await sql`update dd.pairs set used_at = now() where hash = ${p.hash} and used_at is null and expires_at > now()
+                         returning hash`;
+  if (!ok) throw new E("Этот QR-код уже использован. " + AGAIN, 410);
+  const id = hid(8), tok = token(), st = p.staff;
+  await sql`insert into dd.devices(id, tenant_id, kind, name, token_hash, last_seen, login, pin_hash, bound_at)
+            values (${id}, ${p.tenant_id}, 'phone', ${clean(f.name, 80) || "Телефон"}, ${await sha(tok)}, now(), ${st.login},
+                    ${await makePin(pin)}, now())`;
+  const ses = token();
+  await sql`insert into dd.sessions(token_hash, tenant_id, device_id, login, expires_at, last_seen)
+            values (${await sha(ses)}, ${p.tenant_id}, ${id}, ${st.login}, now() + ${SESSION_H + " hours"}::interval, now())`;
+  return { device: id, token: tok, clinic: p.tenant.name, demo: !!p.tenant.demo, login: st.login, session: ses, hours: SESSION_H,
+    user: me({ user: st, perms: new Set(st.perms), tenant: p.tenant } as Ctx) };
+}
+
+// A new PIN on a bound phone: the old one first (5 wrong ones lock the phone, as at sign-in).
+async function newPin(ctx: Ctx, f: any) {
+  const d = ctx.device;
+  if (d.login !== ctx.user.login || !d.pin_hash)
+    throw new E("Этот телефон не привязан к вам. Подключите его: на компьютере «Подключить мой телефон».", 400);
+  const [x] = await sql`select locked_until from dd.devices where id = ${d.id}`;
+  if (x.locked_until && new Date(x.locked_until).getTime() > Date.now()) throw new E("Слишком много неверных ПИН-кодов. Подождите.", 429);
+  if (!/^\d{6}$/.test(String(f.old ?? "")) || !(await checkPin(String(f.old), d.pin_hash))) {
+    await sql`update dd.devices set fails = case when fails + 1 >= ${PIN_FAILS} then 0 else fails + 1 end,
+              locked_until = case when fails + 1 >= ${PIN_FAILS} then now() + interval '15 minutes' else locked_until end
+              where id = ${d.id}`;
+    throw new E("Текущий ПИН-код указан неверно", 403);
+  }
+  const pin = checkNewPin(f.pin);
+  await sql`update dd.devices set pin_hash = ${await makePin(pin)}, fails = 0, locked_until = null where id = ${d.id}`;
+  return { ok: true, message: "ПИН-код изменён" };
 }
 
 function me(ctx: Ctx) {
@@ -1029,6 +1147,7 @@ Deno.serve(async (req: Request) => {
       case "/v1/push": return json(req, await push(await laptop(req), f));
       case "/v1/pull": return json(req, await lpull(await laptop(req), f));
       case "/v1/staff": return json(req, await staff(await laptop(req), f));
+      case "/v1/pair": return json(req, await pair(await laptop(req), f));
       case "/v1/photos": return json(req, await photos(await laptop(req), f));
       case "/v1/photo": return json(req, await photo(await laptop(req), f));
       case "/v1/photo_done": return json(req, await photoDone(await laptop(req), f));
@@ -1045,9 +1164,12 @@ Deno.serve(async (req: Request) => {
       case "/p/hello": return json(req, await hello(req, f));
       case "/p/staff": {
         const d = await phoneDevice(req);
-        return json(req, { clinic: d.tenant.name, staff: await staffList(d.tenant_id) });
+        return json(req, { clinic: d.tenant.name, staff: await staffList(d.tenant_id), bound: d.login && d.pin_hash ? d.login : null });
       }
       case "/p/login": return json(req, await login(req, f));
+      case "/p/pair_info": return json(req, await pairInfo(req, f));
+      case "/p/pair": return json(req, await pairPhone(req, f));
+      case "/p/pin": return json(req, await newPin(await phone(req), f));
       case "/p/me": return json(req, { user: me(await phone(req)) });
       case "/p/pull": return json(req, await ppull(await phone(req), f));
       case "/p/op": return json(req, await op(await phone(req), f));

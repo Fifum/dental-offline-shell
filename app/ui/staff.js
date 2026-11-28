@@ -63,8 +63,8 @@ function editStaff(u) {
       <div id="sePerms">${permGroupsHtml(u.perms)}</div>
       <div class="auth-row"><label>Статус<select class="input" id="seStatus"><option value="active" ${u.status === "active" ? "selected" : ""}>Работает</option><option value="blocked" ${u.status === "blocked" ? "selected" : ""}>Заблокирован (не может войти)</option></select></label>
         <label>Новый пароль<input class="input" type="password" id="sePass" placeholder="оставьте пустым" autocomplete="new-password"></label></div>
-      <div class="prof-row se-phone"><span>ПИН телефона (склад)</span><b id="sePhoneSt">${u.has_phone_pin ? "создан " + esc(fmtDT(u.phone_pin_at)) : "не создан"}</b>
-        ${u.has_phone_pin ? `<button type="button" class="btn ghost small danger" id="sePhoneReset" title="Потерян телефон или ПИН кто-то видел: старый ПИН перестанет работать, сотрудник создаст новый в «Мой профиль»">Сбросить</button>` : `<small class="muted">сотрудник создаёт его сам: меню с именем → «Мой профиль»</small>`}</div>
+      <div class="prof-row se-phone"><span>Телефон (склад)</span><b id="sePhoneSt">${u.has_phone_pin ? "ПИН создан " + esc(fmtDT(u.phone_pin_at)) : "свой ПИН на телефоне"}</b>
+        ${u.has_phone_pin || (u.perms || []).some(p => STOCK_PERMS.includes(p)) ? `<button type="button" class="btn ghost small danger" id="sePhoneReset" title="Потерян телефон или ПИН кто-то видел: телефоны сотрудника отключатся, он подключит свой заново в «Мой профиль» → «Подключить мой телефон»">Сбросить ПИН и отключить телефоны</button>` : `<small class="muted">сотрудник подключает свой телефон сам: меню с именем → «Мой профиль»</small>`}</div>
       <div class="auth-err" id="seErr"></div>
     </div>
     <div class="m-f"><button class="btn ghost" data-close>Отмена</button><button class="btn" id="seOk">Сохранить</button></div>`, {wide: true});
@@ -79,8 +79,8 @@ function editStaff(u) {
   $("#seRole", box).onchange = sync; $("#seCustom", box).onchange = sync; sync();
   const pr = $("#sePhoneReset", box);
   if (pr) pr.onclick = async () => {
-    if (!(await ask(`Сбросить ПИН телефона: ${u.name}?`, {danger: true, ok: "Сбросить", text: "Старый ПИН перестанет работать. Новый сотрудник создаст сам в «Мой профиль»."}))) return;
-    try { await authApi.staff_phone_pin_reset(u.id); u.has_phone_pin = false; $("#sePhoneSt", box).textContent = "сброшен"; pr.remove(); toast("ПИН телефона сброшен"); }
+    if (!(await ask(`Сбросить ПИН и отключить телефоны: ${u.name}?`, {danger: true, ok: "Сбросить", text: "Старый ПИН перестанет работать, телефоны сотрудника отключатся от склада. Свой телефон он подключит заново: «Мой профиль» → «Подключить мой телефон»."}))) return;
+    try { await authApi.staff_phone_pin_reset(u.id); u.has_phone_pin = false; $("#sePhoneSt", box).textContent = "сброшен, телефоны отключены"; pr.remove(); toast("ПИН сброшен, телефоны сотрудника отключены"); }
     catch (e) { toast(errText(e), true); }
   };
   $("#seOk", box).onclick = async () => {

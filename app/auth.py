@@ -430,6 +430,8 @@ METHOD_PERMS = {
     # 3.18.2: the tab connects by itself (a new clinic of the cloud only for the director, checked in Api)
     "stock_cloud_connect": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
     "stock_cloud_sync": ("settings", "stock_edit", "stock_approve"),
+    # 3.18.3: «Подключить мой телефон» — the employee signed in, for themselves (checked in Api)
+    "stock_cloud_pair": ("settings", "stock_view", "stock_edit", "stock_ops", "stock_approve", "equipment"),
     # 3.0: the clinic network (accepting a computer and merging laptops are checked for the director in Api)
     "dp_main_status": ANY_USER, "dp_main_claim": "settings",
     "p2p_status": "settings", "p2p_accept": "settings", "p2p_reject": "settings", "p2p_sync": ANY_USER,
@@ -856,7 +858,8 @@ class Auth:
         return {"pin": pin, "at": at}
 
     def staff_phone_pin_reset(self, actor, uid):
-        """The director takes the phone PIN away (a lost phone, a PIN someone saw); the employee makes a new one."""
+        """The director takes the phone PIN away (a lost phone, a PIN someone saw); the employee makes a new one. 3.18.3: the time
+        of the reset stays (`phone_pin_at` with no hash) — the cloud of the stock disconnects the phones bound to the person."""
         try:
             u = self.db.one("SELECT * FROM users WHERE id=?", (int(uid),))
         except (TypeError, ValueError):
@@ -866,8 +869,8 @@ class Auth:
         if self._not_director(actor) and u["role"] == "director":
             raise AuthError("ПИН-код директора может сбросить только директор", 403)
         with self.db.tx() as c:
-            c.execute("UPDATE users SET phone_pin_hash=NULL, phone_pin_at=NULL WHERE id=?", (u["id"],))
-        self.log(actor, "Сброс ПИН-кода телефона", u["name"])
+            c.execute("UPDATE users SET phone_pin_hash=NULL, phone_pin_at=? WHERE id=?", (_now(), u["id"]))
+        self.log(actor, "Сброс ПИН-кода телефона и отключение телефонов", u["name"])
         return True
 
     def logout(self, token):

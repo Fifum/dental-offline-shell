@@ -317,3 +317,78 @@ begin
 end $$;
 
 revoke all on all functions in schema dd from public, anon, authenticated;
+
+-- 3.18.3 (migration «dd_personal_pin»): a phone of one person. At the computer the employee presses «Подключить мой телефон»:
+-- the laptop asks for a one-time token (`dd.pairs`, 15 minutes, only its hash here) and shows it as a QR. The camera of the
+-- phone opens it, the person makes up a PIN of their own, and the phone is bound to them (`devices.login`; the PIN's hash is
+-- made here, `devices.pin_hash`). On that phone they sign in by that PIN alone. A PIN reset by the director, a dismissal or the
+-- rights of the stock taken away (dd.set_staff below) disconnect the phones bound to that person.
+alter table dd.devices add column if not exists login text;
+alter table dd.devices add column if not exists pin_hash text;
+alter table dd.devices add column if not exists bound_at timestamptz;
+create index if not exists devices_login on dd.devices(tenant_id, login) where login is not null;
+alter table dd.staff add column if not exists reset_at text;
+
+create table if not exists dd.pairs(
+  hash text primary key,
+  tenant_id text not null references dd.tenants(id) on delete cascade,
+  login text not null,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now());
+create index if not exists pairs_tenant on dd.pairs(tenant_id, login);
+alter table dd.pairs enable row level security;
+revoke all on dd.pairs from public, anon, authenticated;
+
+-- The staff from a laptop (3.18.3): everyone active with a right of the stock comes with their rights, with or without a PIN
+-- made at the computer (the old way: the clinic's QR, then that PIN); everyone else of the clinic with empty rights. Becoming
+-- «closed» (dismissed, the rights taken away) ends the person's sessions and disconnects the phones bound to them. A PIN reset
+-- at the computer comes as an empty PIN with the time of the reset: a newer time than the last one seen disconnects the bound
+-- phones too (a laptop that has not heard of the reset yet sends the older time and changes nothing). A new PIN made at the
+-- computer ends only the sessions it opened: the bound phones keep their own PIN. `p_full` — the list of a laptop 3.18.3 or
+-- newer; an older one sends everybody without a PIN made at the computer as closed, so its closed entries leave a person with a
+-- bound phone as they are (the newer laptops of the clinic say the dismissal too).
+drop function if exists dd.set_staff(text, jsonb);
+create or replace function dd.set_staff(p_tenant text, p_staff jsonb, p_full boolean default false) returns int
+language plpgsql volatile set search_path = '' as $$
+declare u jsonb; n int := 0; cur record; had boolean; closed boolean; reset boolean;
+begin
+  for u in select value from jsonb_array_elements(p_staff) loop
+    select st.pin_hash, st.perms, st.reset_at into cur from dd.staff st where st.tenant_id = p_tenant and st.login = u->>'login';
+    had := found;
+    closed := coalesce(u->'perms', '[]'::jsonb) = '[]'::jsonb;
+    if closed and not coalesce(p_full, false) and exists (select 1 from dd.devices d where d.tenant_id = p_tenant
+        and d.kind = 'phone' and d.login = u->>'login' and not d.revoked) then
+      continue;
+    end if;
+    reset := u->>'pin_hash' is null and coalesce(u->>'pin_at', '') <> ''
+             and (u->>'pin_at') > coalesce(case when had then cur.reset_at end, '');
+    if had and cur.pin_hash is distinct from (u->>'pin_hash') then
+      delete from dd.sessions s where s.tenant_id = p_tenant and s.login = u->>'login'
+        and not exists (select 1 from dd.devices d where d.id = s.device_id and d.login = s.login and d.pin_hash is not null and not d.revoked);
+    end if;
+    if (closed and (not had or cur.perms <> '[]'::jsonb)) or (reset and had) then
+      delete from dd.sessions where tenant_id = p_tenant and login = u->>'login';
+      update dd.devices set revoked = true, token_hash = null
+        where tenant_id = p_tenant and kind = 'phone' and login = u->>'login' and not revoked;
+      delete from dd.pairs where tenant_id = p_tenant and login = u->>'login';
+    end if;
+    insert into dd.staff(tenant_id, login, name, role, role_title, perms, pin_hash, pin_at, reset_at, updated_at)
+    values (p_tenant, u->>'login', coalesce(u->>'name', ''), coalesce(u->>'role', ''), coalesce(u->>'role_title', ''),
+            coalesce(u->'perms', '[]'::jsonb), u->>'pin_hash', u->>'pin_at', case when reset then u->>'pin_at' end, now())
+    on conflict (tenant_id, login) do update set name = excluded.name, role = excluded.role, role_title = excluded.role_title,
+      perms = excluded.perms, updated_at = now(),
+      fails = case when dd.staff.pin_hash is distinct from excluded.pin_hash then 0 else dd.staff.fails end,
+      locked_until = case when dd.staff.pin_hash is distinct from excluded.pin_hash then null else dd.staff.locked_until end,
+      pin_hash = excluded.pin_hash, pin_at = excluded.pin_at,
+      reset_at = case when reset then excluded.pin_at else dd.staff.reset_at end;
+    n := n + 1;
+  end loop;
+  delete from dd.sessions s where s.tenant_id = p_tenant
+    and not exists (select 1 from dd.staff st where st.tenant_id = s.tenant_id and st.login = s.login and st.perms <> '[]'::jsonb
+                    and (st.pin_hash is not null
+                         or exists (select 1 from dd.devices d where d.id = s.device_id and d.login = s.login and not d.revoked)));
+  return n;
+end $$;
+
+revoke all on all functions in schema dd from public, anon, authenticated;

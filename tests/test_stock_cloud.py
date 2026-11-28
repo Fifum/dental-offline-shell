@@ -193,14 +193,16 @@ check("a write-off on approval: no patient, the payload keeps empty keys",
       "patient_id" not in cap["row"] and cpl["patient_id"] == "" and cpl["patient_name"] == "" and cpl["lines"][0]["qty"] == 1, cap["row"])
 check("nothing of a patient anywhere in the cloud", pid not in json.dumps(list(FAKE.rows.values()), ensure_ascii=False)
       and "Иванов" not in json.dumps(list(FAKE.rows.values()), ensure_ascii=False))
-check("the nurse with a PIN is sent, without a PIN or a stock right — not",
-      [s["login"] for s in FAKE.staff if s["pin_hash"]] == ["nurse"] and FAKE.staff[[s["login"] for s in FAKE.staff].index("nurse")]["pin_hash"].startswith("pbkdf2$")
-      and {s["login"] for s in FAKE.staff if not s["pin_hash"]} >= {"doc", "noph"}
-      and all(not s["name"] and not s["perms"] for s in FAKE.staff if not s["pin_hash"]), FAKE.staff)
+by = {s["login"]: s for s in FAKE.staff}
+check("3.18.3: everyone with a stock right is sent with the rights (the nurse with her PIN, «noph» without one — for his own QR);"
+      " without a stock right — closed",
+      [s["login"] for s in FAKE.staff if s["pin_hash"]] == ["nurse"] and by["nurse"]["pin_hash"].startswith("pbkdf2$")
+      and by["noph"]["perms"] and by["noph"]["name"] and by["noph"]["pin_hash"] is None
+      and not by["doc"]["perms"] and not by["doc"]["name"] and by["doc"]["pin_hash"] is None, FAKE.staff)
 check("the phone address is written once", A.one("SELECT v FROM stock_settings WHERE k='phone_url'")["v"] == stock_cloud.PHONE_URL)
 check("nothing left to send", ca.pending() == 0 and ca.sync()["pushed"] == 0, ca.pending())
 st = ca.status()
-check("status: the phone code and the devices", st["phone_code"] == "ABCD-EFGH" and st["laptops"] == 2 and st["phones"] == 1 and st["staff"] == 1, st)
+check("status: the phone code and the devices", st["phone_code"] == "ABCD-EFGH" and st["laptops"] == 2 and st["phones"] == 1 and st["staff"] == 2, st)
 ph = ca.phone()
 check("QR for phones", ph["url"] == stock_cloud.PHONE_URL + "/j#ABCD-EFGH" and ph["code"] == "ABCD-EFGH", ph)
 

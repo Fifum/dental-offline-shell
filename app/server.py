@@ -158,19 +158,19 @@ class ClinicServer:
         if name == "clear_pin":
             return a.clear_pin(user)
         if name == "phone_pin_new":  # 3.13: the personal PIN of the stock app on a phone
-            return a.new_phone_pin(user, args[0] if args else "")
+            return self._stock_kick(a.new_phone_pin(user, args[0] if args else ""))
         if "staff" not in a.effective_perms(user):
             raise AuthError("Раздел «Сотрудники» доступен только директору", 403)
         if name == "staff_list":
             return {"staff": a.staff_list(), "doctors": self.db.doctors()}
-        if name == "staff_save":
-            return a.staff_save(user, args[0])
+        if name == "staff_save":  # a dismissal or the rights of the stock taken away disconnect the phones
+            return self._stock_kick(a.staff_save(user, args[0]))
         if name == "staff_reject":
             return a.staff_reject(user, args[0])
         if name == "staff_reset_password":
             return a.staff_reset_password(user, args[0], args[1] if len(args) > 1 else "")
         if name == "staff_phone_pin_reset":
-            return a.staff_phone_pin_reset(user, args[0] if args else 0)
+            return self._stock_kick(a.staff_phone_pin_reset(user, args[0] if args else 0))
         if name == "audit_list":
             return a.audit_list(*args[:3])
         if name == "roles_list":    # 2.14: positions and what each may see and do
@@ -182,6 +182,17 @@ class ClinicServer:
         if name == "role_delete":
             return a.role_delete(user, args[0] if args else "")
         raise AuthError("Неизвестное действие", 404)
+
+    def _stock_kick(self, result):
+        """3.18.3: a PIN made or reset, a dismissal — the cloud of the stock hears of it now, not with the minute's sync (a
+        phone waiting for the person in «Кто вы?» sees them at once, a lost phone is disconnected at once)."""
+        w = getattr(self.api, "_stock_cloud_worker", None)
+        if w is not None:
+            try:
+                w.trigger()
+            except Exception:  # noqa: BLE001 — the change itself is saved; the minute's sync sends it
+                pass
+        return result
 
     def call_api(self, name, args, token, ip):
         if name.startswith("_") or not callable(getattr(self.api, name, None)):

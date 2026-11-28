@@ -2945,6 +2945,24 @@ class Api:
     def stock_cloud_phone(self):
         return self._scloud_call(self._scloud().phone)
 
+    def stock_cloud_pair(self):
+        """3.18.3 «Подключить мой телефон»: a one-time QR of the employee signed in here. A computer not connected yet connects
+        first, as «Телефон» does (a new clinic of the cloud only for the director)."""
+        u = _acting_user()
+        if not u or not u.get("login"):
+            raise ValueError("Войдите в программу под своим именем — QR-код подключит телефон к вам")
+        sc = self._scloud()
+        if not (sc.configured() and sc._mode_ok()):
+            if sc.store.load().get("off"):
+                raise ValueError("Этот компьютер отключили от облака склада. Подключить снова может директор: Склад → Телефон.")
+            r = self._scloud_call(sc.connect, u.get("role") == "director" or sc.demo_mode())
+            if not r.get("ok"):
+                raise ValueError("Облако склада для клиники ещё не создано. Попросите директора открыть Склад → Телефон.")
+        r = self._scloud_call(sc.pair, u["login"])
+        if self._stock_cloud_worker:
+            self._stock_cloud_worker.trigger()
+        return r
+
     def cloud_conflicts(self, show_seen=False):
         import replica
         return replica.conflicts(self._db, bool(show_seen))

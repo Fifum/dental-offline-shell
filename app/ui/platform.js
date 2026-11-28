@@ -400,12 +400,15 @@ async function openMyProfile() {
         <div class="prof-row"><span>Пароль</span><b></b><button class="btn ghost small" id="pfPass">Сменить пароль</button></div>
         <div class="prof-row"><span>ПИН-код на общем компьютере</span><b>${u.has_pin ? "включён" : "не задан"}</b><button class="btn ghost small" id="pfPin">${u.has_pin ? "Изменить" : "Включить"}</button></div></section>
       <section class="prof-sec"><h4>Телефон: склад и сканер</h4>
-        <p class="hint">Личный ПИН из 6 цифр — для входа в приложение склада на телефоне${stockUser ? "" : " (нужен тем, у кого есть права склада)"}. Программа придумает его сама и покажет один раз: запишите или запомните. Сменить можно в любой момент; если телефон потерян — директор сбросит ПИН в «Сотрудниках».</p>
-        <div class="prof-row"><span>ПИН телефона</span><b id="pfPhoneSt">${u.has_phone_pin ? "создан " + esc(fmtDT(u.phone_pin_at)) : "не создан"}</b><button class="btn small" id="pfPhone">${u.has_phone_pin ? "Сменить ПИН" : "Создать ПИН"}</button></div>
-        <div id="pfPhoneBox"></div></section></div>
+        ${stockUser ? spMyPhoneHtml("pfPairBox") : `<p class="hint">Приложение склада на телефоне — для тех, у кого есть права склада.</p>`}
+        <details class="sp-more"><summary>ПИН для общего QR клиники</summary>
+        <p class="hint">Прежний способ: телефон подключают общим QR-кодом клиники (Склад → Телефон), выбирают себя и вводят этот ПИН. Программа придумает его сама и покажет один раз. Если телефон потерян — директор сбросит ПИН в «Сотрудниках», привязанные телефоны отключатся.</p>
+        <div class="prof-row"><span>ПИН телефона</span><b id="pfPhoneSt">${u.has_phone_pin ? "создан " + esc(fmtDT(u.phone_pin_at)) : "не создан"}</b><button class="btn ghost small" id="pfPhone">${u.has_phone_pin ? "Сменить ПИН" : "Создать ПИН"}</button></div>
+        <div id="pfPhoneBox"></div></details></section></div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Закрыть</button></div>`);
   $("#pfPass", box).onclick = () => { closeModal(); $("#ucPass").onclick(); };
   $("#pfPin", box).onclick = () => { closeModal(); $("#ucPin").onclick(); };
+  if (typeof spBindMyPhone === "function") spBindMyPhone(box, "pfPairBox");
   $("#pfPhone", box).onclick = () => {
     const pb = $("#pfPhoneBox", box);
     pb.innerHTML = `<div class="prof-ask"><label>Ваш пароль от программы<input class="input" type="password" id="pfPw" autocomplete="current-password"></label>
