@@ -19,7 +19,7 @@ async function spConnect(body, st, again) {
   if (st.off && !again) {
     body.innerHTML = `<div class="panel sp-panel"><h3>Телефон и облако склада</h3>
       <p class="hint">Этот компьютер отключили от облака склада: операции с телефонов сюда не приходят. ${dir ? "" : "<b>Подключить снова может директор.</b>"}</p>
-      <div class="row"><button class="btn" id="spAgain" ${dir ? "" : "disabled"}>Подключить снова</button></div>${dir ? spCodeForm() : ""}</div>`;
+      <div class="row"><button class="btn" id="spAgain" ${dir ? "" : "disabled"}>Подключить снова</button></div>${dir && !st.demo ? spCodeForm() : ""}</div>`;
     $("#spAgain").onclick = () => stockPhone(true);
     spBindCode(false);
     return;
@@ -46,7 +46,9 @@ async function spConnect(body, st, again) {
     return;
   }
   if (r.created && !r.demo) toast("Склад подключён к облаку — наведите камеру телефона на QR-код");
-  api.stock_cloud_sync().then(() => { if ($("#spPhone")) spRefreshState(); }).catch(() => null);
+  api.stock_cloud_sync().catch(() => null);
+  // the first sync (here or of the worker, whichever runs) takes a few seconds: the state follows it while the tab is open
+  [4, 12, 30].forEach((s) => setTimeout(() => { if ($("#spPhone")) spRefreshState(); }, s * 1000));
   stockPhone();
 }
 
