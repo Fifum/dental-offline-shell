@@ -14,7 +14,7 @@ const LS = {
 };
 const S = { device: LS.get("device"), session: LS.get("session"), user: LS.get("user"), clinic: LS.get("clinic") || "",
   staff: LS.get("staff") || [], since: LS.get("since") || 0, last: LS.get("last") || 0, rows: new Map(), queue: [],
-  syncing: false, stopCam: null, code: "", form: null };
+  syncing: false, stopCam: null, code: "", form: null, photos: [] };
 let D = {};
 
 /* ------------------------------------------------------------------------------------------------ small helpers */
@@ -24,6 +24,8 @@ const ICON = {
   scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/>',
   tool: '<path d="M14.5 6.5a4 4 0 0 0-5.3 5L4 16.7 7.3 20l5.2-5.2a4 4 0 0 0 5-5.3l-2.5 2.5-2.6-.6-.6-2.6z"/>',
   me: '<circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
+  cam: '<path d="M4 8h3.5l1.8-2.5h5.4L16.5 8H20v11H4z"/><circle cx="12" cy="13" r="3.6"/>',
+  pic: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M20 16l-5-5-8 8"/>',
 };
 const ico = (n) => `<svg class="ico" viewBox="0 0 24 24">${ICON[n]}</svg>`;
 const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
@@ -49,8 +51,13 @@ function toast(msg, bad) {
 let dbp;
 function idb() {
   return dbp ||= new Promise((ok, no) => {
-    const r = indexedDB.open("dd-stock", 1);
-    r.onupgradeneeded = () => { r.result.createObjectStore("rows", { keyPath: "id" }); r.result.createObjectStore("queue", { keyPath: "op" }); };
+    const r = indexedDB.open("dd-stock", 2);
+    r.onupgradeneeded = () => {
+      const db = r.result, have = (n) => db.objectStoreNames.contains(n);
+      if (!have("rows")) db.createObjectStore("rows", { keyPath: "id" });
+      if (!have("queue")) db.createObjectStore("queue", { keyPath: "op" });
+      if (!have("photos")) db.createObjectStore("photos", { keyPath: "op" });  // 3.16: previews of the photos sent from here
+    };
     r.onsuccess = () => ok(r.result);
     r.onerror = () => no(r.error);
   });
@@ -92,8 +99,8 @@ function signedOut(e) {  // 401: the session is over → the PIN; the phone was 
 
 async function forget() {
   for (const k of ["device", "session", "user", "clinic", "staff", "since", "last", "owner"]) LS.del(k);
-  Object.assign(S, { device: null, session: null, user: null, clinic: "", staff: [], since: 0, last: 0, rows: new Map(), queue: [] });
-  await idbClear("rows").catch(() => {}); await idbClear("queue").catch(() => {});
+  Object.assign(S, { device: null, session: null, user: null, clinic: "", staff: [], since: 0, last: 0, rows: new Map(), queue: [], photos: [] });
+  await idbClear("rows").catch(() => {}); await idbClear("queue").catch(() => {}); await idbClear("photos").catch(() => {});
   index();
 }
 
@@ -141,7 +148,7 @@ async function dropQ(op) { S.queue = S.queue.filter((q) => q.op !== op); await i
 
 /* an operation: into the queue first, then to the cloud; without the network it waits there */
 async function doOp(body, title) {
-  body.op = opId();
+  body.op = body.op || opId();
   const q = { op: body.op, body, title, at: Date.now() };
   S.queue.push(q); busy.add(q.op); await idbPut("queue", [q]); badge();
   try {
@@ -153,7 +160,7 @@ async function doOp(body, title) {
   } catch (e) {
     // no answer: it stays in the queue with the same id, so a repeat is done once even if the cloud already did it
     if (e.net) { toast("Нет связи — операция сохранена и уйдёт сама, когда появится сеть"); return { queued: true }; }
-    if (e.status >= 500) { toast("Облако склада не ответило — операция в очереди и повторится сама"); return { queued: true }; }
+    if (e.status >= 500) { toast(e.status === 507 ? e.message : "Облако склада не ответило — операция в очереди и повторится сама"); return { queued: true }; }
     await dropQ(q.op);
     if (!signedOut(e)) throw e;
     return null;
@@ -164,7 +171,7 @@ async function doOp(body, title) {
 const idOf = (k) => { try { return JSON.parse(k)[0]; } catch { return k; } };
 function index() {
   D = { mats: new Map(), bar: new Map(), num: new Map(), eq: new Map(), inv: new Map(), locs: new Map(), sups: new Map(), docs: new Map(),
-    moves: [], mv: new Map(), lots: [], reqs: [], aps: [], ev: new Map(), set: new Map(), bal: new Map() };
+    moves: [], mv: new Map(), lots: [], reqs: [], aps: [], ev: new Map(), set: new Map(), bal: new Map(), edocs: new Set() };
   for (const { t, k, row } of S.rows.values()) {
     const id = idOf(k);
     if (t === "materials") {
@@ -182,6 +189,7 @@ function index() {
     else if (t === "stock_approvals") D.aps.push(row);
     else if (t === "equipment_events") { if (!D.ev.has(row.equipment_id)) D.ev.set(row.equipment_id, []); D.ev.get(row.equipment_id).push(row); }
     else if (t === "stock_settings") D.set.set(id, row.v);
+    else if (t === "equipment_docs" && !Number(row.deleted || 0)) D.edocs.add(id);  // 3.16: «EDP-<op>» — a photo of this phone is in the card
   }
   for (const m of D.moves) {
     if (!D.bal.has(m.material_id)) D.bal.set(m.material_id, new Map());
@@ -662,7 +670,57 @@ function viewReqs() {
 /* ------------------------------------------------------------------------------------------------ equipment */
 const EQ_ST = { in_use: ["В работе", "ok"], repair: ["В ремонте", "bad"], storage: ["На складе", ""], written_off: ["Списано", ""] };
 const EQ_CO = { ok: ["Исправно", "ok"], service: ["Требует обслуживания", "warn"], faulty: ["Неисправно", "bad"] };
-const EV = { service: "Техобслуживание", repair: "Ремонт", note: "Заметка", move: "Перемещение", condition: "Состояние", status: "Статус", inventory: "Инвентаризация", writeoff: "Выбытие" };
+const EV = { service: "Техобслуживание", repair: "Ремонт", note: "Заметка", move: "Перемещение", condition: "Состояние", status: "Статус", inventory: "Инвентаризация", writeoff: "Выбытие", doc: "Фото и документы" };
+
+/* 3.16: a photo of equipment — made smaller here (1200 px JPEG, the phone's own orientation), sent through the queue (without
+   the network it waits there), a small preview stays on this phone with where the photo is now */
+const PHOTO_SIDE = 1200, THUMB_SIDE = 320;
+const stamp = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 19).replace("T", " "); };
+async function picture(file) {
+  try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch { /* an old browser: through <img> */ }
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error("bad")); i.src = url; });
+  } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+}
+function jpegOf(src, side, q) {
+  const w0 = src.naturalWidth || src.width, h0 = src.naturalHeight || src.height, k = Math.min(1, side / Math.max(w0, h0));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k));
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);  // a transparent picture on white, not on black
+  g.drawImage(src, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", q);
+}
+async function shrink(file) {
+  if (!file || !/^image\//.test(file.type || "image/")) throw new Error("Выберите фото");
+  let src;
+  try { src = await picture(file); } catch { throw new Error("Не удалось открыть фото — сфотографируйте ещё раз"); }
+  let q = 0.85, data = jpegOf(src, PHOTO_SIDE, q);
+  while (data.length > 2_600_000 && q > 0.5) { q -= 0.15; data = jpegOf(src, PHOTO_SIDE, q); }
+  const thumb = jpegOf(src, THUMB_SIDE, 0.7);
+  if (src.close) src.close();
+  return { data: data.slice(data.indexOf(",") + 1), thumb };
+}
+function photoState(p) {
+  if (D.edocs.has("EDP-" + p.op)) return ["в карточке", "ok"];
+  const q = S.queue.find((x) => x.op === p.op);
+  if (q) return q.error ? ["не прошло", "bad"] : ["ждёт сети", "warn"];
+  return ["отправлено", "acc"];
+}
+async function sendPhoto(e, file) {
+  toast("Готовлю снимок…");
+  let ph;
+  try { ph = await shrink(file); } catch (er) { return toast(er.message, true); }
+  const op = opId(), rec = { op, eid: e.id, thumb: ph.thumb, at: Date.now() };
+  S.photos.push(rec); await idbPut("photos", [rec]).catch(() => {});
+  if (location.hash === `#/e/${encodeURIComponent(e.id)}`) viewEq(e.id);
+  let r = null;
+  try { r = await doOp({ op, kind: "equipment_photo", id: e.id, data: ph.data, taken_at: stamp() }, `Фото: ${e.name}`); }
+  catch (er) { toast(er.message, true); }
+  if (r === null) { S.photos = S.photos.filter((x) => x.op !== op); await idbDel("photos", [op]).catch(() => {}); }  // refused: no preview
+  if (location.hash === `#/e/${encodeURIComponent(e.id)}`) viewEq(e.id);
+}
 function viewEqList() {
   const term = (S.eterm || "").toLowerCase();
   const list = [...D.eq.values()].filter((e) => e.status !== "written_off" && (!term || [e.name, e.model, e.inv_number, e.serial, e.location].some((x) => String(x || "").toLowerCase().includes(term))))
@@ -683,6 +741,12 @@ function viewEq(id) {
   if (!e) return page("Оборудование", empty("Оборудование не найдено", "Обновите данные в профиле или проверьте этикетку."), { back: true });
   const ev = (D.ev.get(id) || []).slice(0, 20), live = e.status !== "written_off", ed = can("equipment_edit") && live;
   const ns = e.next_service ? days(e.next_service) : null;
+  const shots = S.photos.filter((p) => p.eid === id).sort((a, b) => b.at - a.at);
+  const photos = (can("photo") || can("equipment_edit")) && live ? `<div class="sec">Фото</div>
+    <div class="acts ph-acts"><label class="btn soft">${ico("cam")}Сфотографировать<input type="file" accept="image/*" capture="environment" hidden data-ph></label>
+      <label class="btn ghost">${ico("pic")}Из галереи<input type="file" accept="image/*" hidden data-ph></label></div>
+    ${shots.length ? `<div class="ph-strip">${shots.map((p) => { const [t, c] = photoState(p); return `<figure class="ph"><img src="${esc(p.thumb)}" alt="Фото оборудования"><figcaption><span class="chip ${c}">${t}</span></figcaption></figure>`; }).join("")}</div>` : ""}
+    <p class="small muted ph-note">Снимок уменьшается на телефоне и появляется в карточке на компьютере клиники. Без сети он подождёт в очереди и уйдёт сам.</p>` : "";
   page("Оборудование", `<div class="tag"><div class="code">ИНВ. № ${esc(e.inv_number || "—")}${e.serial ? " · S/N " + esc(e.serial) : ""}</div><h2>${esc(e.name)}</h2>
       <p>${esc([e.model, e.category].filter(Boolean).join(" · "))}</p>
       <div class="chips">${chip(EQ_ST, e.status)}${chip(EQ_CO, e.condition || "ok")}</div></div>
@@ -691,8 +755,10 @@ function viewEq(id) {
       ${can("money") && e.price ? `<dt>Стоимость</dt><dd>${money(e.price)}</dd>` : ""}</dl>
     ${ed ? `<div class="acts"><button class="btn" id="inv">На месте</button><button class="btn soft" id="state">Состояние и место</button>
       <button class="btn soft" id="svc">Записать ТО или ремонт</button><button class="btn ghost" id="lost">Не найдено</button></div>` : ""}
+    ${photos}
     <div class="sec">История</div>
     ${ev.length ? `<div class="list">${ev.map((x) => `<div class="ev"><b>${EV[x.kind] || esc(x.kind)}</b> <small>${fmtDate(x.date)} · ${esc(x.user_name || "")}${can("money") && x.cost ? " · " + money(x.cost) : ""}</small>${esc(x.text || "")}</div>`).join("")}</div>` : empty("Событий ещё не было")}`, { back: true });
+  $$("[data-ph]").forEach((inp) => (inp.onchange = () => { const f = inp.files && inp.files[0]; inp.value = ""; if (f) sendPhoto(e, f); }));
   if (!ed) return;
   const run = async (body, title) => { try { await doOp({ id, ...body }, title); } catch (er) { toast(er.message, true); } };
   $("#inv").onclick = () => run({ kind: "equipment_inventory", found: true }, "Инвентаризация");
@@ -799,6 +865,10 @@ async function boot() {
   try {
     for (const r of await idbAll("rows")) S.rows.set(r.id, r);
     S.queue = await idbAll("queue");
+    // previews of the photos sent from here: a month, the last 60
+    const ph = (await idbAll("photos")).sort((a, b) => b.at - a.at), keep = ph.filter((p, i) => i < 60 && Date.now() - p.at < 30 * DAY);
+    S.photos = keep;
+    if (keep.length < ph.length) await idbDel("photos", ph.filter((p) => !keep.includes(p)).map((p) => p.op));
   } catch { /* no IndexedDB (private mode): works online */ }
   index();
   window.addEventListener("hashchange", route);
