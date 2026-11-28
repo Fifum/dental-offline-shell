@@ -327,16 +327,14 @@
 .eq-sticker img{width:24mm;height:24mm;flex:none;image-rendering:pixelated}
 .eq-sticker div{display:flex;flex-direction:column;gap:.6mm;min-width:0}
 .eq-sticker b{font-size:8.5pt;font-weight:700;line-height:1.1;word-break:break-all}
-.eq-sticker span{font-size:6pt;line-height:1.15;max-height:4.5em;overflow:hidden}
+.eq-sticker span{font-size:6pt;line-height:1.15;max-height:4.5em;overflow:hidden;overflow-wrap:anywhere;hyphens:auto}
 .eq-sticker small{font-size:5pt;line-height:1.1;color:#333}
 @media print{#printArea:has(.eq-sticker){padding:0!important;margin:0!important}}
 
-/* 3.14: the label of a material — the QR with the number and the name, the barcode under them */
-.mt-sticker{flex-direction:column;align-items:stretch;justify-content:space-between;gap:.8mm;padding:1.4mm 1.6mm}
-.mt-sticker .mt-st-top{display:flex;align-items:center;gap:1.6mm;min-height:0}
-.mt-sticker .mt-st-top img{width:14mm;height:14mm}
-.mt-sticker .mt-st-ean{height:11.5mm;display:flex;justify-content:center}
-.mt-sticker .mt-st-ean svg{height:100%;width:auto;max-width:100%}
+/* 3.18.2: the label of a material is its QR alone — 27 mm, in the middle of the 40 × 30 mm sticker, sharp squares
+   for the phone's camera and a scanner (the number, the name and the barcode crowded it, the barcode ran over the text) */
+.mt-sticker{justify-content:center;align-items:center;padding:1.5mm}
+.mt-sticker img{width:27mm;height:27mm;flex:none}
 
 /* 3.18.1: the tabs of a card keep one line in a narrow column (1024–1366 px with the menu): tighter, then without
    icons; the material card's tabs still scroll sideways when even that is not enough */
@@ -350,3 +348,14 @@
 .eqc-label-in>div:last-child span{overflow-wrap:anywhere}
 .eqc-docs h3{flex-wrap:wrap;row-gap:4px}
 .mtc-quick .eqc-sel>span{white-space:normal}
+
+/* 3.18.2: «Остатки и партии» of a material: the places take a third and the lots two; in a narrow column (1024–1280 px
+   with the menu) the places go above the lots; a long place name wraps and its amount goes under it — at 1024 px
+   «Основной склад» and «295 пара» were drawn over each other */
+.eqc-two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mtc .eqc-two{grid-template-columns:minmax(190px,1fr) minmax(0,2fr)}
+@container (max-width:820px){.eqc-two,.mtc .eqc-two{grid-template-columns:minmax(0,1fr)}}
+.mtc-loc{display:flex;flex-wrap:wrap;align-items:center}
+.mtc-loc span{flex:1 1 auto}
+.mtc-loc b{margin-left:auto}
+.mtc-loc i{flex:1 1 100%}

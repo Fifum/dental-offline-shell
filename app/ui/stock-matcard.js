@@ -11,6 +11,7 @@ const MTI = {
   truck: '<svg viewBox="0 0 24 24"><path d="M3 6.5h11v9H3zM14 9.5h3.8l3.2 3.3v2.7h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/></svg>',
   tag: '<svg viewBox="0 0 24 24"><path d="M3.5 12.2V4.5h7.7l9.3 9.3-7.7 7.7z"/><circle cx="8" cy="9" r="1.4"/></svg>',
   bar: '<svg viewBox="0 0 24 24"><path d="M4 6v12M7 6v12M10 6v12M13.5 6v12M16 6v12M20 6v12"/></svg>',
+  qr: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><path d="M8 8h3v3H8zM13 13h3v3h-3zM13 8h3M8 13v3"/></svg>',
   list: '<svg viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/></svg>',
   cart: '<svg viewBox="0 0 24 24"><path d="M3 4.5h2.4l2.3 10.3h10.5l2.3-7.3H6.3"/><circle cx="9.3" cy="18.8" r="1.4"/><circle cx="16.8" cy="18.8" r="1.4"/></svg>',
   star: '<svg viewBox="0 0 24 24"><path d="m12 4 2.4 5 5.4.6-4 3.7 1.1 5.4L12 16l-4.9 2.7 1.1-5.4-4-3.7 5.4-.6z"/></svg>',
@@ -74,7 +75,7 @@ async function mtCard() {
   body.innerHTML = `<div class="eqc mtc">
     <div class="eqc-crumbs"><button class="eqc-back" id="mtBack" title="К списку материалов">${EQI.back}</button><button class="linkbtn" id="mtBack2">${back}</button>${EQI.chev}<b>Карточка материала</b></div>
     <div class="eqc-head"><h2>Карточка материала</h2>${m.number ? `<span class="eqc-chip">${esc(m.number)}</span>` : ""}<span class="grow"></span>
-      <button class="btn ghost eqc-hb" id="mtLabel">${MTI.bar}Печать штрихкода</button>
+      <button class="btn ghost eqc-hb" id="mtLabel" title="Наклейка 40 × 30 мм: QR-код для телефона и сканера">${MTI.qr}Печать QR-кода</button>
       ${c.edit && !off ? `<button class="btn ghost eqc-hb" id="mtEdit">${EQI.pen}Редактировать</button>` : ""}
       <button class="icon-btn eqc-more" id="mtMore" title="Ещё">${EQI.more}</button></div>
     ${off ? `<div class="warn-line">Материал убран из справочника. История поставок и движения сохранилась; карточка только для просмотра.</div>` : ""}
@@ -264,18 +265,21 @@ async function mtLoadQr() {
   try { const q = await api.material_qr(MT.data.id); MT.qr = q; box.innerHTML = q.png ? `<img src="${q.png}" alt="QR ${esc(q.number)}">` : `<span class="muted">QR недоступен</span>`; }
   catch (e) { box.innerHTML = `<span class="muted">QR недоступен</span>`; }
 }
-/** The sticker 40 × 30 mm: the QR and the number with the name on top, the barcode under them. */
+/** The sticker 40 × 30 mm. 3.18.2: the QR alone, as big as the sticker allows, in the middle — the phone's camera
+    and a scanner read it at once (the number, the name and the barcode crowded it, and the barcode ran over the text). */
 async function mtPrintLabel(m) {
   let q;
-  try { q = (m.can || {}).ops && m.active ? await api.material_label(m.id) : await api.material_qr(m.id); } catch (x) { return toast(errText(x), true); }
-  $("#printArea").innerHTML = `<div class="eq-sticker mt-sticker"><div class="mt-st-top"><img src="${q.png}" alt=""><div><b>${esc(q.number || "")}</b><span>${esc(q.name)}</span></div></div>${q.ean_svg ? `<div class="mt-st-ean">${q.ean_svg}</div>` : ""}</div>`;
+  try { q = await api.material_qr(m.id); } catch (x) { return toast(errText(x), true); }
+  if (!q.png) return toast("QR недоступен", true);
+  $("#printArea").innerHTML = `<div class="eq-sticker mt-sticker"><img src="${q.png}" alt="QR ${esc(q.number || "")}"></div>`;
+  const img = $("#printArea img");
+  if (img && img.decode) await img.decode().catch(() => null);
   window.print();
-  if (m.ean_internal && !q.ean_internal && S.matOpen === m.id) mtCard();  // the internal barcode is written down now
 }
 function mtCodesMenu(btn, m) {
   const old = $(".eqc-menu"); if (old) { old.remove(); return; }
   const menu = document.createElement("div"); menu.className = "eqc-menu mtc-codes-menu";
-  menu.innerHTML = `<button data-k="label">Печать наклейки 40 × 30 мм</button><button data-k="qr">Скачать QR-код (PNG)</button>${m.ean ? `<button data-k="ean">Скачать штрихкод (SVG)</button>` : ""}`;
+  menu.innerHTML = `<button data-k="label">Печать наклейки с QR (40 × 30 мм)</button><button data-k="qr">Скачать QR-код (PNG)</button>${m.ean ? `<button data-k="ean">Скачать штрихкод (SVG)</button>` : ""}`;
   btn.parentElement.appendChild(menu); popOpen(menu, btn, {align: "end"});
   const close = () => { menu.remove(); document.removeEventListener("click", out, true); };
   const out = ev => { if (!menu.contains(ev.target) && !btn.contains(ev.target)) close(); };

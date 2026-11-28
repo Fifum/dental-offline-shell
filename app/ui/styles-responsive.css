@@ -147,3 +147,15 @@
 .stat-row>.stat{container-type:inline-size;min-width:0}
 @container (max-width:190px){.stat-row>.stat>b{font-size:18px;white-space:nowrap}}
 @container (max-width:135px){.stat-row>.stat>b{font-size:16px}}
+
+/* 3.18.2: the big number of a tile keeps inside its tile on any monitor and with any data («63 пара/мес.» ran over the
+   tile's edge of the material card): its column cannot grow wider than the tile, fitNumbers() in responsive.js makes
+   the number smaller until it fits, and only a very narrow tile lets it wrap between words */
+.eqc-tile,.eqs-tile{grid-template-columns:auto minmax(0,1fr)}
+:is(.eqc-tile,.eqs-tile,.stat,.sn-st)>b{min-width:0;max-width:100%}
+:is(.eqc-tile,.eqs-tile,.stat,.sn-st)>b.fit-wrap{white-space:normal;overflow-wrap:anywhere;line-height:1.15}
+
+/* 3.18.2: the hours of the schedule stay inside their column: the first one under the top line, the last one above the
+   bottom line («21:00» hung half under the grid) — the others stay centred on their lines */
+#grid .g-times div:first-child{transform:none}
+#grid .g-times div:last-child{transform:translateY(-100%)}
