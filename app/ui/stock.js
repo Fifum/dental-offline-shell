@@ -10,7 +10,8 @@ const STOCK_AREAS = {
     tabs: [["home", "Главная"], ["balance", "Остатки"], ["docs", "Документы"], ["moves", "Движение"],
       ["visits", 'По приёмам<i class="cnt" id="stVisitsCnt" hidden></i>', "Списание материалов по приёмам Dentist Plus"],
       ["places", "Места хранения", "Кабинеты, филиалы и перемещения"], ["orders", "Закупки", "Заказы поставщикам и что в пути"],
-      ["norms", "Нормы списания"], ["suppliers", "Поставщики"]]},
+      ["norms", "Нормы списания"], ["suppliers", "Поставщики"],
+      ["phone", "Телефон", "Склад на телефоне сотрудника: QR, сканер, приём и расход"]]},
   // 3.15: the bar of the mockups — the main tabs with icons and «Ещё» (stock-eqsection.js draws it)
   equipment: {title: "Оборудование", sub: "Учёт, обслуживание и управление имуществом клиники",
     tabs: [["eq_overview", "Обзор"], ["equipment", "Реестр оборудования"], ["eq_receipts", "Поступление"], ["eq_moves", "Перемещения"],
@@ -75,6 +76,7 @@ function stockTabsByRights() {
   const st = canAny("stock_view", "stock_edit");
   const vis = {home: canAny("stock_view", "stock_edit", "stock_ops"), balance: st, docs: st, moves: st, visits: st && !!STK.dp_link, places: st,
     norms: st, suppliers: can("stock_edit"), orders: st,
+    phone: canAny("settings", "stock_edit", "stock_approve"),  // 3.13: the cloud of the stock and the QR for phones
     equipment: canAny("equipment", "stock_view", "stock_ops"), service: canAny("equipment", "stock_view", "stock_ops"), amort: can("accounting"),
     disposed: canAny("equipment", "stock_view"), steril: canAny("sterilization", "equipment"),
     inv_mat: can("stock_edit"), inv_eq: can("equipment"), inv_hist: canAny("stock_edit", "equipment"),
@@ -104,7 +106,7 @@ async function loadStock() {
   stockTabsByRights();  // 3.13: «По приёмам» only while the stock is linked to Dentist Plus (STK.dp_link)
   if (S.matOpen && ["home", "balance"].includes(S.stockTab)) return mtCard();  // 3.13: the material card is a screen of these tabs
   const fn = {home: stockHome, balance: stockBalance, docs: stockDocs, moves: stockMoves, norms: stockNorms, suppliers: stockSuppliers,
-    visits: stockVisits, places: stockPlaces, orders: stockOrders,
+    visits: stockVisits, places: stockPlaces, orders: stockOrders, phone: stockPhone,
     equipment: stockEquipment, service: eqRequestsTab, amort: eqAmortYear, disposed: eqDisposalTab,
     inv_mat: invMaterials, inv_eq: invEquipment, inv_hist: invHistory, eq_refs: eqRefsTab, eq_overview: eqOverview, eq_receipts: eqReceiptsTab, eq_moves: eqMovesTab, eq_purchases: eqPurchasesTab, eq_third: eqThirdTab, eq_docs: eqDocsTab, eq_analytics: eqAnalyticsTab, eq_log: eqLogTab}[S.stockTab];
   await fn();

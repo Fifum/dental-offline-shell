@@ -47,6 +47,8 @@ class Api:
         self._local = Local(db)
         self._cloud = None          # cloud.Cloud, set by start_platform (or made on first use)
         self._cloud_worker = None
+        self._stock_cloud = None    # 3.13: stock_cloud.StockCloud (the phones of the staff), set by start_platform
+        self._stock_cloud_worker = None
         self._stock = Stock(db)
         self._fiscal = Fiscal(db)
         from accounting import Accounting
@@ -2863,6 +2865,41 @@ class Api:
         self._director("Отключать компьютеры клиники")
         return self._cloud_call(self._cloud_obj().revoke_device, str(device_id or ""))
 
+    # ------------------------------------------------ 3.13: the cloud of the stock and the phones --
+    def _scloud(self):
+        if self._stock_cloud is None:
+            from stock_cloud import StockCloud
+            self._stock_cloud = StockCloud(self._db)
+        return self._stock_cloud
+
+    @staticmethod
+    def _scloud_call(fn, *a):
+        from stock_cloud import StockCloudError
+        try:
+            return fn(*a)
+        except StockCloudError as e:
+            raise ValueError(str(e)) from None
+
+    def stock_cloud_status(self):
+        return self._scloud().status()
+
+    def stock_cloud_join(self, code, name=""):
+        self._director("Подключать склад к облаку")
+        r = self._scloud_call(self._scloud().join, code, name)
+        if self._stock_cloud_worker:
+            self._stock_cloud_worker.trigger()
+        return r
+
+    def stock_cloud_leave(self):
+        self._director("Отключать склад от облака")
+        return self._scloud_call(self._scloud().leave)
+
+    def stock_cloud_sync(self):
+        return self._scloud_call(self._scloud().sync, True)
+
+    def stock_cloud_phone(self):
+        return self._scloud_call(self._scloud().phone)
+
     def cloud_conflicts(self, show_seen=False):
         import replica
         return replica.conflicts(self._db, bool(show_seen))
@@ -3192,6 +3229,10 @@ def start_platform(api, db, holder=None):
     w = CloudWorker(db)
     api._cloud, api._cloud_worker = w.cloud, w
     w.start()
+    from stock_cloud import StockCloudWorker  # 3.13: the cloud of the stock for the phones of the staff
+    sw = StockCloudWorker(db)
+    api._stock_cloud, api._stock_cloud_worker = sw.cloud, sw
+    sw.start()
     updates.UpdateWorker().start()
     if holder is not None:
         holder.cloud = w

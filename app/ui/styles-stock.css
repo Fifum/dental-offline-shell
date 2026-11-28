@@ -151,3 +151,14 @@ td.wrap{white-space:normal}
 .capex-box .tbl{background:var(--panel)}
 .capex-f{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
 .fm-capex{margin:10px 0 0}
+
+/* 3.13: «Телефон и облако склада» */
+.sp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;align-items:start}
+.sp-panel{max-width:640px}
+.sp-state{margin:6px 0 10px}
+.sp-dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0 0 12px;font-size:13.5px}
+.sp-dl dt{color:var(--muted)}.sp-dl dd{margin:0}
+.sp-qr{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+.sp-qr img{width:180px;height:180px;border-radius:10px;border:1px solid var(--line);background:#fff;image-rendering:pixelated}
+.sp-qr>div{flex:1;min-width:200px}
+.sp-code{font-size:22px;font-weight:700;letter-spacing:.08em;margin:6px 0 10px}

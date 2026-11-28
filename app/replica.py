@@ -159,7 +159,8 @@ def install(db):
     with db._lock:
         conn.executescript(SCHEMA)
         rcols = set(_cols(conn, "sync_rows"))
-        for col in ("vv TEXT", "pbase TEXT", "seq INTEGER", "cver TEXT", "pvv TEXT"):  # 3.0: versions for peer-to-peer sync
+        # 3.0: versions for peer-to-peer sync; 3.13: `sver` = the version the cloud of the stock has (stock_cloud.py)
+        for col in ("vv TEXT", "pbase TEXT", "seq INTEGER", "cver TEXT", "pvv TEXT", "sver TEXT"):
             if col.split()[0] not in rcols:
                 conn.execute(f"ALTER TABLE sync_rows ADD COLUMN {col}")
         if "cver" not in rcols:  # before 3.0 every known version came from (or went to) the cloud
@@ -273,7 +274,7 @@ def _catch_up(conn):
         set_applying(conn, False)
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='p2p_peers'").fetchone():
         conn.execute("UPDATE p2p_peers SET mark=0")
-    conn.execute("DELETE FROM sync_state WHERE k='cloud_seq'")
+    conn.execute("DELETE FROM sync_state WHERE k IN ('cloud_seq', 'scloud_seq')")
     conn.execute("INSERT OR REPLACE INTO sync_state(k, v) VALUES('catchup', ?)", (CATCHUP,))
 
 
@@ -299,6 +300,88 @@ def _dec(v):
 
 def _where(t):
     return " AND ".join(f"{c}=?" for c in t.key)
+
+
+# ------------------------------------------------- 3.13: fields of patients --
+# The cloud of the stock (stock_cloud.py) never gets patients: these fields leave a row before it goes there. DROP — the
+# column is left out; "payload" — the JSON keeps its keys with empty values (the laptops read them). A row that comes
+# back from there (or from a computer that took it from there) gets them back from the full copy of this computer.
+DROP = "drop"
+HIDDEN = {"stock_moves": {"patient_id": DROP},
+          "stock_approvals": {"patient_id": DROP, "payload": "payload"}}
+
+
+def _hide_payload(v):
+    if not isinstance(v, str):
+        return v
+    try:
+        p = json.loads(v)
+    except ValueError:
+        return v
+    if not isinstance(p, dict) or not (p.get("patient_id") or p.get("patient_name")):
+        return v
+    p["patient_id"], p["patient_name"] = "", ""
+    return json.dumps(p, ensure_ascii=False)
+
+
+def hide(table, row):
+    """The row as the cloud of the stock may keep it (no patient)."""
+    rule = HIDDEN.get(table)
+    if not rule or not isinstance(row, dict):
+        return row
+    out = dict(row)
+    for col, how in rule.items():
+        if how == DROP:
+            out.pop(col, None)
+        elif col in out:
+            out[col] = _hide_payload(out[col])
+    return out
+
+
+def unhide(table, row, local):
+    """A row from the cloud of the stock with the patient fields of this computer's copy (`local`) put back."""
+    rule = HIDDEN.get(table)
+    if not rule or not isinstance(row, dict) or not isinstance(local, dict):
+        return row
+    out = dict(row)
+    for col, how in rule.items():
+        if how == DROP:
+            if col not in out and col in local:
+                out[col] = local[col]
+        elif col in out and col in local and out[col] != local[col] and _hide_payload(local[col]) == out[col]:
+            out[col] = local[col]
+    return out
+
+
+def _fill_hidden(conn, t, key, k, theirs, meta):
+    """The same version, here without the patient fields (it came through the cloud of the stock) and there with them:
+    take them, so every computer of the clinic keeps the full row."""
+    rule = HIDDEN.get(t.name)
+    if not rule or not isinstance(theirs, dict) or not meta or not meta["base"]:
+        return
+    try:
+        mine = json.loads(meta["base"])
+    except ValueError:
+        return
+    if not isinstance(mine, dict):
+        return
+    have = set(_cols(conn, t.name))
+    sets = {}
+    for col, how in rule.items():
+        v = theirs.get(col)
+        if v in (None, "") or col not in have:
+            continue
+        cur = mine.get(col)
+        if how == DROP:
+            if cur in (None, ""):
+                sets[col] = v
+        elif cur != v and _hide_payload(v) == cur:
+            sets[col] = v
+    if not sets:
+        return
+    conn.execute(f"UPDATE {t.name} SET {', '.join(c + '=?' for c in sets)} WHERE {_where(t)}", list(sets.values()) + list(key))
+    mine.update(sets)
+    conn.execute("UPDATE sync_rows SET base=? WHERE tbl=? AND k=?", (json.dumps(mine, ensure_ascii=False), t.name, k))
 
 
 def read_row(conn, t: T, key: list):
@@ -482,6 +565,11 @@ def _canon(row) -> str:
     return json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _same_row(a: dict, b: dict) -> bool:
+    """A missing key is the same as an empty one: a row from the cloud of the stock has no patient_id, the table has NULL."""
+    return all(a.get(c) == b.get(c) for c in set(a) | set(b))
+
+
 def _next_seq(conn) -> int:
     r = conn.execute("SELECT v FROM sync_state WHERE k='seq'").fetchone()
     n = (int(r[0]) if r else 0) + 1
@@ -539,7 +627,7 @@ def stamp_conn(conn, node, only=None) -> int:
         row = read_row(conn, t, key)
         meta = conn.execute("SELECT * FROM sync_rows WHERE tbl=? AND k=?", (t.name, d["k"])).fetchone()
         base = json.loads(meta["base"]) if meta and meta["base"] else None
-        if (meta and meta["ver"] and row is not None and base is not None and _canon(row) == _canon(base)) or \
+        if (meta and meta["ver"] and row is not None and isinstance(base, dict) and _same_row(row, base)) or \
                 (row is None and (not meta or meta["base"] is None)):
             conn.execute(*conn_del)  # nothing really changed (saved again as it was) or a row that never left
             continue
@@ -627,9 +715,13 @@ def _merged_ver(vv, row) -> str:
     return f"{max(vv.values() or [0]):015d}.m.{h}"
 
 
-def apply_versions(db, items, node, cloud=False):
+def apply_versions(db, items, node, cloud=False, mark=None):
     """Apply versions from a peer or the cloud: [{"t", "k", "row", "ver", "vv", "pbase", "origin"}]. Returns counts.
-    `cloud`: they came from the cloud, which therefore has them (cver)."""
+    `cloud`: they came from the cloud, which therefore has them (cver); `mark`: the column that says which cloud has them
+    («sver» — the cloud of the stock)."""
+    mark = "cver" if cloud else mark
+    if mark not in (None, "cver", "sver"):
+        raise ValueError(mark)
     stats = {"applied": 0, "merged": 0, "conflicts": 0, "skipped": 0, "same": 0}
     items = sorted(items, key=lambda x: (ORDER.get(x["t"], 999), x.get("seq", 0)))
     import logging
@@ -651,8 +743,8 @@ def apply_versions(db, items, node, cloud=False):
                     stamp_conn(conn, node, (t.name, k))  # our unsaved change becomes a version first
                 meta = conn.execute("SELECT * FROM sync_rows WHERE tbl=? AND k=?", (t.name, k)).fetchone()
                 _apply_one(conn, t, key, k, it, meta, stats, logging)
-                if cloud:
-                    conn.execute("UPDATE sync_rows SET cver=? WHERE tbl=? AND k=?", (it["ver"], t.name, k))
+                if mark:
+                    conn.execute(f"UPDATE sync_rows SET {mark}=? WHERE tbl=? AND k=?", (it["ver"], t.name, k))
         finally:
             set_applying(conn, False)
     return stats
@@ -689,6 +781,7 @@ def _apply_one(conn, t, key, k, it, meta, stats, logging):
     dev = ver_device(it["ver"]) or it.get("origin", "")
     if meta is not None and meta["ver"] == it["ver"]:
         stats["same"] += 1
+        _fill_hidden(conn, t, key, k, theirs, meta)
         return
     c = "lt" if meta is None or meta["ver"] is None else vv_cmp(_vv(meta), tv)
     if c == "eq":  # same history, made into different rows on two computers: the same rule everywhere
