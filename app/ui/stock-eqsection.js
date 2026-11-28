@@ -839,7 +839,10 @@ async function eqReportData(k) {
       ["Степень износа", `${M.wear} %`], ["Амортизация за год", eqMoney(r.amort)], ["Затраты на обслуживание за год", eqMoney(r.keep)]] : []),
       ["Исправно / на обслуживании / требует ремонта", `${r.condition.ok} / ${r.condition.service} / ${r.condition.faulty}`], ["Работ за год (ремонтов)", `${r.works} (${r.repairs})`],
       ...r.events.map(x => [x.title, `${fmtDateShort(x.date)}, ${x.count} ед.`]), ...r.conclusions.map(x => ["Вывод", x.text]),
-      ...r.by_category.map(x => [`Категория «${x.name}»`, `${x.count} ед.${mon ? `, содержание ${eqMoney(x.keep)}, амортизация ${eqMoney(x.amort)}` : ""}`])]};
+      ...r.by_category.map(x => [`Категория «${x.name}»`, `${x.count} ед.${mon ? `, содержание ${eqMoney(x.keep)}, амортизация ${eqMoney(x.amort)}` : ""}`]),
+      ...r.ages.map(x => [`Возраст парка: ${x.name}`, `${x.count} ед.`]),
+      ...(mon ? r.by_month.map((m, i) => [`Стоимость содержания по месяцам: ${EQ_MON[i].toLowerCase()}`, eqMoney(m.service + m.repair + m.diag)]) : []),
+      ...(mon ? r.top.slice(0, 5).map(g => [`Дороже всего в содержании: ${g.name}${g.inv_number ? " " + g.inv_number : ""}`, `${eqMoney(g.cost)}, работ: ${g.works}`]) : [])]};
 }
 const eqReportTable = (x, id) => `<table class="tbl compact eqs-reg" id="${id}"><thead><tr>${x.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${x.rows.map(row => `<tr>${row.map(v => `<td>${esc(v ?? "")}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${x.head.length}" class="muted">Нет данных</td></tr>`}</tbody></table>`;
 async function eqReportPrint(x) {
