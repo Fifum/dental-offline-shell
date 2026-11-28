@@ -34,10 +34,50 @@ const snNum = v => Math.round((+String(v ?? "").replace(",", ".") || 0) * 1000) 
 const snLS = (k, v) => { try { if (v === undefined) return localStorage.getItem("dd.sn." + k); localStorage.setItem("dd.sn." + k, v); } catch (e) { return null; } };
 
 /* ------------------------------------------------------------- photos */
-function phHtml(photoId, cls = "") {
+/** `def` (3.18): the picture shown while the piece or the material has no photo of its own — eqPic() / matPic(). */
+function phHtml(photoId, cls = "", def = "") {
   const url = photoId && PHOTO[photoId];
-  return `<span class="sn-ph ${cls} ${url ? "has" : ""}" ${photoId ? `data-ph="${esc(photoId)}"` : ""}>${url ? `<img src="${url}" alt="">` : SN_ICON.ph}</span>`;
+  return `<span class="sn-ph ${cls} ${url ? "has" : def ? "def" : ""}" ${photoId ? `data-ph="${esc(photoId)}"` : ""}>${url ? `<img src="${url}" alt="">` : def ? `<img src="${def}" alt="" title="Картинка по названию — своё фото можно добавить в карточке">` : SN_ICON.ph}</span>`;
 }
+
+/* 3.18: pictures of the usual equipment and materials (img/stock, cut out — fit the dark theme too) for what has no photo of
+   its own: the first rule whose words are in the name wins, then the category; the order matters (a panoramic X-ray before
+   an X-ray, an ultrasonic bath before a scaler, a stool before a chair). */
+const STOCK_PIC_DIR = "img/stock/";
+const EQ_PIC_RULES = [
+  ["apex", ["апекс"]], ["opg", ["ортопантомограф", "опг", "томограф", "панорамн", "кт "]], ["sensor", ["визиограф", "датчик", "сенсор"]],
+  ["xray", ["рентген"]], ["ultrasonic-bath", ["мойк", "ванн"]], ["scaler", ["скалер", "ультразвук", "пьезо"]],
+  ["handpiece", ["наконечник", "турбин", "микромотор"]], ["recirculator", ["рециркулятор", "облучател", "бактерицид"]],
+  ["curing", ["полимериз", "лампа", "фотополимер"]],
+  ["implant-motor", ["физиодиспенсер", "имплантолог", "хирургический мотор"]], ["sealer", ["запайщик", "упаковочн"]],
+  ["autoclave", ["автоклав", "стерилизатор", "сухожар"]],
+  ["compressor", ["компрессор", "аспиратор", "аспирационн", "отсос"]], ["microscope", ["микроскоп"]],
+  ["fridge", ["холодильник"]], ["cabinet", ["шкаф", "стеллаж", "тумб"]], ["stool", ["стул", "табурет", "седло", "кресло врача", "кресло ассистента"]],
+  ["printer", ["принтер", "мфу", "копир", "сканер документ", "ламинатор"]], ["computer", ["моноблок", "компьютер", "ноутбук", "монитор", "пк ", "планшет"]],
+  ["chair", ["установк", "кресло", "стоматологическ"]],
+];
+const EQ_PIC_CATS = {"стоматологическое оборудование": "chair", "диагностическое оборудование": "xray", "стерилизационное оборудование": "autoclave",
+  "стерилизация": "autoclave", "рентген и визиография": "xray", "инженерное оборудование": "compressor", "медицинские инструменты": "handpiece",
+  "инструменты": "handpiece", "компьютерная техника": "computer", "компьютеры и оргтехника": "computer", "оргтехника": "printer", "мебель": "cabinet",
+  "медицинское оборудование": "chair", "бытовая техника": "fridge"};
+const MAT_PIC_RULES = [
+  ["carpule", ["карпул", "анестет", "артикаин", "ультракаин", "убистезин", "септанест", "мепивака", "лидокаин", "скандонест"]],
+  ["syringe", ["шприц", "композит", "flow", "флоу", "пломбир"]], ["disinfectant", ["дез", "антисепт", "спрей", "хлоргекс", "гипохлор"]],
+  ["gloves", ["перчат"]], ["napkins", ["салфет", "полотен", "бумаг", "туалет"]], ["tube", ["тюбик", "паст", "гель", "крем"]],
+  ["bottle", ["флакон", "бонд", "адгез", "жидкост", "праймер", "капл"]], ["jar", ["баноч", "порош", "альгинат", "слепоч", "гипс", "силикон"]],
+];
+const MAT_PIC_CATS = {"пломбировочные материалы": "syringe", "анестезия": "carpule", "эндодонтия": "bottle", "ортопедия и слепочные материалы": "jar",
+  "гигиена и профилактика": "tube", "дезинфекция и стерилизация": "disinfectant", "расходные одноразовые": "gloves", "хозяйственные товары": "napkins"};
+function stockPicBy(rules, cats, name, category, fallback) {
+  const n = ` ${String(name || "").toLowerCase().replace(/ё/g, "е")} `, c = String(category || "").trim().toLowerCase();
+  const r = rules.find(([, words]) => words.some(w => n.includes(w)));
+  const key = r ? r[0] : cats[c] || (c.startsWith("хоз") && cats["хозяйственные товары"]) || fallback;
+  return key ? STOCK_PIC_DIR + key + ".webp" : "";
+}
+/** The picture of a piece of equipment by its name and category («» — nothing fits: the usual placeholder). */
+const eqPic = (name, category) => stockPicBy(EQ_PIC_RULES, EQ_PIC_CATS, name, category, "");
+/** The picture of a material by its name and category; anything else — a plain carton box. */
+const matPic = (name, category) => stockPicBy(MAT_PIC_RULES, MAT_PIC_CATS, name, category, "box");
 /** Previews of the photos on the screen: the ones not loaded yet are fetched in one call. */
 async function loadThumbs(root = document) {
   const els = [...root.querySelectorAll("[data-ph]")];
@@ -168,7 +208,7 @@ async function snBalanceSub(el) {
     ${shown.length ? `<table class="tbl sn-tbl"><thead><tr><th>Материал</th><th>Остаток</th><th class="num">Минимум</th><th>Срок годности</th><th>Местонахождение</th><th></th></tr></thead><tbody>${shown.map(m => {
       const pct = m.min_qty ? Math.max(4, Math.min(100, m.balance / (m.min_qty * 2) * 100)) : (m.balance > 0 ? 100 : 0);
       const pl = (where[m.id] || []).slice(0, 2);
-      return `<tr data-m="${esc(m.id)}"><td><div class="sn-mat">${phHtml(m.photo_id)}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : esc(m.category || "")}</small></span></div></td>
+      return `<tr data-m="${esc(m.id)}"><td><div class="sn-mat">${phHtml(m.photo_id, "", matPic(m.name, m.category))}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : esc(m.category || "")}</small></span></div></td>
         <td>${balPill(m)}<i class="sn-prog ${m.low || m.balance < 0 ? "bad" : ""}"><i style="width:${pct}%"></i></i></td><td class="num">${m.min_qty ? qtyFmt(m.min_qty) : "—"}</td>
         <td class="${m.exp_state === "expired" ? "bad-t" : m.exp_state === "soon" ? "warn-t" : ""}">${m.expires ? "до " + fmtDateShort(m.expires) : '<span class="muted">—</span>'}</td>
         <td>${pl.length ? pl.map(p => `<span class="sn-place">${esc(p.name)}</span>`).join("") : '<span class="sn-place">' + esc(SN.place != null ? snPlaceName(SN.place) : "Основной склад") + "</span>"}${(where[m.id] || []).length > 2 ? `<small class="muted"> +${where[m.id].length - 2}</small>` : ""}</td>
@@ -209,7 +249,7 @@ async function snPlacesSub(el) {
 async function snLotsSub(el) {
   const lots = (SN.home && SN.home.lots) || [];
   el.innerHTML = `<div class="sn-panel">${lots.length ? `<table class="tbl sn-tbl"><thead><tr><th>Материал</th><th>Партия</th><th>Годен до</th><th class="num">Осталось</th><th></th></tr></thead><tbody>${lots.map(x => `<tr data-m="${esc(x.material_id)}" class="${x.state === "expired" ? "exp-expired" : x.state === "soon" ? "exp-soon" : ""}">
-      <td><div class="sn-mat">${phHtml(x.photo_id)}<span><b>${esc(x.name)}</b><small>${x.code ? "Арт. " + esc(x.code) : ""}</small></span></div></td><td>${esc(x.lot || "без номера")}</td>
+      <td><div class="sn-mat">${phHtml(x.photo_id, "", matPic(x.name, x.category))}<span><b>${esc(x.name)}</b><small>${x.code ? "Арт. " + esc(x.code) : ""}</small></span></div></td><td>${esc(x.lot || "без номера")}</td>
       <td>${x.expires ? fmtDateShort(x.expires) : "—"}</td><td class="num">${qtyFmt(x.left, x.unit)}</td>
       <td>${x.state === "expired" ? '<span class="pill exp-pill expired">просрочено</span>' : x.state === "soon" ? `<span class="pill exp-pill soon">${x.days} ${plural(x.days, "день", "дня", "дней")}</span>` : ""}</td></tr>`).join("")}</tbody></table>`
     : `<div class="empty"><b>Партий со сроком годности нет</b><span>Срок годности и номер партии указываются при приёме поставки или считываются сканером с кода «Честный знак»</span></div>`}</div>`;
@@ -281,7 +321,7 @@ async function openApproval(id) {
         ["Причина", esc(f.reason)], ["Комментарий", esc(f.comment)], ["Сотрудник", esc(x.created_name || x.created_by)], ["Отправлено", fmtDT(x.sent_at)],
         ["Решение", x.decided_at ? `${esc(x.decided_name || x.decided_by)}, ${fmtDT(x.decided_at)}` : ""], ["Ответ", esc(x.answer)]].filter(r => r[1] && r[1].trim()).map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join("")}</dl>
       <table class="tbl sn-tbl compact"><thead><tr><th>Материал</th>${x.status === "pending" ? '<th class="num">Сейчас в кабинете</th>' : ""}<th class="num">Количество</th><th class="num">Сумма</th></tr></thead><tbody>${(f.lines || []).map(l => `<tr>
-        <td><div class="sn-mat">${phHtml(l.photo_id)}<span><b>${esc(l.name)}</b><small>${l.code ? "Арт. " + esc(l.code) : ""}</small></span></div></td>
+        <td><div class="sn-mat">${phHtml(l.photo_id, "", matPic(l.name, l.category))}<span><b>${esc(l.name)}</b><small>${l.code ? "Арт. " + esc(l.code) : ""}</small></span></div></td>
         ${x.status === "pending" ? `<td class="num ${l.balance < l.qty ? "bad-t" : ""}">${qtyFmt(l.balance, l.unit)}</td>` : ""}<td class="num"><b>${qtyFmt(l.qty, l.unit)}</b></td><td class="num">${money(l.qty * (l.price || 0))}</td></tr>`).join("")}</tbody></table>
       ${x.doc_id ? `<div class="muted">Акт списания: ${esc(x.doc_id)}</div>` : ""}</div>
     <div class="m-f">${x.status === "pending" && !c.approve && x.created_by === (ME && ME.login) ? `<button class="btn ghost small danger" id="apCancel">Отменить</button>` : ""}<span class="muted">Итого ${money(x.total)}</span>
@@ -302,7 +342,7 @@ async function openRequestView(id) {
         ["Принята", x.accepted_at ? `${esc(x.accepted_name || x.accepted_by)}, ${fmtDT(x.accepted_at)}` : ""],
         ["Комментарий", esc(x.comment)], ["Ответ", esc(x.answer)]].filter(r => r[1] && String(r[1]).trim() && r[1] !== "—").map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join("")}</dl>
       <table class="tbl sn-tbl compact"><thead><tr><th>Материал</th><th class="num">Нужно</th><th class="num">Выдано</th>${all ? '<th class="num">На складе</th><th class="num">В кабинете</th>' : ""}</tr></thead><tbody>${x.lines.map(l => `<tr>
-        <td><div class="sn-mat">${phHtml(l.photo_id)}<span><b>${esc(l.name)}</b><small>${l.code ? "Арт. " + esc(l.code) : ""}</small></span></div></td><td class="num"><b>${qtyFmt(l.qty, l.unit)}</b></td>
+        <td><div class="sn-mat">${phHtml(l.photo_id, "", matPic(l.name, l.category))}<span><b>${esc(l.name)}</b><small>${l.code ? "Арт. " + esc(l.code) : ""}</small></span></div></td><td class="num"><b>${qtyFmt(l.qty, l.unit)}</b></td>
         <td class="num ${l.issued >= l.qty ? "ok-t" : ""}">${l.issued ? qtyFmt(l.issued, l.unit) : "—"}</td>${all ? `<td class="num ${l.at_main < l.qty - l.issued ? "bad-t" : ""}">${qtyFmt(l.at_main, l.unit)}</td><td class="num">${qtyFmt(l.at_place, l.unit)}</td>` : ""}</tr>`).join("")}</tbody></table></div>
     <div class="m-f">${["draft", "new"].includes(x.status) && x.created_by === (ME && ME.login) ? `<button class="btn ghost small danger" id="rqCancel">Отменить заявку</button>` : ""}<span class="muted"></span>
       <button class="btn ghost" data-close>Закрыть</button>${x.status === "draft" ? `<button class="btn" id="rqEdit">Продолжить</button>` : ""}
@@ -345,7 +385,7 @@ function bindPicker(st, o) {
       (!ql || `${m.name} ${m.code} ${m.barcode} ${m.category}`.toLowerCase().includes(ql)));
     $("#pkRows").innerHTML = list.length ? list.map(m => { const n = o.qty(m.id);
       return `<tr data-pk="${esc(m.id)}" class="${n > 0 ? "on" : ""}"><td><input type="checkbox" ${n > 0 ? "checked" : ""} data-chk></td>
-        <td><div class="sn-mat">${phHtml(m.photo_id)}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : esc(m.category || "")}</small></span></div></td>
+        <td><div class="sn-mat">${phHtml(m.photo_id, "", matPic(m.name, m.category))}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : esc(m.category || "")}</small></span></div></td>
         <td>${balPill(m, o.balance ? o.balance(m) : m.balance)}</td>
         <td><div class="sn-step"><button data-d="-1" ${n > 0 ? "" : "disabled"}>−</button><input class="num" value="${n || 0}" inputmode="decimal" data-q><button data-d="1">+</button></div></td>
         <td class="muted sn-unit">${esc(m.unit || "")}</td></tr>`; }).join("") : `<tr><td colspan="5"><div class="empty"><b>Ничего не найдено</b></div></td></tr>`;
@@ -387,7 +427,7 @@ function bindPicker(st, o) {
 const linesOf = obj => Object.entries(obj).filter(([, q]) => q > 0).map(([material_id, qty]) => ({material_id, qty}));
 function cartHtml(lines, byId, {qtyCls = "", removable = true} = {}) {
   return lines.length ? lines.map(l => { const m = byId[l.material_id] || {name: l.name || "?", unit: l.unit || ""};
-    return `<div class="sn-ci">${phHtml(m.photo_id)}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : ""}</small></span><em class="${qtyCls}">${qtyFmt(l.qty, m.unit)}</em>${removable ? `<button class="x" data-rm="${esc(l.material_id)}" title="Убрать">×</button>` : ""}</div>`; }).join("")
+    return `<div class="sn-ci">${phHtml(m.photo_id, "", matPic(m.name, m.category))}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : ""}</small></span><em class="${qtyCls}">${qtyFmt(l.qty, m.unit)}</em>${removable ? `<button class="x" data-rm="${esc(l.material_id)}" title="Убрать">×</button>` : ""}</div>`; }).join("")
     : `<div class="muted sn-none">Отметьте материалы слева или сканируйте штрихкод</div>`;
 }
 const placeOptions = (cur, {withMain = true, onlyCab = false} = {}) => snPlaces().filter(l => (withMain || l.id) && (!onlyCab || l.id)).map(l => `<option value="${esc(l.id)}" ${l.id === (cur ?? "") ? "selected" : ""}>${esc(l.name)}</option>`).join("");
@@ -613,7 +653,7 @@ async function openIssueScreen(preset = {}) {
     snScreen("issue", "Выдать в кабинет", "Проверьте и подтвердите выдачу", `${steps()}<section class="sn-card">
       <div class="sn-route"><span>${esc(snPlaceName(st.from))}</span>${SN_ICON.issue}<b>${esc(snPlaceName(st.to))}</b>${st.req.size ? `<em>по ${st.req.size === 1 ? "заявке" : "заявкам"} ${st.reqs.filter(r => st.req.has(r.id)).map(r => "№ " + esc(r.number)).join(", ")}</em>` : ""}</div>
       <table class="tbl sn-tbl"><thead><tr><th>Материал</th><th class="num">К выдаче</th><th class="num">${esc(snPlaceName(st.from))}: было → станет</th><th class="num">${esc(snPlaceName(st.to))}: было → станет</th></tr></thead><tbody>${lines.map(l => { const m = st.byId[l.material_id];
-        return `<tr><td><div class="sn-mat">${phHtml(m.photo_id)}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : ""}</small></span></div></td><td class="num"><b>${qtyFmt(l.qty, m.unit)}</b></td>
+        return `<tr><td><div class="sn-mat">${phHtml(m.photo_id, "", matPic(m.name, m.category))}<span><b>${esc(m.name)}</b><small>${m.code ? "Арт. " + esc(m.code) : ""}</small></span></div></td><td class="num"><b>${qtyFmt(l.qty, m.unit)}</b></td>
           <td class="num">${qtyFmt(m.balance)} → <b>${qtyFmt(snNum(m.balance - l.qty), m.unit)}</b></td><td class="num">${qtyFmt(atTo[l.material_id] || 0)} → <b>${qtyFmt(snNum((atTo[l.material_id] || 0) + l.qty), m.unit)}</b></td></tr>`; }).join("")}</tbody></table>
       ${st.comment ? `<div class="muted" style="margin-top:8px">Комментарий: ${esc(st.comment)}</div>` : ""}</section>
       <div class="sn-bar"><button class="btn ghost" id="isBack">${SN_ICON.back}Назад</button><span class="grow"></span><div class="auth-err" id="isErr"></div><button class="btn sn-big" id="isGo">${SN_ICON.ok}Выдать</button></div>`);
@@ -663,7 +703,7 @@ async function openReceiveScreen() {
       <div class="sn-acts"><button class="btn sn-big" id="rcOk">${SN_ICON.ok}Оприходовать</button><button class="btn ghost" id="rcCancel">Отмена</button></div><div class="auth-err" id="rcErr"></div></div></div>`);
   const cartDraw = () => {
     $("#rcCart").innerHTML = st.lines.length ? st.lines.map((l, i) => { const m = st.byId[l.material_id] || {};
-      return `<div class="sn-rc">${phHtml(m.photo_id)}<div><b>${esc(m.name)}</b><div class="sn-rc-f"><label>Кол-во<input class="input num" data-i="${i}" data-f="qty" value="${esc(l.qty)}"></label>
+      return `<div class="sn-rc">${phHtml(m.photo_id, "", matPic(m.name, m.category))}<div><b>${esc(m.name)}</b><div class="sn-rc-f"><label>Кол-во<input class="input num" data-i="${i}" data-f="qty" value="${esc(l.qty)}"></label>
         <label>Цена, ₽<input class="input num" data-i="${i}" data-f="price" value="${esc(l.price)}"></label><label>Партия<input class="input" data-i="${i}" data-f="lot" value="${esc(l.lot)}"></label>
         <label>Годен до<input class="input" type="date" data-i="${i}" data-f="expires" value="${esc(l.expires)}"></label></div></div><button class="x" data-rmi="${i}" title="Убрать">×</button></div>`; }).join("")
       : `<div class="muted sn-none">Сканируйте штрихкоды или отметьте материалы — партия и срок годности с кода «Честный знак» заполнятся сами</div>`;

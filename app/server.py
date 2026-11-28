@@ -213,6 +213,8 @@ class ClinicServer:
 
         class Handler(SimpleHTTPRequestHandler):
             timeout = 30  # a slow or silent client does not hold a thread forever
+            # 3.18: the pictures of the stock (img/stock/*.webp) and the fonts — Windows may not know these types
+            extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".webp": "image/webp", ".woff2": "font/woff2"}
 
             def __init__(self, *a, **kw):
                 super().__init__(*a, directory=srv.ui_dir, **kw)

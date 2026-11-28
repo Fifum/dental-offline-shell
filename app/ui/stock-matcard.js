@@ -80,7 +80,7 @@ async function mtCard() {
     ${off ? `<div class="warn-line">Материал убран из справочника. История поставок и движения сохранилась; карточка только для просмотра.</div>` : ""}
     <div class="eqc-grid"><div class="eqc-main">
       <section class="eqc-card eqc-top mtc-top">
-        <div class="eqc-gal"><div class="eqc-photo" id="mtPhoto" ${photos.length ? `data-big="${esc(photos[MT.gal])}"` : ""}>${EQI.ph}${photos.length ? `<button class="eqc-exp" id="mtExp" title="Открыть фото">${EQI.expand}</button>` : ""}</div>
+        <div class="eqc-gal"><div class="eqc-photo ${photos.length ? "" : "def"}" id="mtPhoto" ${photos.length ? `data-big="${esc(photos[MT.gal])}"` : ""}>${photos.length ? EQI.ph : `<img class="eqp-defpic" src="${matPic(m.name, m.category)}" alt="" title="Картинка по категории — добавьте своё фото">`}${photos.length ? `<button class="eqc-exp" id="mtExp" title="Открыть фото">${EQI.expand}</button>` : ""}</div>
           <div class="eqc-dots">${photos.length > 1 ? photos.map((p, i) => `<button data-gal="${i}" class="${i === MT.gal ? "on" : ""}" title="Фото ${i + 1}"></button>`).join("")
             : c.photo && !off && !photos.length ? `<button class="linkbtn" id="mtPh">${EQI.camera}Добавить фото</button>` : ""}</div></div>
         <div class="eqc-id"><span class="eqc-badge ${stCls}">${stCls === "ok" ? EQI.okc : EQI.warn}${esc(stText)}</span>${m.exp_state === "expired" && stText !== "Просрочено" ? `<span class="eqc-badge bad">${EQI.cal}Есть просроченное</span>` : m.exp_state === "soon" ? `<span class="eqc-badge warn">${EQI.cal}Истекает срок</span>` : ""}
@@ -217,7 +217,7 @@ function mtPane() {
     const al = m.analogs || [];
     el.innerHTML = `<h3>Аналоги <span class="muted">взаимозаменяемые материалы</span></h3>
       ${al.length ? `<div class="mtc-scroll"><table class="tbl compact mtc-t"><thead><tr><th>Материал</th><th>Номер</th><th class="num">Остаток</th><th class="num">Цена</th><th></th></tr></thead><tbody>${al.map(x => `<tr>
-          <td class="wrap"><div class="sn-mat sm">${phHtml(x.photo_id)}<span><button class="linkbtn" data-open-m="${esc(x.id)}"><b>${esc(x.name)}</b></button>${x.active ? "" : ' <span class="muted">убран</span>'}</span></div></td>
+          <td class="wrap"><div class="sn-mat sm">${phHtml(x.photo_id, "", matPic(x.name, x.category))}<span><button class="linkbtn" data-open-m="${esc(x.id)}"><b>${esc(x.name)}</b></button>${x.active ? "" : ' <span class="muted">убран</span>'}</span></div></td>
           <td class="muted">${esc(x.number || x.code || "")}</td><td class="num ${x.balance > 0 ? "" : "bad-t"}"><b>${mtQty(x.balance, x.unit)}</b></td><td class="num">${money(x.price)}</td>
           <td>${edit ? `<button class="linkbtn danger-t" data-al-x="${esc(x.id)}">убрать</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
         : `<div class="muted">Аналогов нет. Когда этот материал закончится, аналог с остатком подскажет, чем его заменить.</div>`}

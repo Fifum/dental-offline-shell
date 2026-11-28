@@ -51,8 +51,9 @@ document.addEventListener("drop", ev => { if (eqPhHasFiles(ev) && !ev.defaultPre
 /* ------------------------------------------------------------ the gallery of the card */
 function eqGalleryHtml(e, c) {
   const g = e.gallery || [], i = Math.min(EQ.gal || 0, Math.max(0, g.length - 1)), cur = g[i], edit = !!c.edit;
+  const def = cur ? "" : eqPic(e.name, e.category);  // 3.18: the picture by name until the first photo
   return `<div class="eqc-gal eqp-gal" id="eqGal">
-    <div class="eqc-photo ${cur ? "" : "empty"}" id="eqPhoto" ${cur ? `data-big="${esc(cur.file_id)}"` : ""}>${edit && !cur ? "" : EQI.ph}
+    <div class="eqc-photo ${cur ? "" : "empty"} ${def ? "def" : ""}" id="eqPhoto" ${cur ? `data-big="${esc(cur.file_id)}"` : ""}>${def ? `<img class="eqp-defpic" src="${def}" alt="" title="Картинка по названию — добавьте своё фото">` : edit && !cur ? "" : EQI.ph}
       ${cur ? `<button class="eqc-exp" id="eqExp" title="Открыть фото">${EQI.expand}</button>` : ""}
       ${cur && cur.main && g.length > 1 ? `<span class="eqp-main" title="Это фото видно в реестре">${EQP_I.star}Главное</span>` : ""}
       ${cur && edit ? `<div class="eqp-tools">${cur.main ? "" : `<button id="eqPhMain" title="Сделать главным — это фото будет видно в реестре">${EQP_I.star}</button>`}<button id="eqPhDel" class="del" title="Удалить фото">${EQP_I.trash}</button></div>` : ""}
