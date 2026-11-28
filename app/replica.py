@@ -218,7 +218,7 @@ def install(db):
 #  * the new columns are filled from the last synced copy of the row (sync_rows.base keeps the whole row as it came);
 #  * every peer and the cloud are asked for everything again: versions already here are skipped at once, the rows of the
 #    new tables arrive.
-CATCHUP = "3.16"
+CATCHUP = "3.18"
 CATCHUP_COLS = {"materials": ["photo_id",
                               # 3.14: the material card
                               "number", "manufacturer", "description", "form", "shelf_life", "storage", "opt_qty", "lead_days",
@@ -229,7 +229,8 @@ CATCHUP_COLS = {"materials": ["photo_id",
                               "replace_date", "reserve_monthly", "disposal_kind", "disposal_amount",
                               # 3.15: the accounting, someone else's property, the person responsible, the quantity
                               "accounting", "contractor", "use_start", "use_end", "contract_no", "receipt_id",
-                              "responsible_login", "qty", "disposal_responsible", "disposal_basis"],
+                              "responsible_login", "qty", "disposal_responsible", "disposal_basis",
+                              "pic"],  # 3.18: the picture the AI chose
                 "equipment_events": ["data"],
                 # 3.16: the documents' number, date, term, counterparty and archive; the regulation of a plan of service
                 "equipment_docs": ["number", "doc_date", "valid_until", "counterparty", "archived", "updated_at"],

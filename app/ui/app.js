@@ -162,7 +162,7 @@ const reqId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() :
 const money = n => (Math.round((+n || 0) * 100) / 100).toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2}) + " ₽";
 const nowLocal = () => { const d = new Date(); return `${iso(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
-/* 3.17.2: a popup menu is pinned to its button, the same way everywhere: under it (over it when there is no room
+/* 3.18.1: a popup menu is pinned to its button, the same way everywhere: under it (over it when there is no room
    below), by the button's right edge (align "end") or left edge ("start"), turned the other way at the window's edge,
    never out of the window; it follows the button while the page, a table or a modal scrolls and when the window
    changes size, and it hides while its button is scrolled out of sight. */
@@ -220,7 +220,7 @@ addEventListener("scroll", popsFollow, {capture: true, passive: true});
 addEventListener("resize", popsFollow);
 document.addEventListener("animationend", () => { if (POPS.size) popsFollow(); }, true);  // a view that slid in stops moving its menus
 
-/* 3.17.2: a bar of tabs too wide for its window keeps one line: the last tabs that do not fit go into «Ещё» (the open
+/* 3.18.1: a bar of tabs too wide for its window keeps one line: the last tabs that do not fit go into «Ещё» (the open
    tab always stays on the bar) instead of wrapping to a second line or being cut. `menu` is a «Ещё» menu the bar
    already has (the equipment's); without it the bar gets its own. A tab in the menu clicks the tab it stands for. */
 const FIT_BARS = new Set();
@@ -1258,7 +1258,7 @@ function renderPatient(tab) {
   const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   on("#backBtn", () => show(S.prevView === "schedule" ? "schedule" : "patients"));
   $$("#patientCard .tab").forEach(b => b.onclick = () => renderPatient(b.dataset.t));
-  tabsFit($("#patientCard .tabs"));  // 3.17.2: one line of tabs on any monitor, the rest under «Ещё»
+  tabsFit($("#patientCard .tabs"));  // 3.18.1: one line of tabs on any monitor, the rest under «Ещё»
   $$("#patientCard .dd").forEach(dd => { $(".dd-btn", dd).onclick = e => { e.stopPropagation(); ddToggle(dd); }; });
   const book = () => openBooking({patient_id: p.id, patient_name: p.name, start: `${S.day} ${pad(Math.min(20, new Date().getHours() + 1))}:00`});
   const actions = {visit: book, rec: () => openRecord({...ctx, date: iso(new Date())}), plan: () => openInvoice({...ctx, kind: "plan"}),

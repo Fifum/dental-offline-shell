@@ -54,7 +54,7 @@ ahead = lambda n: (date.today() + timedelta(days=n)).isoformat()  # noqa: E731
 auth.set_current_user({"role": "director", "login": "dir", "name": "Ковалев А.В."})
 
 # ================================================ block 1: references and the module's settings --
-check("replica catches up 3.16", replica.CATCHUP == "3.16" and {"number", "doc_date", "valid_until", "counterparty", "archived"}
+check("replica catches up 3.16", tuple(map(int, replica.CATCHUP.split("."))) >= (3, 16) and {"number", "doc_date", "valid_until", "counterparty", "archived"}
       <= set(replica.CATCHUP_COLS["equipment_docs"]) and replica.CATCHUP_COLS["equipment_plans"] == ["reg_id"])
 check("new columns of the documents", {"number", "doc_date", "valid_until", "counterparty", "archived", "updated_at"}
       <= {r[1] for r in d.conn.execute("PRAGMA table_info(equipment_docs)")})

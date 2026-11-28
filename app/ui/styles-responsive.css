@@ -24,7 +24,7 @@
 .dw-h h3{overflow-wrap:anywhere}
 .hint-bar>span{min-width:0;overflow-wrap:anywhere}
 
-@media (max-width:1440px){  /* 3.17.2: was 1250 — at 1280–1366 with the full menu the sync pill was squeezed to a sliver */
+@media (max-width:1440px){  /* 3.18.1: was 1250 — at 1280–1366 with the full menu the sync pill was squeezed to a sliver */
   .topbar{gap:4px;padding:8px 12px}
   .gsearch{flex:1 1 220px;width:auto;min-width:160px;max-width:340px}
   .gsearch input{min-width:0}
@@ -104,22 +104,22 @@
   .top{padding-top:8px;padding-bottom:6px}
 }
 
-/* 3.17.2: popup menus are pinned to their button by popOpen() (app.js): fixed to the window, so a scrolling
+/* 3.18.1: popup menus are pinned to their button by popOpen() (app.js): fixed to the window, so a scrolling
    table, a modal's body or a bar of tabs never cuts them, and a closed menu never makes a frame scroll */
 .dd-menu,.eqc-menu,.eqnav-menu,.eqs-perpop,.sn-menu,.rec-dmenu,.user-menu{position:fixed;max-width:calc(100vw - 16px)}
 
-/* 3.17.2: the menu folded to icons hides the two-line name of «Склад и материалы» too (it showed «С5… и…») */
+/* 3.18.1: the menu folded to icons hides the two-line name of «Склад и материалы» too (it showed «С5… и…») */
 .app.rail-mini .rail .nav[data-view="stock"] span{display:none}
 @media (max-width:1560px){.app.insp-docked .rail .nav[data-view="stock"] span{display:none}}
 @media (max-width:1180px){.rail .nav[data-view="stock"] span{display:none}}
 @media (max-height:620px){.rail .nav[data-view="stock"] span{display:none}}
 
-/* 3.17.2: a table wider than its frame scrolls inside it on any monitor (responsive.js marks the frame .x);
+/* 3.18.1: a table wider than its frame scrolls inside it on any monitor (responsive.js marks the frame .x);
    a table that fits keeps its sticky header */
 .tbl-scroll.x{overflow-x:auto}
 .tbl-scroll.x>.tbl th{position:static}
 
-/* 3.17.2: a bar of tabs keeps one line; what does not fit goes into «Ещё» (tabsFit in app.js) */
+/* 3.18.1: a bar of tabs keeps one line; what does not fit goes into «Ещё» (tabsFit in app.js) */
 #stockTabs.seg>button,.tabs>.tab{white-space:nowrap;flex:none}
 .tabs-more{display:inline-flex;align-items:stretch;flex:none}
 .tabs-more[hidden],.tabs-menu[hidden]{display:none}
@@ -134,7 +134,7 @@
 .tabs-menu>button:hover{background:var(--hover,var(--accent-soft))}
 .eqnav-menu>[data-fit]+button:not([data-fit]){margin-top:6px;box-shadow:0 -7px 0 -6px var(--line)}
 
-/* 3.17.2: the schedule's toolbar keeps one line at 1366 px too (it wrapped «Новый визит» alone onto a second line) */
+/* 3.18.1: the schedule's toolbar keeps one line at 1366 px too (it wrapped «Новый визит» alone onto a second line) */
 @media (max-width:1440px){
   #view-schedule .dpc-bar #branchSel{max-width:118px}
   #view-schedule .datenav .dpc-day{min-width:112px}
@@ -142,7 +142,7 @@
   #view-schedule .cal-bar.dpc-bar{column-gap:3px}
 }
 
-/* 3.17.2: the number of a narrow tile (the director's 6 tiles at 1024–1280 px) gets smaller instead of breaking «₽»
+/* 3.18.1: the number of a narrow tile (the director's 6 tiles at 1024–1280 px) gets smaller instead of breaking «₽»
    onto a line of its own */
 .stat-row>.stat{container-type:inline-size;min-width:0}
 @container (max-width:190px){.stat-row>.stat>b{font-size:18px;white-space:nowrap}}

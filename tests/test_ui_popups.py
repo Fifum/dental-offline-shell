@@ -1,4 +1,4 @@
-"""3.17.2: «money is not a function» in «Редактировать» of a piece of equipment, and the popup menus pinned to their buttons.
+"""3.18.1: «money is not a function» in «Редактировать» of a piece of equipment, and the popup menus pinned to their buttons.
 
 The form of the equipment kept «can see money» in a local `money`, so its hint «в месяц …» called a boolean instead of the
 helper of app.js and the page showed the error. Now no screen script hides a helper of app.js behind a local name.

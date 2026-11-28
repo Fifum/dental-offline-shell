@@ -34,6 +34,14 @@ def _local_only(what):
         raise ValueError(f"{what} можно только на этом компьютере, в окне программы")
 
 
+def _eq_ai_ask(task, text):
+    """3.18: the AI set in «Голос и ИИ» (on this computer or a service), for the picture of a new piece of equipment."""
+    import ai  # noqa: PLC0415
+    if not ai.enabled():
+        raise ValueError("ИИ выключен")
+    return ai.generate(task, text, base=False, timeout=120, max_chars=40)
+
+
 class Api:
     """Methods exposed to the web UI as window.pywebview.api.*"""
 
@@ -50,6 +58,7 @@ class Api:
         self._stock_cloud = None    # 3.13: stock_cloud.StockCloud (the phones of the staff), set by start_platform
         self._stock_cloud_worker = None
         self._stock = Stock(db)
+        self._stock.ai_ask = _eq_ai_ask  # 3.18: the AI of the program chooses the picture of new equipment
         self._fiscal = Fiscal(db)
         from accounting import Accounting
         from marketing import Marketing

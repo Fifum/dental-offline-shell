@@ -1,7 +1,7 @@
 "use strict";
 /* Fitting the program into small windows: every data table (.tbl) gets a frame that scrolls sideways
    on its own, so a wide table never pushes the whole page wider than the window. Works for tables
-   drawn later by any module. 3.17.2: the frame scrolls whenever its table is wider than it, on any
+   drawn later by any module. 3.18.1: the frame scrolls whenever its table is wider than it, on any
    monitor (it used to be only below 1100 px, and at 1280–1366 px with the full menu the lab, the stock
    and the inventory slid sideways as a whole); a table that fits keeps its sticky header. */
 (function () {

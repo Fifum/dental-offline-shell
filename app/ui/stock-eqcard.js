@@ -358,7 +358,7 @@ function eqMoreMenu(btn, e, r) {
   const old = $(".eqc-menu"); if (old) { old.remove(); return; }
   const m = document.createElement("div"); m.className = "eqc-menu";
   m.innerHTML = items.map(([k, t]) => `<button data-m="${k}">${t}</button>`).join("");
-  btn.parentElement.appendChild(m); popOpen(m, btn, {align: "end"});  // 3.17.2: under the «⋮», not at the edge of the header
+  btn.parentElement.appendChild(m); popOpen(m, btn, {align: "end"});  // 3.18.1: under the «⋮», not at the edge of the header
   const close = () => { m.remove(); document.removeEventListener("click", out, true); };
   const out = ev => { if (!m.contains(ev.target) && !btn.contains(ev.target)) close(); };
   setTimeout(() => document.addEventListener("click", out, true));

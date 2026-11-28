@@ -1,0 +1,97 @@
+/* ===== 3.18 the client's red and white mockup (media/client-refs/design-2026-11-28): the look only =====
+   Loaded after every other sheet. Nothing moves: the places of the screens, buttons, tabs and fields stay; only
+   the backgrounds, the colors and the look of the buttons change. The colors are the tokens of styles-type.css, so
+   the dark theme (red on graphite) comes from there; here — the white menu, the buttons, tabs, fields, cards, pills. */
+
+/* ---------- the menu: white, dark text, the chosen item light red with a red mark ---------- */
+.rail{background:var(--side);color:var(--side-ink);border-right:1px solid var(--line)}
+.rail .brandmark b{color:var(--ink)}
+.rail .brandmark i{background:var(--accent)}
+.rail .brandmark small{color:var(--side-mut)}
+.rail .nav{color:var(--side-ink);border-radius:8px}
+.rail .nav svg{opacity:.8}
+.rail .nav:hover{background:var(--side-hover);color:var(--ink)}
+.rail .nav.active,.rail .nav.active:hover{background:var(--side-on);color:var(--accent-ink);box-shadow:inset 3px 0 0 var(--accent);font-weight:600}
+.rail .nav.active svg{color:var(--accent);opacity:1}
+.rail .badge{background:var(--sunken);color:var(--ink2)}
+.rail .nav.active .badge{background:var(--accent);color:var(--on-accent)}
+.rail>.nav{border-top:1px solid var(--line2)}
+.app.rail-mini .rail .nav-g,.rail .nav-g:empty{background:var(--line)}
+@media (max-width:1560px){.app.insp-docked .rail .nav-g{background:var(--line)}}
+@media (max-width:1180px){.rail .nav-g{background:var(--line)}}
+/* the soft waves at the foot of the menu (drawn here, no picture) */
+.rail{background-image:var(--rail-waves);background-repeat:no-repeat;background-position:left bottom;background-size:100% auto}
+:root{--rail-waves:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 216 150'%3E%3Cdefs%3E%3ClinearGradient id='r' x1='0' x2='1' y1='0' y2='0'%3E%3Cstop offset='0' stop-color='%23D9262B' stop-opacity='.0'/%3E%3Cstop offset='.55' stop-color='%23D9262B' stop-opacity='.55'/%3E%3Cstop offset='1' stop-color='%23D9262B' stop-opacity='.9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 62C58 30 128 34 216 8V150H0Z' fill='%23F1F2F5'/%3E%3Cpath d='M0 104C64 78 136 76 216 40V54C140 88 70 94 0 118Z' fill='url(%23r)'/%3E%3Cpath d='M0 112C74 92 146 94 216 66V150H0Z' fill='%23F6F7F9'/%3E%3C/svg%3E")}
+@media screen{:root[data-theme="dark"]{--rail-waves:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 216 150'%3E%3Cdefs%3E%3ClinearGradient id='r' x1='0' x2='1' y1='0' y2='0'%3E%3Cstop offset='0' stop-color='%23DC3439' stop-opacity='.0'/%3E%3Cstop offset='.55' stop-color='%23DC3439' stop-opacity='.4'/%3E%3Cstop offset='1' stop-color='%23DC3439' stop-opacity='.7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 62C58 30 128 34 216 8V150H0Z' fill='%231B1F23'/%3E%3Cpath d='M0 104C64 78 136 76 216 40V54C140 88 70 94 0 118Z' fill='url(%23r)'/%3E%3Cpath d='M0 112C74 92 146 94 216 66V150H0Z' fill='%231E2226'/%3E%3C/svg%3E")}}
+
+/* ---------- buttons: the main one solid red, the others white with a thin edge and a light shadow ---------- */
+.btn{background:var(--primary);border-color:var(--primary);color:var(--on-primary);border-radius:8px;font-weight:600;letter-spacing:0;
+  box-shadow:0 1px 2px rgba(217,38,43,.22)}
+.btn:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+.btn.ghost{background:var(--panel);color:var(--ink);border-color:var(--line);box-shadow:0 1px 2px rgba(20,24,31,.06)}
+.btn.ghost:hover{background:var(--panel2);border-color:var(--faint)}
+.btn.ghost svg{color:var(--ink2)}
+.tbl .btn:not(.ghost),.btn.small:not(.ghost){box-shadow:none}
+.pill-btn,.icon-btn,.datenav,.input.sm-sel,.dd-btn{border-radius:8px}
+.crumb-acts .dd-btn.btn,#ddAdd .dd-btn.btn{border-radius:8px;box-shadow:0 1px 2px rgba(20,24,31,.06)}
+:root[data-theme="dark"] :is(.btn,.btn.ghost,.crumb-acts .dd-btn.btn,#ddAdd .dd-btn.btn){box-shadow:none}
+
+/* ---------- fields ---------- */
+.input,.search-row,.gsearch{border-radius:8px}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--focus-ring)}
+.gsearch:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--focus-ring)}
+
+/* ---------- switches: white with an edge, the chosen part red ---------- */
+.seg{border-radius:8px;border-color:var(--line);background:var(--panel);box-shadow:0 1px 2px rgba(20,24,31,.05)}
+.seg button.on{background:var(--accent);color:var(--on-accent);font-weight:600}
+.seg.has-ind button.on{color:var(--on-accent)}
+.seg-ind,:root[data-theme="dark"] .seg-ind{background:var(--accent)}
+.tab.on{color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+
+/* ---------- cards: white, rounded, a soft shadow ---------- */
+.phead,.phead2,.panel,.stat,.table-wrap,.search-row,.pbody,.sched-wrap{box-shadow:var(--shadow-card)}
+.modal{border-radius:14px}
+
+/* ---------- tables: a light grey head, names in dark ---------- */
+.tbl th{background:var(--panel2);color:var(--ink2);text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:600}
+.tbl td.lnk{color:var(--ink);font-weight:500}
+.tbl tr:hover td.lnk{color:var(--accent-ink)}
+
+/* ---------- «Оборудование»: the bar of the section, the register ---------- */
+#stockTabs.eqnav>button,#stockTabs.eqnav .eqnav-mb{border-radius:10px;box-shadow:0 1px 2px rgba(20,24,31,.06)}
+#stockTabs.eqnav>button svg,#stockTabs.eqnav .eqnav-mb svg{color:var(--ink2)}
+#stockTabs.eqnav>button.on svg,#stockTabs.eqnav .eqnav-mb.on svg{color:inherit}
+#stockTabs.eqnav>button.on,#stockTabs.eqnav .eqnav-mb.on{box-shadow:0 2px 6px -1px rgba(217,38,43,.35)}
+.eqs-card,.eqs-tile{border-radius:14px;box-shadow:var(--shadow-card)}
+.eqs-chip{background:var(--beige);border-color:transparent;color:var(--ink2)}
+.eqs-cat{background:var(--beige);color:var(--ink2)}
+.eqs-reset{color:var(--ink2)}
+.eqs-seg button{border-radius:8px;box-shadow:0 1px 2px rgba(20,24,31,.06)}
+.eqs-seg button.on{box-shadow:0 2px 6px -1px rgba(217,38,43,.35)}
+.eqs-reg th{background:var(--panel2)}
+:root[data-theme="dark"] :is(#stockTabs.eqnav>button,#stockTabs.eqnav .eqnav-mb,.eqs-seg button){box-shadow:none}
+.eqs-acts button{background:var(--panel);border:1px solid var(--line);box-shadow:0 1px 2px rgba(20,24,31,.05)}
+.eqs-acts button:hover{border-color:var(--accent-line);background:var(--panel2)}
+/* green is for «исправно» and «согласовано»: red would read as a fault */
+.eqs-ring circle.ok{stroke:var(--ok-chart)}
+.eqs-legend li.ok::before{background:var(--ok-chart)}
+:root{--ok-chart:#2BA562}
+@media screen{:root[data-theme="dark"]{--ok-chart:#4CC487}}
+:root[data-theme="dark"] .eqs-acts button{box-shadow:none}
+
+/* ---------- first-start hints: calm grey, not the red of a warning ---------- */
+.hint-bar{background:var(--panel);border-color:var(--line);box-shadow:var(--shadow-card)}
+.hint-bar svg{color:var(--accent)}
+
+/* ---------- the chosen tab or choice is red everywhere (they were dark graphite) ---------- */
+.eqc-tabs button.on,.sn-chips .chip.on,.sn-pri-b.on,.sn-steps>div.on,.call-res .pill-btn.on,.nps-pick button.on{
+  background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.eqc-tabs button.on{box-shadow:0 2px 6px -1px rgba(217,38,43,.35)}
+:root[data-theme="dark"] .eqc-tabs button.on{box-shadow:none}
+
+/* ---------- the schedule keeps the layout of Dentist Plus, its blue becomes the red of the program ---------- */
+:root,:root[data-theme="dark"]{--dpc-blue:var(--accent);--dpc-blue-h:var(--primary-hover);--dpc-blue-soft:var(--accent-soft);--dpc-bg:var(--panel)}
+@media screen{
+  :root[data-theme="dark"] :is(#view-schedule .dpc-bar .dd-btn,#view-schedule .dpc-bar #branchSel,#grid .g-day.today,#grid .g-day.today span,
+    .modal.dpc-modal .linkbtn){color:var(--accent-ink)}
+}

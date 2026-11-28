@@ -338,7 +338,7 @@
 .mt-sticker .mt-st-ean{height:11.5mm;display:flex;justify-content:center}
 .mt-sticker .mt-st-ean svg{height:100%;width:auto;max-width:100%}
 
-/* 3.17.2: the tabs of a card keep one line in a narrow column (1024–1366 px with the menu): tighter, then without
+/* 3.18.1: the tabs of a card keep one line in a narrow column (1024–1366 px with the menu): tighter, then without
    icons; the material card's tabs still scroll sideways when even that is not enough */
 .eqc-main{container-type:inline-size}
 @container (max-width:880px){.eqc-tabs button,.mtc .eqc-tabs button{padding:10px 8px;gap:6px;font-size:13.5px}}

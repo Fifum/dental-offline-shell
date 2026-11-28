@@ -600,14 +600,22 @@
 @media (max-width:900px){.eqs-dgrid,.eqs-dgrid.with{grid-template-columns:1fr}}
 .eqs-doct .eqs-dtype{white-space:normal;line-height:1.2;text-align:center}
 .eqs-doct td:nth-child(3){min-width:110px}
+/* 3.18: bigger pictures of the equipment in the lists of the section (32 px were hard to make out), like the mockup;
+   a picture without a photo of its own stands free, without a frame */
+.eqs .sn-mat.sm{gap:12px}
+.eqs .sn-mat.sm .sn-ph{width:56px;height:56px;border-radius:10px}
+.eqs .sn-mat.sm .sn-ph svg{width:24px;height:24px}
+.eqs .sn-mat.sm .sn-ph.def{border-color:transparent;background:transparent}
+.eqs .sn-mat.sm .sn-ph.def img{padding:0}
+.eqs-ph{height:150px}
 
-/* 3.17.2: in a narrow column the badge («истекла · 18 мая 2023») goes under the name instead of covering it */
+/* 3.18.1: in a narrow column the badge («истекла · 18 мая 2023») goes under the name instead of covering it */
 .eqs-ev button,.eqs-repl button{flex-wrap:wrap;row-gap:4px}
 .eqs-ev span,.eqs-repl span:not(.sn-mat){flex:1 1 130px}
 .eqs-ev b,.eqs-repl b{overflow-wrap:anywhere}
 .eqs-ev em,.eqs-repl em{margin-left:auto}
 
-/* 3.17.2: a tile narrower than its sum (5 tiles at 1280 px with the menu) makes the number smaller, the icon too,
+/* 3.18.1: a tile narrower than its sum (5 tiles at 1280 px with the menu) makes the number smaller, the icon too,
    instead of letting «8 557 000 ₽» run over its edge */
 .eqs-tile{container-type:inline-size}
 @container (max-width:230px){.eqs-tile i{width:38px;height:38px;margin-right:-4px}.eqs-tile i svg{width:20px;height:20px}.eqs-tile b{font-size:19px}}

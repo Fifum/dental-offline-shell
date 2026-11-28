@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import calendar
 import json
+import logging
 import math
 import re
+import threading
 import uuid
 from datetime import date, datetime, timedelta
 from urllib.parse import quote, unquote
@@ -165,7 +167,39 @@ EQ_LIFE = {"Стоматологическое оборудование": 120, "
 # the category never decides the accounting: a cheap instrument may be counted by quantity without depreciation
 EQ_ACCOUNTING = {"amort": "С амортизацией", "qty": "Количественный учёт без амортизации"}
 EQ_NEW_COLS_315 = ("accounting TEXT", "contractor TEXT", "use_start TEXT", "use_end TEXT", "contract_no TEXT", "receipt_id TEXT",
-                   "responsible_login TEXT", "qty INTEGER DEFAULT 1", "disposal_responsible TEXT", "disposal_basis TEXT")
+                   "responsible_login TEXT", "qty INTEGER DEFAULT 1", "disposal_responsible TEXT", "disposal_basis TEXT",
+                   "pic TEXT")  # 3.18: the picture the AI chose while there is no photo (EQ_PICS)
+# 3.18: the pictures the AI of the program may choose for a piece without a photo of its own (ui/img/stock/<key>.webp)
+EQ_PICS = {"chair": "стоматологическая установка, кресло пациента", "stool": "стул, табурет, кресло врача или ассистента",
+           "autoclave": "автоклав, любой стерилизатор (паровой, воздушный, сухожаровой)",
+           "ultrasonic-bath": "ультразвуковая мойка, ванна для дезинфекции инструментов",
+           "sealer": "запайщик пакетов для стерилизации", "recirculator": "рециркулятор воздуха, бактерицидный облучатель",
+           "compressor": "компрессор, аспиратор, слюноотсос, вакуумная установка", "xray": "дентальный рентгеновский аппарат",
+           "opg": "ортопантомограф, компьютерный томограф (КТ, КЛКТ)", "sensor": "визиограф, рентгеновский датчик, интраоральная камера",
+           "apex": "апекслокатор", "scaler": "скалер, аппарат Vector, Air Flow, пескоструйный аппарат, снятие зубного камня",
+           "handpiece": "наконечник, турбина, микромотор, эндомотор, ирригатор, мелкий инструмент",
+           "implant-motor": "физиодиспенсер, хирургический мотор для имплантации", "curing": "фотополимеризационная лампа",
+           "microscope": "дентальный микроскоп, бинокулярные лупы", "fridge": "холодильник",
+           "cabinet": "шкаф, стеллаж, тумба, стол, мебель", "printer": "принтер, МФУ, сканер документов, оргтехника",
+           "computer": "компьютер, моноблок, ноутбук, монитор, планшет"}
+EQ_PIC_TASK = ("Подбери картинку к оборудованию стоматологической клиники по его названию. Картинки:\n"
+               + "\n".join(f"{k} — {v}" for k, v in EQ_PICS.items())
+               + "\nОтветь одним словом — ключом картинки из списка, латиницей, без пояснений. Если ни одна не подходит, ответь none.")
+log = logging.getLogger("stock")
+
+
+def eq_pic_answer(text) -> str:
+    """The key of a picture in the answer of the AI («» — none fits, or the answer names no picture)."""
+    t = str(text or "").lower().replace("x-ray", "xray")
+    found = [(m.start(), k) for k in EQ_PICS for m in [re.search(rf"(?<![\w-]){re.escape(k)}(?![\w-])", t)] if m]
+    return min(found)[1] if found else ""
+
+
+def eq_pic_name(name) -> str:
+    """The name the pictures are keyed by: lower case, «ё» as «е», single spaces (the same in stock-nurse.js)."""
+    return re.sub(r"\s+", " ", str(name or "").lower().replace("ё", "е")).strip()
+
+
 RECEIPT_DOCS = {"contract": "Договор поставки", "waybill": "Товарная накладная", "invoice": "Счёт-фактура", "upd": "УПД"}
 RECEIPT_STEPS = {1: "Документы", 2: "Оборудование", 3: "Учёт", 4: "Ввод в эксплуатацию"}
 RECEIPT_STATUS = {"process": "В процессе", "accepted": "Принято", "cancelled": "Отменено"}
@@ -469,6 +503,10 @@ def disposal_month(db, month):
 
 
 class Stock:
+    # 3.18: set by the program — ai_ask(task, text) returns the answer of its AI (local or the one set in «Голос и ИИ») or
+    # raises when the AI is off; None — no AI at all. Used to choose the picture of a new piece in the background.
+    ai_ask = None
+
     def __init__(self, db):
         self.db = db
         with db._lock:  # В1: raw schema statements never interleave with another thread's transaction
@@ -1617,7 +1655,8 @@ class Stock:
                 "eq_repair": sum(1 for e in eq if e["status"] == "repair"),  # 3.14
                 "eq_residual": round(sum(e["amort"]["residual"] for e in eq if e["status"] != "written_off"), 2),  # 3.10
                 "eq_cost": round(sum(e["price"] or 0 for e in eq if e["status"] != "written_off"), 2),
-                "service_due": sum(1 for e in eq if e["status"] != "written_off" and e["next_service"] and e["next_service"] <= today)}
+                "service_due": sum(1 for e in eq if e["status"] != "written_off" and e["next_service"] and e["next_service"] <= today),
+                "eq_pics": self.eq_pics(eq)}  # 3.18
 
     # ============================================================ equipment --
     def _eq_titles(self, r, today=None):
@@ -1780,6 +1819,10 @@ class Stock:
                     extra[k] = max(0, _num(f.get(k), title))
         amort = self._amort_fields(f, price) if money else None
         in_service = _day(f.get("in_service"), "Дата ввода в эксплуатацию") if not money and f.get("in_service") else None
+        # 3.18: a new name (or a new piece) — the picture chosen for the old name goes, the AI chooses again after saving
+        repic = not old or eq_pic_name(old["name"]) != eq_pic_name(name) or (old["category"] or "") != vals[2]
+        if old and repic:
+            extra["pic"] = ""
         today = date.today().isoformat()
         ev = "INSERT INTO equipment_events(equipment_id, kind, date, text, user_name, created_at) VALUES(?,?,?,?,?,?)"
         with self.db.tx() as c:
@@ -1817,7 +1860,30 @@ class Stock:
                     if past and amortization(old)["months_done"] > 0:  # «подозрительное»: the past months change
                         data["flag"] = f"Изменено задним числом ({', '.join(past)}): меняется амортизация прошлых месяцев"
                     self._ev(c, eid, "edit", "Изменено: " + ", ".join(x["t"].lower() for x in diff), user, today, data=data)
+        if repic and self.ai_ask:
+            threading.Thread(target=self.eq_pick_pic, args=(eid, name, vals[2]), daemon=True, name="eq-pic").start()
         return eid
+
+    def eq_pick_pic(self, eid, name, category=""):
+        """3.18: the AI of the program chooses the picture of a piece by its name, while it has no photo of its own; kept in
+        `equipment.pic` (synced like the rest of the card) unless the piece was renamed meanwhile. Returns the key or «»."""
+        ask = self.ai_ask
+        if not ask:
+            return ""
+        try:
+            key = eq_pic_answer(ask(EQ_PIC_TASK, f"Название: {name}\nКатегория: {category or 'не указана'}"))
+        except Exception as e:  # the AI is off, not installed or busy: the picture by the words of the name stays
+            log.info("picture of %s not chosen by the AI: %s", eid, e)
+            return ""
+        if key:
+            with self.db.tx() as c:
+                c.execute("UPDATE equipment SET pic=? WHERE id=? AND name=?", (key, eid, name))
+        return key
+
+    def eq_pics(self, rows=None):
+        """3.18: {the name (eq_pic_name) → the key of the picture the AI chose} for the pictures of the lists."""
+        rows = rows if rows is not None else self.db.q("SELECT name, pic FROM equipment WHERE pic IS NOT NULL AND pic<>''")
+        return {eq_pic_name(r["name"]): r["pic"] for r in rows if r.get("pic") in EQ_PICS}
 
     @staticmethod
     def _amort_fields(f, price):
