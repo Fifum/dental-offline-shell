@@ -198,3 +198,12 @@ textarea.inp{min-height:84px;resize:vertical}
 .chips{display:flex!important;gap:6px!important;flex-wrap:wrap!important;margin-top:10px!important}
 .fld.check{display:flex!important;gap:10px!important;align-items:center!important} .fld.check>span{margin:0!important} .fld.check input{width:22px!important;height:22px!important}
 .btn.short{min-height:40px!important}
+/* 3.19: the clinic's Wi-Fi — the banner to the other way when one does not answer, a single wide button, the certificate's page */
+.banner{display:block;margin:2px 0 12px;padding:12px 14px;border-radius:var(--r);background:var(--warn-soft);color:var(--warn);font-weight:600;font-size:15px;line-height:1.35;text-decoration:none}
+.banner small{display:block;margin-top:4px;font-weight:400;font-size:13px}
+.gate #down:empty{display:none}
+.acts.one{grid-template-columns:1fr}
+.gate.cert{justify-content:flex-start}
+.gate.cert .sec{margin-top:18px}
+.why .steps{margin-top:6px;padding-left:30px}
+.why .steps li{margin-bottom:6px}

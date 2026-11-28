@@ -132,7 +132,8 @@ function spConnected(body, st) {
   body.innerHTML = `<div class="sp-grid">
     <div class="sp-col">
     ${mine ? `<div class="panel sp-panel" id="spMy"><h3>Подключить мой телефон</h3>${spMyPhoneHtml("spMyBox")}</div>` : ""}
-    <div class="panel sp-panel" id="spPhone"><h3>${mine ? "Общий QR-код клиники" : "Подключить телефон"}</h3><p class="hint">Загружаем QR-код…</p></div></div>
+    <div class="panel sp-panel" id="spPhone"><h3>${mine ? "Общий QR-код клиники" : "Подключить телефон"}</h3><p class="hint">Загружаем QR-код…</p></div>
+    <div class="panel sp-panel" id="spWifi"><h3>Без интернета — через Wi-Fi клиники</h3><p class="hint">Загружаем…</p></div></div>
     <div class="panel sp-panel">
       <h3>Облако склада</h3>
       ${st.demo ? `<div class="warn-line sp-demo"><b>Демо-режим.</b> Телефон увидит тестовый склад этого компьютера — это отдельная демо-клиника облака, настоящего склада в ней нет.
@@ -177,6 +178,75 @@ function spConnected(body, st) {
   spBindCode(true);
   spBindMyPhone(body, "spMyBox");
   spLoadQr(mine);
+  spLoadWifi();
+}
+
+/* 3.19: the stock of a phone without the internet — straight to this computer over the clinic's Wi-Fi (phone_lan.py): the simple
+   address (http, no camera scanner) always; «Со сканером» — https with the clinic's own certificate (clinic_ca.py), which each
+   phone installs once from the page behind the QR. The same words as the phone (phone/app.js WHY) and its certificate page. */
+const SP_WHY = [
+  "Камеру для сканера телефон даёт только защищённой странице — с адресом на https.",
+  "Сайтам в интернете такой «паспорт» выдают специальные центры. Компьютеру внутри Wi-Fi клиники его не выдают — поэтому клиника выдаёт его себе сама.",
+  "Один раз вы говорите телефону «доверяй клинике» — и склад со сканером открывается по Wi-Fi даже без интернета.",
+  "Ключ сертификата хранится только на этом компьютере, а сам сертификат годится только для адресов внутри сети клиники — не для сайтов в интернете. Сайты, почту и переписку сотрудников он не открывает.",
+  "Android после установки покажет «Сеть может отслеживаться» — это обычное предупреждение для любого своего сертификата. Для установки Android попросит блокировку экрана (ПИН, графический ключ или отпечаток).",
+  "Убрать сертификат можно в любой момент в настройках телефона.",
+];
+const spWhyHtml = () => `<details class="sp-more sp-why"><summary>Зачем устанавливать сертификат клиники</summary>
+  <ul class="sp-steps">${SP_WHY.map(x => `<li>${esc(x)}</li>`).join("")}</ul></details>`;
+
+async function spLoadWifi() {
+  const box = $("#spWifi");
+  if (!box) return;
+  let w;
+  try { w = await api.phone_wifi_state(); } catch (e) {
+    box.innerHTML = `<h3>Без интернета — через Wi-Fi клиники</h3><div class="warn-line bad">${esc(errText(e))}</div>`;
+    return;
+  }
+  if (!$("#spWifi")) return;
+  const ca = w.ca || {};
+  box.innerHTML = `<h3>Без интернета — через Wi-Fi клиники</h3>
+    <p class="hint">Когда в клинике нет интернета, склад на телефоне работает прямо с этим компьютером по Wi-Fi клиники. Телефон один раз
+      подключают через интернет (свой QR-код выше), дальше в приложении склада: <b>Профиль → «Склад через Wi-Fi клиники»</b> —
+      или плашка, когда облако не отвечает. Вход тем же ПИН-кодом.</p>
+    ${w.http ? `<dl class="sp-dl">
+        <dt>Без сканера</dt><dd class="mono">${esc(w.http)}</dd>
+        ${w.full && w.https ? `<dt>Со сканером</dt><dd class="mono">${esc(w.https)}</dd>` : ""}
+        <dt>Телефонов знает</dt><dd>${w.phones || 0}${w.cloud ? "" : " · нет облака склада"}</dd></dl>`
+      : `<div class="warn-line">Этот компьютер не в сети клиники: нет адреса, по которому телефон его найдёт. Подключите его к Wi-Fi или кабелю клиники.</div>`}
+    ${w.firewall === false ? `<div class="warn-line bad">Брандмауэр Windows не пускает телефоны к этому компьютеру (нужны порты ${esc(String(w.http ? new URL(w.http).port : 8765))} и ${esc(String(w.https ? new URL(w.https).port : 8767))}).
+      <div class="row"><button class="btn small" id="spFw">Разрешить</button><span class="msg" id="spFwMsg"></span></div></div>` : ""}
+    <label class="switch-row sp-switch"><input type="checkbox" id="spFull" ${w.want_full ? "checked" : ""} ${w.director ? "" : "disabled"}><span class="sw"></span>
+      <span><b>Со сканером</b> — сертификат клиники</span></label>
+    <p class="hint">${w.full ? "Включено: телефон, на котором установлен сертификат клиники, открывает склад по защищённому адресу — со сканером камерой."
+      : "Без сертификата склад по Wi-Fi работает без сканера: код вводится вручную или по фото. Со сканером — один раз установить на телефон сертификат клиники."}
+      ${w.director ? "" : " Включает директор."}</p>
+    ${w.full && w.ca_qr ? `<div class="sp-qr"><img src="${w.ca_qr}" alt="QR-код страницы сертификата клиники">
+      <div><ol class="sp-steps">
+        <li>Наведите <b>камеру телефона</b> на этот QR-код — откроется страница «Склад со сканером».</li>
+        <li>Android: «Скачать сертификат для Android», iPhone: «Скачать профиль для iPhone» — шаги установки на той же странице.</li>
+        <li>Нажмите «Открыть склад со сканером» и войдите своим ПИН-кодом.</li></ol>
+        <p class="hint">Сертификат «${esc(ca.title || "")}», отпечаток <span class="mono">${esc(ca.short || "")}</span> — такой же покажет страница на телефоне.
+          Без интернета сканер на iPhone работает, если склад со сканером хотя бы раз открывали при интернете.</p></div></div>` : ""}
+    ${spWhyHtml()}`;
+  const f = $("#spFull");
+  f.onchange = async () => {
+    f.disabled = true;
+    try { await api.phone_wifi_full(f.checked); toast(f.checked ? "Склад со сканером по Wi-Fi включён" : "Склад со сканером по Wi-Fi выключен"); }
+    catch (e) { toast(errText(e), "bad"); }
+    spLoadWifi();
+  };
+  const fw = $("#spFw");
+  if (fw) fw.onclick = async () => {
+    const pw = window.pywebview && window.pywebview.api, m = $("#spFwMsg");
+    if (!pw || !pw.allow_firewall || !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) { m.className = "msg bad"; m.textContent = "Разрешить можно в программе на этом компьютере"; return; }
+    m.className = "msg ok"; m.textContent = "Windows попросит подтвердить…";
+    let r;
+    try { r = await pw.allow_firewall(); } catch (e) { r = {ok: false, err: errText(e)}; }
+    m.className = "msg " + (r.ok ? "ok" : "bad");
+    m.textContent = r.ok ? "Готово: телефоны могут подключаться" : r.err ? "Не получилось: " + r.err : "Не получилось — подтвердите запрос Windows";
+    if (r.ok) setTimeout(spLoadWifi, 1500);
+  };
 }
 
 const spStatePill = (st) => st.error ? `<span class="pill st-cancel">${esc(st.error)}</span>` : st.last_ok ? `<span class="pill st-ok">Синхронизировано ${esc(st.last_ok.slice(11, 16))}</span>` : `<span class="pill">Ждёт первой синхронизации</span>`;

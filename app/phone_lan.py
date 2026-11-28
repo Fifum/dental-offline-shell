@@ -128,6 +128,7 @@ class PhoneLan:
     def __init__(self, api, db, auth):
         self.api, self.db, self.auth = api, db, auth
         install(db)
+        replica.install(db)  # /p/pull reads the replica's rows (made by p2p/stock_cloud as well; idempotent)
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------ helpers --

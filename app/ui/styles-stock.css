@@ -182,3 +182,11 @@ td.wrap{white-space:normal}
 .sp-clinic{margin-top:0}
 .sp-clinic summary{font-size:14px;font-weight:600;color:var(--ink2)}
 .prof-sec .sp-more{margin-top:4px}
+/* 3.19: «Без интернета — через Wi-Fi клиники» */
+.sp-switch{margin:12px 0 4px;font-size:14px}
+.sp-switch input:disabled+.sw{opacity:.5}
+#spWifi .sp-dl dd.mono{font-size:13px;word-break:break-all}
+#spWifi .sp-qr{margin-top:10px}
+#spWifi .warn-line .row{margin-top:8px}
+.sp-why .sp-steps{margin-top:4px}
+.prof-wifi{margin:8px 0 0;font-size:13px}

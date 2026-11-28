@@ -3,8 +3,14 @@
    the clinic code once → who are you → a personal 6-digit PIN; rows of the stock live in IndexedDB (works offline),
    operations go to a queue with their own id (`op`), so a repeat after a lost answer is done once.
    3.18.3: the personal QR («Подключить мой телефон» at the computer, /j#<20 letters>): the person makes up a PIN of their own,
-   the phone is bound to them (S.device.login) and later opens by that PIN alone, with their name shown. */
+   the phone is bound to them (S.device.login) and later opens by that PIN alone, with their name shown.
+   3.19: the same files work on the clinic's Wi-Fi without the internet, straight from the computer of the clinic (LOCAL, at
+   /s/ of its address; its API is app/phone_lan.py): the app through the internet hands the phone over there by a link
+   (#/link/<the device>), on http without the camera scanner, on https (the clinic's certificate) with it; photos of materials. */
 const API = window.DD_API;
+const BASE = window.DD_BASE || "/", LOCAL = !!window.DD_LOCAL, CLOUD_APP = window.DD_CLOUD_APP || "https://dental-desk-stock.vercel.app";
+// the camera is given only to a secure page: on http of the clinic's Wi-Fi there is no live scanner
+const CAM = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 const MAIN = "Основной склад", SOON = 30, DAY = 864e5;
 const $ = (s, el = document) => el.querySelector(s), $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -37,7 +43,10 @@ const q3 = (x) => Math.round((Number(x) || 0) * 1000) / 1000;
 const qty = (x, unit) => `${q3(x).toLocaleString("ru-RU", { maximumFractionDigits: 3 })}${unit ? " " + esc(unit) : ""}`;
 const money = (x) => `${(Math.round((Number(x) || 0) * 100) / 100).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₽`;
 const plural = (n, a, b, c) => { const m = Math.abs(n) % 100, k = m % 10; return m > 10 && m < 20 ? c : k === 1 ? a : k > 1 && k < 5 ? b : c; };
-const opId = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40);
+// crypto.randomUUID is only on a secure page; getRandomValues is everywhere (the http page of the clinic's Wi-Fi too)
+const opId = () => (crypto.randomUUID ? crypto.randomUUID()
+  : Date.now().toString(36) + [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join(""))
+  .replace(/[^A-Za-z0-9]/g, "").slice(0, 40);
 const can = (k) => !!(S.user && S.user.can && S.user.can[k]);
 
 function toast(msg, bad) {
@@ -84,7 +93,11 @@ async function call(path, body, auth) {
   if (auth === "session") h["X-DD-Session"] = S.session || "";
   let r;
   try { r = await fetch(API + path, { method: "POST", headers: h, body: JSON.stringify(body || {}) }); }
-  catch { throw Object.assign(new Error("Нет связи с облаком склада"), { net: true }); }
+  catch {
+    if (!S.down) { S.down = true; badge(); }  // 3.19: the banner to the other way (Wi-Fi of the clinic ↔ the internet)
+    throw Object.assign(new Error(LOCAL ? "Нет связи с компьютером клиники" : "Нет связи с облаком склада"), { net: true });
+  }
+  if (S.down) { S.down = false; badge(); }
   let j = {};
   try { j = await r.json(); } catch { /* not JSON */ }
   if (!r.ok) throw Object.assign(new Error(j.error || `Ошибка ${r.status}`), { status: r.status, auth });
@@ -161,8 +174,8 @@ async function doOp(body, title) {
     return r;
   } catch (e) {
     // no answer: it stays in the queue with the same id, so a repeat is done once even if the cloud already did it
-    if (e.net) { toast("Нет связи — операция сохранена и уйдёт сама, когда появится сеть"); return { queued: true }; }
-    if (e.status >= 500) { toast(e.status === 507 ? e.message : "Облако склада не ответило — операция в очереди и повторится сама"); return { queued: true }; }
+    if (e.net) { toast(LOCAL ? "Нет связи с компьютером клиники — операция сохранена и уйдёт сама, когда он ответит" : "Нет связи — операция сохранена и уйдёт сама, когда появится сеть"); return { queued: true }; }
+    if (e.status >= 500) { toast(e.status === 507 ? e.message : LOCAL ? "Компьютер клиники не ответил — операция в очереди и повторится сама" : "Облако склада не ответило — операция в очереди и повторится сама"); return { queued: true }; }
     await dropQ(q.op);
     if (!signedOut(e)) throw e;
     return null;
@@ -173,7 +186,7 @@ async function doOp(body, title) {
 const idOf = (k) => { try { return JSON.parse(k)[0]; } catch { return k; } };
 function index() {
   D = { mats: new Map(), bar: new Map(), num: new Map(), eq: new Map(), inv: new Map(), locs: new Map(), sups: new Map(), docs: new Map(),
-    moves: [], mv: new Map(), lots: [], reqs: [], aps: [], ev: new Map(), set: new Map(), bal: new Map(), edocs: new Set() };
+    moves: [], mv: new Map(), lots: [], reqs: [], aps: [], ev: new Map(), set: new Map(), bal: new Map(), edocs: new Set(), mdocs: new Set() };
   for (const { t, k, row } of S.rows.values()) {
     const id = idOf(k);
     if (t === "materials") {
@@ -192,6 +205,7 @@ function index() {
     else if (t === "equipment_events") { if (!D.ev.has(row.equipment_id)) D.ev.set(row.equipment_id, []); D.ev.get(row.equipment_id).push(row); }
     else if (t === "stock_settings") D.set.set(id, row.v);
     else if (t === "equipment_docs" && !Number(row.deleted || 0)) D.edocs.add(id);  // 3.16: «EDP-<op>» — a photo of this phone is in the card
+    else if (t === "material_docs" && !Number(row.deleted || 0)) D.mdocs.add(id);   // 3.19: «MDP-<op>» — the same for a material
   }
   for (const m of D.moves) {
     if (!D.bal.has(m.material_id)) D.bal.set(m.material_id, new Map());
@@ -245,11 +259,28 @@ const openReqs = () => D.reqs.filter((r) => ["new", "accepted", "partial"].inclu
 /* ------------------------------------------------------------------------------------------------ layout */
 function badge() {
   const b = $("#net");
-  if (!b) return;
+  if (!b) return downBanner();  // the sign-in screens have no badge, only the banner
   const n = S.queue.length, off = !navigator.onLine;
   b.className = "net" + (off ? " off" : n ? " q" : "");
   b.textContent = S.syncing ? "обновляю…" : off ? (n ? `офлайн · ${n} в очереди` : "офлайн") : n ? `${n} в очереди` : "";
   b.hidden = !b.textContent;
+  downBanner();
+}
+/* 3.19: the cloud does not answer → the stock through the clinic's Wi-Fi; the computer of the clinic does not → through the internet */
+function downHtml() {
+  if (!S.down || !S.device) return "";
+  const n = S.queue.length, q = n ? `<small>${n} ${plural(n, "операция", "операции", "операций")} в очереди уйдут сами, когда ${LOCAL ? "компьютер клиники снова ответит" : "появится интернет"} — не повторяйте их.</small>` : "";
+  if (LOCAL) return `<a class="banner" href="${esc(CLOUD_APP)}/">Компьютер клиники не отвечает — склад через интернет →${q}</a>`;
+  return lanTargets().length ? `<a class="banner" href="#" data-lan>Нет интернета. В клинике? Откройте склад через Wi-Fi клиники →${q}</a>` : "";
+}
+function downBanner() {
+  const d = $("#down");
+  if (!d) return;
+  const h = downHtml();
+  if (d.dataset.h === h) return;
+  d.dataset.h = h; d.innerHTML = h;
+  const a = $("[data-lan]", d);
+  if (a) a.onclick = (e) => { e.preventDefault(); lanSheet(); };
 }
 
 function page(title, body, opt = {}) {
@@ -258,7 +289,7 @@ function page(title, body, opt = {}) {
   const t = (h, n, label, cls = "") => `<a href="${h}" class="${cls}${tab === h ? " on" : ""}"><span>${ico(n)}</span>${label}</a>`;
   app.className = "";
   app.innerHTML = `<header class="top">${opt.back ? `<button class="back" data-back aria-label="Назад">${ico("back")}</button>` : ""}
-      <h1>${esc(title)}</h1><span id="net" class="net" hidden></span></header>${body}
+      <h1>${esc(title)}</h1><span id="net" class="net" hidden></span></header><div id="down"></div>${body}
     <nav class="tabs">${t("#/", "home", "Главная")}${can("stock") ? t("#/stock", "box", "Склад") : "<span></span>"}
       ${t("#/scan", "scan", "Скан", "scan")}${can("equipment") ? t("#/eq", "tool", "Оборудование") : "<span></span>"}${t("#/me", "me", "Профиль")}</nav>`;
   const b = $("[data-back]");
@@ -266,7 +297,7 @@ function page(title, body, opt = {}) {
   badge();
   window.scrollTo(0, 0);
 }
-function gate(body) { stopCam(); app.className = "bare"; app.innerHTML = `<div class="gate">${body}</div>`; }
+function gate(body) { stopCam(); app.className = "bare"; app.innerHTML = `<div class="gate"><div id="down"></div>${body}</div>`; downBanner(); }
 const brand = (clinic = S.clinic) => `<div class="brand"><i>${ico("scan").replace('class="ico"', 'class="ico c-brand"')}</i>Склад клиники${clinic ? " · " + esc(clinic) : ""}</div>`;
 const empty = (b, s = "") => `<div class="list"><div class="empty"><b>${esc(b)}</b>${esc(s)}</div></div>`;
 function sheet(html, bind) {
@@ -280,6 +311,105 @@ function sheet(html, bind) {
   return close;
 }
 const go = (h) => { if (location.hash === h) route(); else location.hash = h; };
+
+/* ------------------------------------------------------------------------------------------------ 3.19: the clinic's Wi-Fi */
+// the same words as the program (app/ui/stock-phone.js) and the certificate's page (app/phone_cert_page.py)
+const WHY = [
+  "Камеру для сканера телефон даёт только защищённой странице — с адресом на https.",
+  "Сайтам в интернете такой «паспорт» выдают специальные центры. Компьютеру внутри Wi-Fi клиники его не выдают — поэтому клиника выдаёт его себе сама.",
+  "Один раз вы говорите телефону «доверяй клинике» — и склад со сканером открывается по Wi-Fi даже без интернета.",
+  "Ключ сертификата хранится только на компьютере клиники, а сам сертификат годится только для адресов внутри сети клиники — не для сайтов в интернете. Ваши сайты, почту и переписку он не открывает.",
+  "Android после установки покажет «Сеть может отслеживаться» — это обычное предупреждение для любого своего сертификата. Для установки Android попросит блокировку экрана (ПИН, графический ключ или отпечаток).",
+  "Убрать сертификат можно в любой момент в настройках телефона.",
+];
+const whyHtml = (open) => `<details class="more why"${open ? " open" : ""}><summary>Зачем устанавливать сертификат клиники</summary>
+  <ul class="steps">${WHY.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`;
+// only addresses inside a clinic's network: the device's token never goes to a site in the internet
+const PRIVATE = /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)[\d.]+$/;
+function lanUrl(u) {
+  try {
+    const p = new URL(String(u || ""));
+    return /^https?:$/.test(p.protocol) && p.pathname === "/s/" && (PRIVATE.test(p.hostname) || /^[a-z0-9-]+\.local$/i.test(p.hostname)) ? p.origin + "/s/" : "";
+  } catch { return ""; }
+}
+function lanTargets() {  // the computers of the clinic that answer phones on its Wi-Fi: each puts its address into «lan:<node>»
+  const out = [];
+  for (const [k, v] of D.set) {
+    if (!String(k).startsWith("lan:")) continue;
+    let x = v;
+    try { if (typeof v === "string") x = JSON.parse(v); } catch { continue; }
+    const http = lanUrl(x && x.http), https = lanUrl(x && x.https);
+    if (http || https) out.push({ name: String(x.name || "Компьютер клиники"), http, https, at: String(x.at || "") });
+  }
+  return out.sort((a, b) => b.at.localeCompare(a.at));
+}
+const b64u = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64u = (s) => new TextDecoder().decode(Uint8Array.from(atob(String(s).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)));
+// the stock at another address of this clinic, already as this phone: the device in the link's fragment (never sent to a server)
+function handOver(url) {
+  const d = S.device || {};
+  return url + "#/link/" + b64u(JSON.stringify({ id: d.id, token: d.token, login: d.login || "", name: d.name || "",
+    role_title: d.role_title || "", clinic: S.clinic || "" }));
+}
+function lanSheet() {
+  const T = lanTargets(), n = S.queue.length, pref = LS.get("lanmode") || "http";
+  sheet(`<h3>Склад через Wi-Fi клиники</h3>
+    <p class="small muted">Без интернета склад открывается прямо с компьютера клиники: телефон в Wi-Fi клиники, программа на компьютере открыта. Вход — тем же ПИН-кодом.</p>
+    ${n ? `<div class="note warn">${n} ${plural(n, "операция", "операции", "операций")} в очереди уйдут сами, когда появится интернет — не повторяйте их.</div>` : ""}
+    ${T.length ? T.map((t) => {
+      const one = (mode, label) => `<a class="btn${t.https && t.http && mode !== pref ? " ghost" : ""}" data-mode="${mode}" href="${esc(handOver(t[mode]))}">${label}</a>`;
+      return `${T.length > 1 ? `<div class="sec">${esc(t.name)}</div>` : ""}<div class="acts${t.https && t.http ? "" : " one"}">
+        ${t.https ? one("https", "Со сканером") : ""}${t.http ? one("http", t.https ? "Без сканера" : "Открыть склад") : ""}</div>`;
+    }).join("") : `<div class="note">Компьютер клиники ещё не сообщил свой адрес — он появится, когда программа на компьютере обновит склад.</div>`}
+    ${T.some((t) => t.https) ? `<p class="small muted">«Со сканером» — если на телефон установлен сертификат клиники (на компьютере: Склад → Телефон →
+      «Без интернета — через Wi-Fi клиники»). «Без сканера» — ничего ставить не нужно: код вводится вручную или по фото.</p>` : ""}
+    <button class="btn ghost mt8" data-close>Закрыть</button>`, (el) => $$("[data-mode]", el).forEach((a) => (a.onclick = () => LS.set("lanmode", a.dataset.mode))));
+}
+// the app on http of the clinic's Wi-Fi: how to get the camera scanner (the certificate of the clinic, then https)
+function scannerHelp() {
+  if (!LOCAL || window.DD_SECURE) return "";
+  const port = Number(window.DD_HTTPS_PORT) || 0;
+  return `<div class="sec">Сканер камерой</div>
+    <p class="small muted">Сейчас склад открыт по простому адресу — без сканера. Чтобы сканировать камерой, один раз установите на телефон сертификат клиники и откройте склад со сканером.</p>
+    ${port ? `<div class="acts"><a class="btn soft" href="${BASE}ca">Установить сертификат</a>${S.device ? `<a class="btn" href="${esc(handOver(`https://${location.hostname}:${port}${BASE}`))}">Открыть со сканером</a>` : ""}</div>`
+      : `<div class="note">Режим со сканером на компьютере клиники выключен. Включает его директор: в программе Склад → Телефон → «Со сканером».</div>`}
+    ${whyHtml(false)}`;
+}
+/* the app on the computer of the clinic that has not got this phone yet: the phone is connected through the internet once */
+function viewLocalCode() {
+  gate(`${brand()}<h1>Склад через Wi-Fi клиники</h1>
+    <p>Этот телефон ещё не открывал склад через Wi-Fi клиники.</p>
+    <ol class="steps"><li><b>Подключите телефон через интернет</b>, если ещё не подключён: на компьютере клиники войдите в программу под своим именем,
+        нажмите <b>«Подключить мой телефон»</b> и наведите камеру на QR-код.</li>
+      <li>В приложении склада откройте <b>Профиль → «Склад через Wi-Fi клиники»</b>. Без интернета там же появится плашка.</li>
+      <li>Склад откроется здесь — войдите тем же ПИН-кодом. Дальше интернет не нужен.</li></ol>
+    <a class="btn" href="${esc(CLOUD_APP)}/#/me">Открыть склад через интернет</a>
+    ${scannerHelp()}`);
+}
+/* #/link/<the device>: the app through the internet handed this phone over to here */
+async function takeLink(code) {
+  let x = null;
+  try { x = JSON.parse(unb64u(code)); } catch { /* a broken link */ }
+  history.replaceState(null, "", BASE + "#/");  // the device's token leaves the address bar and the history
+  if (!LOCAL || !x || typeof x.token !== "string" || x.token.length < 16 || typeof x.id !== "string" || !x.id) {
+    toast("Ссылка не подошла — откройте её ещё раз из приложения склада", true);
+    return route();
+  }
+  const login = String(x.login || "").toLowerCase();
+  if (!S.device || S.device.token !== x.token) {
+    // another phone's or person's data and queue of this page go: what one queued must not go under another's PIN
+    if (S.queue.length || (LS.get("owner") && LS.get("owner") !== login)) {
+      S.rows = new Map(); S.since = 0; S.queue = []; S.photos = [];
+      await idbClear("rows").catch(() => {}); await idbClear("queue").catch(() => {}); await idbClear("photos").catch(() => {});
+      LS.set("since", 0); LS.del("owner"); index();
+    }
+    S.session = null; S.user = null; S.pick = null; LS.del("session"); LS.del("user");
+    S.device = { id: x.id.slice(0, 40), token: x.token.slice(0, 200), login, name: String(x.name || "").slice(0, 80), role_title: String(x.role_title || "").slice(0, 80) };
+    LS.set("device", S.device);
+  }
+  S.clinic = String(x.clinic || S.clinic || "").slice(0, 120); LS.set("clinic", S.clinic);
+  route();
+}
 
 /* ------------------------------------------------------------------------------------------------ sign-in */
 const PIN_WHERE = "в программе на компьютере: «Мой профиль» → «Телефон: склад и сканер» → «ПИН для общего QR клиники»";
@@ -361,10 +491,10 @@ function viewPin(openList, draft = "") {
       : `<span class="av none">?</span><span class="t"><b>Выберите себя</b><small>${n ? `${n} ${plural(n, "сотрудник", "сотрудника", "сотрудников")} с ПИН-кодом` : "Пока ни у кого нет ПИН-кода"}</small></span><span class="chg">›</span>`}</button>`}
     <div class="dots" id="dots">${"<i></i>".repeat(6)}</div><div id="err" class="note bad" hidden></div>
     ${padHtml()}
-    ${own ? `<p class="small muted mt18 center">Забыли ПИН? ${MY_QR} ещё раз — и придумайте новый.</p>
-      <p class="small muted center">Не ваш телефон? <a href="#" id="other">Отключить его</a></p>`
+    ${own ? `<p class="small muted mt18 center">Забыли ПИН? ${MY_QR} ещё раз — и придумайте новый${LOCAL ? " (для этого нужен интернет)" : ""}.</p>
+      <p class="small muted center">Не ваш телефон? <a href="#" id="other">${LOCAL ? "Забыть его здесь" : "Отключить его"}</a></p>`
     : `<p class="small muted mt18 center">Нет ПИН-кода? Проще всего: ${MY_QR} — и наведите камеру на свой QR-код.</p>
-      <p class="small muted center">Не та клиника? <a href="#" id="other">Подключить другую</a></p>`}`);
+      <p class="small muted center">Не та клиника? <a href="#" id="other">${LOCAL ? "Забыть телефон здесь" : "Подключить другую"}</a></p>`}`);
   const dots = () => $$("#dots i").forEach((d, i) => d.classList.toggle("on", i < pin.length));
   dots();
   const send = async (who) => {
@@ -377,7 +507,9 @@ function viewPin(openList, draft = "") {
     } catch (e) {
       if (signedOut(e)) return;
       pin = ""; dots(); const d = $("#dots"); d.classList.remove("shake"); void d.offsetWidth; d.classList.add("shake");
-      const er = $("#err"); er.hidden = false; er.textContent = e.net ? "Нет связи. Для входа нужен интернет." : e.message;
+      const er = $("#err"); er.hidden = false;
+      er.textContent = !e.net ? e.message : LOCAL ? "Нет связи с компьютером клиники. Проверьте, что телефон в Wi-Fi клиники, а программа на компьютере открыта."
+        : lanTargets().length ? "Нет связи с облаком склада. В клинике без интернета откройте склад через Wi-Fi клиники — плашка вверху." : "Нет связи. Для входа нужен интернет.";
     }
   };
   if ($("#who")) $("#who").onclick = () => pickWho(pin);
@@ -389,7 +521,8 @@ function viewPin(openList, draft = "") {
   }));
   $("#other").onclick = async (e) => {
     e.preventDefault();
-    if (own && !confirm("Отключить этот телефон? Данные склада на нём сотрутся; подключить снова можно своим QR-кодом с компьютера.")) return;
+    if (LOCAL && !confirm("Забыть телефон в складе через Wi-Fi? Данные склада здесь сотрутся; в складе через интернет телефон останется подключён.")) return;
+    if (!LOCAL && own && !confirm("Отключить этот телефон? Данные склада на нём сотрутся; подключить снова можно своим QR-кодом с компьютера.")) return;
     await call("/p/leave", {}, "device").catch(() => {}); await forget(); route();
   };
   if (draft.length === 6 && u) send(u);
@@ -546,7 +679,8 @@ async function camera(box, onCode) {
   S.stopCam = halt;
   v.srcObject = stream; await v.play().catch(() => {});
   let det = null;
-  try { det = await detector(); } catch { msg.textContent = "Сканер не загрузился — введите код вручную."; }
+  try { det = await detector(); }
+  catch { msg.textContent = navigator.onLine === false || LOCAL ? "Сканер не загрузился: без интернета он работает, если склад со сканером хотя бы раз открывали при интернете. Введите код вручную." : "Сканер не загрузился — введите код вручную."; }
   const tick = async (t) => {
     if (done || !v.isConnected) return halt();
     if (det && t - last > 200 && v.readyState >= 2) {
@@ -559,16 +693,36 @@ async function camera(box, onCode) {
   requestAnimationFrame(tick);
 }
 async function fromPhoto(file, onCode) {
+  let det;
+  try { det = await detector(); }
+  catch { return toast(!CAM ? "Код по фото здесь читается только при интернете — введите его вручную" : "Сканер не загрузился — введите код вручную", true); }
   try {
-    const det = await detector(), img = await createImageBitmap(file), r = await det.detect(img);
+    const img = await createImageBitmap(file), r = await det.detect(img);
     if (r.length) onCode(r[0].rawValue); else toast("На фото не найден код. Снимите ближе и ровнее.", true);
   } catch { toast("Не удалось прочитать фото", true); }
 }
-const camHtml = `<div class="cam"><video playsinline muted></video><div class="aim"></div><div class="msg">Наведите на штрихкод или QR-код</div></div>
+/* 3.19: the polyfill and its wasm go into the service worker's cache while there is the internet — so the scanner of an iPhone
+   (no BarcodeDetector of its own) works later without it too */
+async function warmScanner() {
+  if (!CAM || window.BarcodeDetector || !navigator.onLine || !(navigator.serviceWorker && navigator.serviceWorker.controller)) return;
+  if (LS.get("warm") === today()) return;
+  try {
+    const det = await detector(), c = document.createElement("canvas");
+    c.width = c.height = 16;
+    await det.detect(c);
+    LS.set("warm", today());
+  } catch { /* the next start tries again */ }
+}
+// the camera's box; without the camera (http of the clinic's Wi-Fi) — a photo of the code or typing it
+const camHtml = () => CAM ? `<div class="cam"><video playsinline muted></video><div class="aim"></div><div class="msg">Наведите на штрихкод или QR-код</div></div>
   <div class="acts"><label class="btn ghost">Сфотографировать<input type="file" accept="image/*" capture="environment" hidden></label>
+  <button class="btn ghost" data-manual>Ввести вручную</button></div>`
+  : `<div class="note">${LOCAL ? "<b>Сканер камерой — в режиме со сканером.</b> Здесь склад открыт по простому адресу, а камеру телефон даёт только защищённой странице."
+    : "Камера недоступна в этом браузере."} Сфотографируйте код или введите его вручную.</div>
+  <div class="acts"><label class="btn">${ico("cam")}Фото кода<input type="file" accept="image/*" capture="environment" hidden></label>
   <button class="btn ghost" data-manual>Ввести вручную</button></div>`;
 function bindCam(el, onCode) {
-  camera($(".cam", el), onCode);
+  if (CAM) camera($(".cam", el), onCode);
   $("input[type=file]", el).onchange = (e) => e.target.files[0] && fromPhoto(e.target.files[0], onCode);
   $("[data-manual]", el).onclick = () => { const c = prompt("Штрихкод, инвентарный номер или код материала"); if (c && c.trim()) onCode(c.trim()); };
 }
@@ -588,7 +742,7 @@ function resolve(code) {
   return bySerial ? { t: "e", id: bySerial.id } : null;
 }
 function viewScan() {
-  page("Сканер", camHtml + `<p class="small muted">Код читается сам. Если камера не видит код — сфотографируйте его или введите номер вручную.</p>`, { tab: "#/scan" });
+  page("Сканер", camHtml() + (CAM ? `<p class="small muted">Код читается сам. Если камера не видит код — сфотографируйте его или введите номер вручную.</p>` : scannerHelp()), { tab: "#/scan" });
   bindCam(app, found);
 }
 function found(code) {
@@ -640,6 +794,7 @@ function viewMaterial(id) {
     <div class="acts">${can("use") ? act("#/do/use" + ref, "Расход") : ""}${can("use") ? act("#/do/writeoff" + ref, "Списать") : ""}
       ${can("receive") ? act("#/do/receive" + ref, "Приход") : ""}${can("request") ? act("#/do/request" + ref, "В заявку") : ""}
       ${can("transfer") ? act("#/do/transfer" + ref, "Выдать в кабинет") : ""}${can("barcode") ? `<button class="btn ghost" id="bar">${m.barcode ? "Заменить штрихкод" : "Привязать штрихкод"}</button>` : ""}</div>
+    ${can("photo_mat") && Number(m.active ?? 1) ? photoBlock(S.photos.filter((p) => p.mid === id), "Фото материала") : ""}
     ${by.length > 1 || (by[0] && by[0].id) ? `<div class="sec">По местам</div><div class="list">${by.map((p) => `<div class="row"><span class="t"><b>${esc(p.name)}</b></span><span class="n">${qty(p.q)} <small>${esc(m.unit || "")}</small></span></div>`).join("")}</div>` : ""}
     <div class="sec">Партии и сроки</div>
     ${ll.lots.length ? `<div class="list">${ll.lots.filter((g) => g.left > 0).map((g) => `<div class="row"><span class="t"><b>${esc(g.lot || "без номера")}${g.expires ? " · до " + fmtDate(g.expires) : ""}</b>
@@ -651,8 +806,9 @@ function viewMaterial(id) {
       <small>${fmtDate((x.at || "").slice(0, 10))} · ${esc(placeName(x.location_id))} · ${esc(x.user_name || "")}</small></span>
       <span class="n ${x.qty > 0 ? "c-ok" : "c-ink2"}">${x.qty > 0 ? "+" : ""}${qty(x.qty)}</span></div>`).join("")}</div>` : empty("Движений ещё не было")}
     ${can("money") && m.price ? `<p class="small muted">Цена по последней закупке: ${money(m.price)}</p>` : ""}`, { back: true });
+  $$("[data-ph]").forEach((inp) => (inp.onchange = () => { const f = inp.files && inp.files[0]; inp.value = ""; if (f) sendPhoto(matTarget(m), f); }));
   const b = $("#bar");
-  if (b) b.onclick = () => sheet(`<h3>Отсканируйте штрихкод упаковки</h3>${camHtml}<button class="btn ghost" data-close>Отмена</button>`, (el, close) =>
+  if (b) b.onclick = () => sheet(`<h3>Отсканируйте штрихкод упаковки</h3>${camHtml()}<button class="btn ghost" data-close>Отмена</button>`, (el, close) =>
     bindCam(el, async (code) => { close(); try { await doOp({ kind: "barcode", id, barcode: code }, "Штрихкод"); } catch (e) { toast(e.message, true); } }));
 }
 function viewExp() {
@@ -678,7 +834,7 @@ function pickMaterial(loc, onPick) {
     };
     $("#pq", el).oninput = draw; draw();
     $("#pscan", el).onclick = () => {
-      $("#pcam", el).innerHTML = camHtml;
+      $("#pcam", el).innerHTML = camHtml();
       bindCam($("#pcam", el), (code) => { const r = resolve(code); if (r && r.t === "m") { close(); onPick(r.id); } else toast(`Код ${code} не найден среди материалов`, true); });
     };
   });
@@ -850,23 +1006,35 @@ async function shrink(file) {
   return { data: data.slice(data.indexOf(",") + 1), thumb };
 }
 function photoState(p) {
-  if (D.edocs.has("EDP-" + p.op)) return ["в карточке", "ok"];
+  if (p.mid ? D.mdocs.has("MDP-" + p.op) : D.edocs.has("EDP-" + p.op)) return ["в карточке", "ok"];
   const q = S.queue.find((x) => x.op === p.op);
   if (q) return q.error ? ["не прошло", "bad"] : ["ждёт сети", "warn"];
   return ["отправлено", "acc"];
 }
-async function sendPhoto(e, file) {
+// what a photo is of: equipment (3.16) or a material (3.19) — the operation, the preview's key, the screen to redraw
+const eqTarget = (e) => ({ kind: "equipment_photo", id: e.id, name: e.name, key: "eid", hash: `#/e/${encodeURIComponent(e.id)}`, draw: () => viewEq(e.id) });
+const matTarget = (m) => ({ kind: "material_photo", id: m.id, name: m.name, key: "mid", hash: `#/m/${encodeURIComponent(m.id)}`, draw: () => viewMaterial(m.id) });
+async function sendPhoto(tg, file) {
   toast("Готовлю снимок…");
   let ph;
   try { ph = await shrink(file); } catch (er) { return toast(er.message, true); }
-  const op = opId(), rec = { op, eid: e.id, thumb: ph.thumb, at: Date.now() };
+  const op = opId(), rec = { op, [tg.key]: tg.id, thumb: ph.thumb, at: Date.now() };
   S.photos.push(rec); await idbPut("photos", [rec]).catch(() => {});
-  if (location.hash === `#/e/${encodeURIComponent(e.id)}`) viewEq(e.id);
+  if (location.hash === tg.hash) tg.draw();
   let r = null;
-  try { r = await doOp({ op, kind: "equipment_photo", id: e.id, data: ph.data, taken_at: stamp() }, `Фото: ${e.name}`); }
+  try { r = await doOp({ op, kind: tg.kind, id: tg.id, data: ph.data, taken_at: stamp() }, `Фото: ${tg.name}`); }
   catch (er) { toast(er.message, true); }
   if (r === null) { S.photos = S.photos.filter((x) => x.op !== op); await idbDel("photos", [op]).catch(() => {}); }  // refused: no preview
-  if (location.hash === `#/e/${encodeURIComponent(e.id)}`) viewEq(e.id);
+  if (location.hash === tg.hash) tg.draw();
+}
+// the two ways to add a photo, then the previews of what this phone sent, with where each is now
+function photoBlock(list, alt) {
+  const shots = [...list].sort((a, b) => b.at - a.at);
+  return `<div class="sec">Фото</div>
+    <div class="acts ph-acts"><label class="btn soft">${ico("cam")}Сфотографировать<input type="file" accept="image/*" capture="environment" hidden data-ph></label>
+      <label class="btn ghost">${ico("pic")}Из галереи<input type="file" accept="image/*" hidden data-ph></label></div>
+    ${shots.length ? `<div class="ph-strip">${shots.map((p) => { const [t, c] = photoState(p); return `<figure class="ph"><img src="${esc(p.thumb)}" alt="${esc(alt)}"><figcaption><span class="chip ${c}">${t}</span></figcaption></figure>`; }).join("")}</div>` : ""}
+    <p class="small muted ph-note">Снимок уменьшается на телефоне и появляется в карточке на компьютере клиники. Без связи он подождёт в очереди и уйдёт сам.</p>`;
 }
 function viewEqList() {
   const term = (S.eterm || "").toLowerCase();
@@ -888,12 +1056,7 @@ function viewEq(id) {
   if (!e) return page("Оборудование", empty("Оборудование не найдено", "Обновите данные в профиле или проверьте этикетку."), { back: true });
   const ev = (D.ev.get(id) || []).slice(0, 20), live = e.status !== "written_off", ed = can("equipment_edit") && live;
   const ns = e.next_service ? days(e.next_service) : null;
-  const shots = S.photos.filter((p) => p.eid === id).sort((a, b) => b.at - a.at);
-  const photos = (can("photo") || can("equipment_edit")) && live ? `<div class="sec">Фото</div>
-    <div class="acts ph-acts"><label class="btn soft">${ico("cam")}Сфотографировать<input type="file" accept="image/*" capture="environment" hidden data-ph></label>
-      <label class="btn ghost">${ico("pic")}Из галереи<input type="file" accept="image/*" hidden data-ph></label></div>
-    ${shots.length ? `<div class="ph-strip">${shots.map((p) => { const [t, c] = photoState(p); return `<figure class="ph"><img src="${esc(p.thumb)}" alt="Фото оборудования"><figcaption><span class="chip ${c}">${t}</span></figcaption></figure>`; }).join("")}</div>` : ""}
-    <p class="small muted ph-note">Снимок уменьшается на телефоне и появляется в карточке на компьютере клиники. Без сети он подождёт в очереди и уйдёт сам.</p>` : "";
+  const photos = (can("photo") || can("equipment_edit")) && live ? photoBlock(S.photos.filter((p) => p.eid === id), "Фото оборудования") : "";
   page("Оборудование", `<div class="tag"><div class="code">ИНВ. № ${esc(e.inv_number || "—")}${e.serial ? " · S/N " + esc(e.serial) : ""}</div><h2>${esc(e.name)}</h2>
       <p>${esc([e.model, e.category].filter(Boolean).join(" · "))}</p>
       <div class="chips">${chip(EQ_ST, e.status)}${chip(EQ_CO, e.condition || "ok")}</div></div>
@@ -905,7 +1068,7 @@ function viewEq(id) {
     ${photos}
     <div class="sec">История</div>
     ${ev.length ? `<div class="list">${ev.map((x) => `<div class="ev"><b>${EV[x.kind] || esc(x.kind)}</b> <small>${fmtDate(x.date)} · ${esc(x.user_name || "")}${can("money") && x.cost ? " · " + money(x.cost) : ""}</small>${esc(x.text || "")}</div>`).join("")}</div>` : empty("Событий ещё не было")}`, { back: true });
-  $$("[data-ph]").forEach((inp) => (inp.onchange = () => { const f = inp.files && inp.files[0]; inp.value = ""; if (f) sendPhoto(e, f); }));
+  $$("[data-ph]").forEach((inp) => (inp.onchange = () => { const f = inp.files && inp.files[0]; inp.value = ""; if (f) sendPhoto(eqTarget(e), f); }));
   if (!ed) return;
   const run = async (body, title) => { try { await doOp({ id, ...body }, title); } catch (er) { toast(er.message, true); } };
   $("#inv").onclick = () => run({ kind: "equipment_inventory", found: true }, "Инвентаризация");
@@ -950,14 +1113,24 @@ function viewMe() {
       <small>${new Date(q.at).toLocaleString("ru-RU")}${q.error ? " · не прошло: " + esc(q.error) : " · ждёт связи"}</small>
       <button class="btn ghost mt8 short" data-drop="${esc(q.op)}">Убрать из очереди</button></div>`).join("")}</div>` : ""}
     <div class="acts mt16"><button class="btn soft" id="upd">Обновить данные</button><button class="btn ghost" id="out">Выйти</button></div>
-    ${bound() ? `<button class="btn ghost mb10" id="newpin">Сменить ПИН-код</button>` : ""}
-    <button class="btn bad" id="leave">Отключить телефон от клиники</button>
-    <p class="small muted">${bound() ? "Это ваш телефон: он открывается вашим ПИН-кодом. Выйти — закрыть склад до следующего ввода ПИН." : "Выйти — вернуться ко входу по ПИН-коду (например, чтобы вошёл другой сотрудник)."} Отключить — стереть данные склада с этого телефона.</p>`, { tab: "#/me" });
+    ${bound() && !LOCAL ? `<button class="btn ghost mb10" id="newpin">Сменить ПИН-код</button>` : ""}
+    ${LOCAL ? `<div class="sec">Через Wi-Fi клиники</div>
+      <p class="small muted">Склад открыт прямо с компьютера клиники${window.DD_SECURE ? ", со сканером" : ", без сканера"} — интернет не нужен.
+        Операции уходят на компьютер, оттуда — в облако и на другие компьютеры клиники.${bound() ? " Сменить ПИН-код можно в складе через интернет." : ""}</p>
+      <a class="btn soft mb10" href="${esc(CLOUD_APP)}/">Склад через интернет</a>${scannerHelp()}`
+    : lanTargets().length ? `<div class="sec">Без интернета</div>
+      <p class="small muted">В клинике без интернета склад открывается через Wi-Fi клиники, прямо с компьютера, — тем же ПИН-кодом.</p>
+      <button class="btn soft mb10" id="lan">Склад через Wi-Fi клиники</button>` : ""}
+    <button class="btn bad mt10" id="leave">${LOCAL ? "Забыть телефон здесь" : "Отключить телефон от клиники"}</button>
+    <p class="small muted">${bound() ? "Это ваш телефон: он открывается вашим ПИН-кодом. Выйти — закрыть склад до следующего ввода ПИН." : "Выйти — вернуться ко входу по ПИН-коду (например, чтобы вошёл другой сотрудник)."}
+      ${LOCAL ? "Забыть — стереть данные склада через Wi-Fi с этого телефона; в складе через интернет он останется подключён." : "Отключить — стереть данные склада с этого телефона."}</p>`, { tab: "#/me" });
   if ($("#newpin")) $("#newpin").onclick = newPinSheet;
+  if ($("#lan")) $("#lan").onclick = lanSheet;
   $("#upd").onclick = () => sync(true);
   $("#out").onclick = () => { call("/p/logout", {}, "session").catch(() => {}); S.session = null; LS.del("session"); go("#/pin"); };
   $("#leave").onclick = async () => {
-    if (!confirm("Отключить телефон? Данные склада на нём будут стёрты, для входа снова понадобится код клиники.")) return;
+    if (!confirm(LOCAL ? "Забыть телефон в складе через Wi-Fi? Данные склада здесь сотрутся; в складе через интернет телефон останется подключён."
+      : "Отключить телефон? Данные склада на нём будут стёрты, для входа снова понадобится код клиники.")) return;
     await call("/p/leave", {}, "device").catch(() => {}); await forget(); go("#/");
   };
   $$("[data-drop]").forEach((b) => (b.onclick = async () => { await dropQ(b.dataset.drop); viewMe(); }));
@@ -988,11 +1161,22 @@ function newPinSheet() {
 /* ------------------------------------------------------------------------------------------------ router */
 function route() {
   const h = location.hash.slice(1) || "/", [path, qstr] = h.split("?"), qs = new URLSearchParams(qstr || ""), p = path.split("/").filter(Boolean);
+  if (p[0] === "link") return takeLink(p[1] || "");  // 3.19: handed over from the app through the internet
+  if (p[0] === "tohttps") {  // 3.19: from the certificate's page — the same phone into the app with the scanner
+    const port = Number(window.DD_HTTPS_PORT) || 0;
+    if (LOCAL && !window.DD_SECURE && port) {
+      const url = `https://${location.hostname}:${port}${BASE}`;
+      location.replace(S.device ? handOver(url) : url);
+      return;
+    }
+    history.replaceState(null, "", BASE + "#/");
+    return route();
+  }
   if (S.pair) return viewPair();
   if (S.switchTo) return viewSwitch();
   if (!S.device) {
     if (["inv", "mat", "e", "m"].includes(p[0])) S.after = location.hash;  // a label scanned before the phone was connected
-    return viewCode();
+    return LOCAL ? viewLocalCode() : viewCode();
   }
   if (p[0] === "who") return viewPin(true);
   if (!S.session) {
@@ -1026,13 +1210,13 @@ function render() {  // after new data: redraw the screen, except a form being f
 }
 
 async function boot() {
-  // /e/<инв. №> from the QR label and /j#<код клиники> from the QR in the program
-  const path = location.pathname;
-  if (path.startsWith("/e/")) history.replaceState(null, "", "/#/inv/" + path.slice(3).split("/")[0]);
-  else if (path.startsWith("/m/")) history.replaceState(null, "", "/#/mat/" + path.slice(3).split("/")[0]);
+  // /e/<инв. №> from the QR label and /j#<код клиники> from the QR in the program (3.19: under the app's base, / or /s/)
+  const path = location.pathname.startsWith(BASE) ? "/" + location.pathname.slice(BASE.length) : location.pathname;
+  if (path.startsWith("/e/")) history.replaceState(null, "", BASE + "#/inv/" + path.slice(3).split("/")[0]);
+  else if (path.startsWith("/m/")) history.replaceState(null, "", BASE + "#/mat/" + path.slice(3).split("/")[0]);
   else if (path === "/j" || path === "/j/") {
     const code = decodeURIComponent(location.hash.slice(1)).toUpperCase().replace(/[^A-Z0-9]/g, "");
-    history.replaceState(null, "", "/#/");
+    history.replaceState(null, "", BASE + "#/");
     const pretty = code.slice(0, 4) + "-" + code.slice(4);
     if (code.length === 20) S.pair = code;  // 3.18.3: the personal QR «Подключить мой телефон»
     else if (code.length === 8 && bound()) { /* a phone of one person: the clinic's QR changes nothing */ }
@@ -1056,6 +1240,8 @@ async function boot() {
   setInterval(() => navigator.onLine && document.visibilityState === "visible" && sync(), 60000);
   route();
   if (S.session) sync();
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // no service worker on http (the clinic's Wi-Fi without the certificate): a browser keeps them only for secure pages
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register(BASE + "sw.js").catch(() => {});
+  setTimeout(warmScanner, 4000);
 }
 boot();

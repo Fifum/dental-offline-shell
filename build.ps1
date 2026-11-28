@@ -27,12 +27,21 @@ if (Test-Path app\brand.json) {
   $extra = @("--add-data", "app\brand.json;.")
 }
 
+# 0. 3.19: the stock app of the phones (phone\, the same files as on Vercel): the program gives it on the clinic's Wi-Fi under
+#    /s/. Only what a phone loads goes in — not the Vercel config, the scripts or the folder's link to Vercel.
+$phone = "build\phone"
+if (Test-Path $phone) { Remove-Item $phone -Recurse -Force }
+New-Item -ItemType Directory -Force $phone | Out-Null
+Get-ChildItem phone -Force | Where-Object { $_.Name -notmatch '^\.' -and $_.Extension -notin ".py", ".ps1" -and $_.Name -ne "vercel.json" } |
+  Copy-Item -Destination $phone -Recurse -Force
+if (-not (Test-Path "$phone\index.html")) { throw "phone app files not found" }
+
 # 1. The program as a folder (exe + _internal): installed once, it starts without unpacking anything.
 #    A single-file build unpacked ~300 MB into a temporary folder on every start (and the antivirus re-checked it).
 & $py -m PyInstaller --noconfirm --clean --onedir --windowed --noupx `
   --name $name `
   --icon $icon `
-  --add-data "app\ui;ui" @extra `
+  --add-data "app\ui;ui" --add-data "$phone;phone" @extra `
   --paths app `
   --hidden-import webview.platforms.edgechromium `
   --hidden-import win32com.client `

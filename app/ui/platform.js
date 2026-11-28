@@ -420,6 +420,8 @@ async function openMyProfile() {
         <div class="prof-row"><span>ПИН-код на общем компьютере</span><b>${u.has_pin ? "включён" : "не задан"}</b><button class="btn ghost small" id="pfPin">${u.has_pin ? "Изменить" : "Включить"}</button></div></section>
       <section class="prof-sec"><h4>Телефон: склад и сканер</h4>
         ${stockUser ? spMyPhoneHtml("pfPairBox") : `<p class="hint">Приложение склада на телефоне — для тех, у кого есть права склада.</p>`}
+        ${stockUser ? `<p class="hint prof-wifi">Без интернета склад на телефоне работает через Wi-Fi клиники — ${canAny("settings", "stock_edit", "stock_approve")
+          ? `<a href="#" id="pfWifi">Склад → Телефон → «Без интернета — через Wi-Fi клиники»</a>` : "Склад → Телефон → «Без интернета — через Wi-Fi клиники»"}.</p>` : ""}
         <details class="sp-more"><summary>ПИН для общего QR клиники</summary>
         <p class="hint">Прежний способ: телефон подключают общим QR-кодом клиники (Склад → Телефон), выбирают себя и вводят этот ПИН. Программа придумает его сама и покажет один раз. Если телефон потерян — директор сбросит ПИН в «Сотрудниках», привязанные телефоны отключатся.</p>
         <div class="prof-row"><span>ПИН телефона</span><b id="pfPhoneSt">${u.has_phone_pin ? "создан " + esc(fmtDT(u.phone_pin_at)) : "не создан"}</b><button class="btn ghost small" id="pfPhone">${u.has_phone_pin ? "Сменить ПИН" : "Создать ПИН"}</button></div>
@@ -428,6 +430,8 @@ async function openMyProfile() {
   $("#pfPass", box).onclick = () => { closeModal(); $("#ucPass").onclick(); };
   $("#pfPin", box).onclick = () => { closeModal(); $("#ucPin").onclick(); };
   if (typeof spBindMyPhone === "function") spBindMyPhone(box, "pfPairBox");
+  const pw = $("#pfWifi", box);
+  if (pw) pw.onclick = (e) => { e.preventDefault(); closeModal(); stockGo("stock", "phone"); };
   $("#pfPhone", box).onclick = () => {
     const pb = $("#pfPhoneBox", box);
     pb.innerHTML = `<div class="prof-ask"><label>Ваш пароль от программы<input class="input" type="password" id="pfPw" autocomplete="current-password"></label>

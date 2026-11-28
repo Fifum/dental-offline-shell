@@ -151,12 +151,14 @@ PHONE_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 CLOUD_APP = "https://dental-desk-stock.vercel.app"
 
 
-def phone_config(secure: bool) -> bytes:
-    """config.js of the app on this computer: its API is here, not in the cloud."""
+def phone_config(secure: bool, https_port: int = 0) -> bytes:
+    """config.js of the app on this computer: its API is here, not in the cloud. `https_port` — where the app with the scanner
+    answers (0 while the mode «со сканером» is off), so the app on http can hand the phone over there."""
     return ("/* The stock app on the clinic's Wi-Fi: its API is this computer (app/phone_lan.py). */\n"
             "window.DD_API = location.origin + \"/s/api\";\n"
             "window.DD_LOCAL = true;\nwindow.DD_BASE = \"/s/\";\n"
             f"window.DD_SECURE = {'true' if secure else 'false'};\n"
+            f"window.DD_HTTPS_PORT = {int(https_port or 0)};\n"
             f"window.DD_CLOUD_APP = {json.dumps(CLOUD_APP)};\n"
             "window.DD_SCAN_POLYFILL = \"https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/+esm\";\n").encode("utf-8")
 
@@ -320,7 +322,8 @@ class ClinicServer:
                     return None
                 rel = path[len("/s/"):]
                 if rel == "config.js":
-                    return self._send(200, phone_config(self.secure), PHONE_TYPES[".js"], head)
+                    return self._send(200, phone_config(self.secure, srv.https_port if srv.httpsd is not None else 0),
+                                      PHONE_TYPES[".js"], (*head, ("Cache-Control", "no-cache")))
                 if rel in ("ca", "ca/", "ca.crt", "ca.pem", "ca.mobileconfig"):
                     import phone_cert_page
                     code, body, ctype, extra = phone_cert_page.serve(srv, rel, self.secure)
@@ -343,7 +346,8 @@ class ClinicServer:
                     body = body.replace(b'="/', b'="/s/')
                 elif f.name == "manifest.webmanifest":
                     body = body.replace(b'"/', b'"/s/')
-                return self._send(200, body, PHONE_TYPES.get(f.suffix, "application/octet-stream"), head)
+                fresh = (("Cache-Control", "no-cache"),) if f.suffix in (".html", ".js", ".css", ".webmanifest") else ()
+                return self._send(200, body, PHONE_TYPES.get(f.suffix, "application/octet-stream"), (*head, *fresh))
 
             def do_GET(self):
                 p = self.path.split("?")[0].split("#")[0]

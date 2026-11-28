@@ -28,7 +28,8 @@ IPHONE = [
     "Откройте эту страницу <b>в Safari</b> и нажмите <b>«Скачать профиль для iPhone»</b> → <b>«Разрешить»</b>.",
     "Откройте <b>Настройки</b> → вверху <b>«Профиль загружен»</b> → <b>«Установить»</b> (введите код-пароль телефона).",
     "Откройте <b>Настройки → Основные → Об этом устройстве → Доверие сертификатам</b> и включите «{title}».",
-    "Вернитесь сюда и нажмите <b>«Открыть склад со сканером»</b>.",
+    "Вернитесь сюда и нажмите <b>«Открыть склад со сканером»</b>. Без интернета сканер на iPhone работает, если склад со "
+    "сканером хотя бы раз открывали при интернете.",
 ]
 
 
@@ -48,7 +49,6 @@ def why_html(open_=True) -> str:
 def serve(srv, rel: str, secure: bool):
     """(code, body, content type, extra headers) for /s/ca, /s/ca.crt, /s/ca.mobileconfig."""
     import clinic_ca
-    import phone_lan
     ca = clinic_ca.get()
     on = bool(srv.httpsd is not None and ca.exists())
     if rel in ("ca.crt", "ca.pem", "ca.mobileconfig"):
@@ -68,8 +68,8 @@ def serve(srv, rel: str, secure: bool):
                 + "<a class=\"btn soft\" href=\"/s/\">Открыть склад без сканера</a>")
         return 200, _page(body), "text/html; charset=utf-8", ()
     st = ca.state()
-    info = phone_lan.lan_info()
-    full = info.get("https") or "/s/"
+    # from http: through the app of this same address — it knows the phone and hands it over to https already signed in
+    full = "/s/" if secure else "/s/#/tohttps"
     lis = lambda xs: "".join(f"<li>{x}</li>" for x in xs)  # noqa: E731
     body = (brand + "<h1>Склад со сканером</h1>"
             "<p>Чтобы сканер работал по Wi-Fi клиники без интернета, один раз установите на телефон сертификат клиники.</p>"
