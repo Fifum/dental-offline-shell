@@ -216,6 +216,57 @@ check("an empty column of an old card is not a change", stockm.eq_changes(old_ca
 for part in ("Журнал действий", "Детали действия", "История изменений по объекту", "Подозрительных действий", "Активных пользователей"):
     check(f"UI log: {part}", part in sec)
 
+# ================================================ block 3: «Аналитика и отчёты» --
+y = date.today().year
+# a chair of Dentist Plus in the cabinet: its appointments are the runtime of the piece there
+lid = S.save_location({"name": "Кабинет 316", "kind": "cabinet"})
+a.equipment_place_chair(lid, "Кресло 9")
+eff_id = a.save_equipment({"name": "Микроскоп Leica", "category": "Диагностическое оборудование", "location_id": lid, "price": 600000,
+                           "useful_months": 60, "in_service": f"{y - 1}-06-01"})
+d.conn.execute("DELETE FROM visits_archive")
+base = date.today() - timedelta(days=3)
+for i, (ch, st, en, status) in enumerate([("Кресло 9", "09:00", "10:30", "Завершён"), ("Кресло 9", "10:00", "11:00", "Завершён"),  # overlap → 2 h
+                                          ("Кресло 9", "12:00", "13:00", "Отменён"), ("Кресло 1", "14:00", "16:00", "Завершён")]):
+    d.conn.execute("""INSERT INTO visits_archive(id, start, "end", chair, status) VALUES(?,?,?,?,?)""",
+                   (f"va{i}", f"{base} {st}", f"{base} {en}", ch, status))
+d.conn.commit()
+chairs, clinic = S._visit_hours(y)
+check("the hours of a chair: overlaps once, cancelled not", abs(chairs["Кресло 9"][base.isoformat()] - 2.0) < 1e-9, chairs)
+check("the clinic's hours: the union of every chair", abs(clinic[base.isoformat()] - 4.0) < 1e-9, clinic)
+rid_ = a.equipment_request_save({"equipment_id": eff_id, "kind": "repair", "description": "Не включается"})
+a.equipment_request_status(rid_, "work")
+d.conn.execute("UPDATE equipment_requests SET started_at=? WHERE id=?", (f"{date.today() - timedelta(days=1)} 09:00:00", rid_)); d.conn.commit()
+an = a.equipment_analytics(y)
+row = next(x for x in an["efficiency"] if x["id"] == eff_id)
+per_day = S.chair_hours() * 12 / 365
+check("runtime from the chair of the cabinet", row["chair"] == "Кресло 9" and row["hours"] == 2.0, row)
+check("downtime: the days of a request in work", abs(row["downtime"] - round(2 * per_day, 1)) < 0.11, row)
+check("the norm from the first day with appointments", abs(row["norm"] - round(4 * per_day, 1)) < 0.11 and an["eff_info"]["data_from"] == base.isoformat(), row)
+check("the load against the norm less the downtime", row["load"] == round(2.0 * 100 / (row["norm"] - row["downtime"]), 1), row)
+common = next(x for x in an["efficiency"] if x["chair"] == "" and x["status"] != "written_off")
+check("the common equipment takes the clinic's hours", common["hours"] == 4.0 and common["source"] == "клиника", common)
+check("money: the cost of an hour", "hour_cost" in row and row["amort"] > 0 and row["hour_cost"] == round((row["cost"] + row["amort"]) / row["hours"], 2))
+check("tiles against the year before", an["count"] >= 1 and "count_prev" in an and {"cost", "residual", "accumulated", "wear", "growth"} <= set(an["money"]))
+check("residual = cost − accumulated", abs(an["money"]["residual"] - (an["money"]["cost"] - an["money"]["accumulated"])) < 0.02)
+check("dynamics by month up to now", len(an["dynamics"]) == date.today().month and all(abs(m["residual"] - (m["cost"] - m["accumulated"])) < 0.02 for m in an["dynamics"]))
+check("the share of the categories and the condition", an["cat_share"] and set(an["condition"]) == {"ok", "service", "faulty"})
+check("the conclusions are rules", an["conclusions"] and any("износа" in c["text"] for c in an["conclusions"])
+      and any("требу" in c["text"] and "ремонт" in c["text"] for c in an["conclusions"]))
+a.save_equipment({"id": eff_id, "name": "Микроскоп Leica", "category": "Диагностическое оборудование", "location_id": lid, "price": 600000,
+                  "useful_months": 18, "in_service": f"{y - 1}-06-01"})
+an = a.equipment_analytics(y)
+check("what to renew next year", any(x["id"] == eff_id for x in an["renew"]) and any("обновить" in c["text"] for c in an["conclusions"]))
+S.eq_plan_save({"equipment_id": eff_id, "kind": "service", "every_months": 6, "next_date": ahead(10)})
+an = a.equipment_analytics(y)
+check("the nearest events by kind", any(x["kind"] == "service" and x["count"] >= 1 for x in an["events"]))
+nm = S.eq_analytics(y, money=False)
+check("without «Бухгалтерия» no money in the analytics", "money" not in nm and "dynamics" not in nm and "keep" not in nm
+      and all("cost" not in x and "hour_cost" not in x for x in nm["efficiency"]) and all("cost" not in x for x in nm["cat_share"]))
+for part in ("Динамика стоимости и амортизации", "Распределение по категориям", "Статус оборудования", "Топ затрат на обслуживание и ремонт",
+             "Ближайшие события", "Ключевые выводы", "Эффективность использования оборудования", "Сформировать отчёт",
+             "Инвентаризационная ведомость", "Управленческий отчёт (сводный)"):
+    check(f"UI analytics: {part}", part in sec)
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)

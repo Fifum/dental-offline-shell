@@ -726,28 +726,132 @@ async function eqDocsTab() {
   $$("[data-open]", body).forEach(b => b.onclick = async ev => { ev.stopPropagation(); try { eqOpenFile(await api.equipment_doc_open(b.dataset.open)); } catch (x) { toast(errText(x), true); } });
 }
 
-/* ------------------------------------------------------------ «Аналитика и отчёты» */
+/* ------------------------------------------------------------ «Аналитика и отчёты» (3.16, mockup 12) */
+const EQ_MON = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+/** A line chart of months (SVG, explicit points): series [{key, cls, title}], the area under the first one. */
+function eqLineChart(rows, series) {
+  const W = 460, H = 220, L = 54, R = 8, T = 12, B = 26, max = Math.max(1, ...rows.flatMap(r => series.map(s => r[s.key] || 0)));
+  const step = 10 ** Math.floor(Math.log10(max)), top = Math.ceil(max / step / 2) * step * 2 || 1;
+  const x = i => L + (W - L - R) * (i + 0.5) / 12, y = v => T + (H - T - B) * (1 - v / top);
+  const fmtA = v => v >= 1e6 ? `${(v / 1e6).toLocaleString("ru-RU", {maximumFractionDigits: 1})} млн` : v >= 1e3 ? `${Math.round(v / 1e3)} тыс.` : `${Math.round(v)}`;
+  const grid = [0, .25, .5, .75, 1].map(k => `<line x1="${L}" x2="${W - R}" y1="${y(top * k)}" y2="${y(top * k)}" class="gl"/><text x="${L - 6}" y="${y(top * k) + 4}" text-anchor="end">${fmtA(top * k)}</text>`).join("");
+  const pts = s => rows.map((r, i) => [x(i), y(r[s.key] || 0)]);
+  const lines = series.map((s, si) => { const p = pts(s); if (!p.length) return "";
+    const area = si === 0 ? `<path class="ar ${s.cls}" d="M${p[0][0]},${y(0)} ${p.map(q => `L${q[0]},${q[1]}`).join(" ")} L${p[p.length - 1][0]},${y(0)} Z"/>` : "";
+    return `${area}<polyline class="ln ${s.cls}" points="${p.map(q => q.join(",")).join(" ")}"/>${p.map((q, i) => `<circle class="pt ${s.cls}" cx="${q[0]}" cy="${q[1]}" r="3.5"><title>${EQ_MON[i]}: ${s.title} ${eqMoney(rows[i][s.key] || 0)}</title></circle>`).join("")}`; }).join("");
+  return `<svg class="eqs-chart eqs-lchart" viewBox="0 0 ${W} ${H}">${grid}${EQ_MON.map((m, i) => `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${m}</text>`).join("")}${lines}</svg>
+    <div class="eqs-lleg">${series.map(s => `<span class="${s.cls}">${s.title}</span>`).join("")}</div>`;
+}
 async function eqAnalyticsTab() {
   const body = $("#stockBody");
   EQS.anYear = EQS.anYear || new Date().getFullYear();
-  const r = await api.equipment_analytics(EQS.anYear), mon = r.amort !== undefined;
-  const ms = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
-  const top = Math.max(1, ...r.by_month.map(m => m.service + m.repair + m.diag)), maxA = Math.max(1, ...r.ages.map(a => a.count));
+  const r = EQS.an = await api.equipment_analytics(EQS.anYear), mon = !!r.money, M = r.money || {}, c = r.condition, tot = c.ok + c.service + c.faulty;
+  const pct = (n, of) => of ? `${(n * 100 / of).toLocaleString("ru-RU", {maximumFractionDigits: 1})} %` : "0 %";
+  const growth = r.count_prev ? Math.round((r.count - r.count_prev) * 1000 / r.count_prev) / 10 : null;
+  const tile2 = (ic, t, v, sub, cls = "") => `<div class="eqs-tile ${cls}"><i>${ic}</i><span>${t}</span><b>${v}${sub ? ` <small class="eqs-tsub ${sub[1]}">${sub[0]}</small>` : ""}</b></div>`;
+  const tiles = mon ? tile2(EQX.box, "Количество оборудования", r.count, growth != null ? [`${growth > 0 ? "+" : ""}${growth.toLocaleString("ru-RU")} % к ${r.year - 1}`, growth >= 0 ? "up" : "down"] : null)
+      + tile2(EQX.pie, "Общая стоимость", eqMoney(M.cost)) + tile2(EQX.calc, "Остаточная стоимость", eqMoney(M.residual)) + tile2(EQN.amort, "Накопленная амортизация", eqMoney(M.accumulated))
+      + tile2('<svg viewBox="0 0 24 24"><path d="m6 18 12-12"/><circle cx="7" cy="7" r="2.2"/><circle cx="17" cy="17" r="2.2"/></svg>', "Степень износа", `${(M.wear || 0).toLocaleString("ru-RU")} %`, null, M.wear >= 75 ? "bad" : M.wear >= 50 ? "warn" : "")
+    : tile2(EQX.box, "Количество оборудования", r.count, growth != null ? [`${growth > 0 ? "+" : ""}${growth.toLocaleString("ru-RU")} % к ${r.year - 1}`, growth >= 0 ? "up" : "down"] : null)
+      + tile2(EQX.ok, "Исправно", c.ok, null, "ok") + tile2(EQX.gear, "На обслуживании", c.service, null, c.service ? "warn" : "") + tile2(EQX.wrench, "Требует ремонта", c.faulty, null, c.faulty ? "bad" : "")
+      + tile2(EQX.check, "Работ за год", r.works);
+  const cs = r.cat_share.slice().sort((a, b) => mon ? b.cost - a.cost : b.count - a.count), head = cs.slice(0, 5), rest = cs.slice(5);
+  const parts = [...head, ...(rest.length ? [{name: "Прочее", cost: rest.reduce((s, x) => s + (x.cost || 0), 0), count: rest.reduce((s, x) => s + x.count, 0)}] : [])];
+  const pv = x => mon ? x.cost || 0 : x.count, ptot = parts.reduce((s, x) => s + pv(x), 0);
+  const topc = (mon ? r.by_category.filter(x => x.keep > 0).sort((a, b) => b.keep - a.keep) : r.by_category.filter(x => x.works > 0).sort((a, b) => b.works - a.works)).slice(0, 5);
+  const topMax = Math.max(1, ...topc.map(x => mon ? x.keep : x.works));
+  const evIc = {wrench: EQX.wrench, cycle: EQX.cycle, clock: EQX.clock, ok: EQX.ok, check: EQX.check};
+  const effRows = r.efficiency.filter(x => x.status !== "written_off").slice(0, 6), info = r.eff_info;
+  const loadPill = v => v == null ? '<span class="muted">—</span>' : `<span class="eqs-load ${v < 30 ? "lo" : v > 100 ? "hi" : "ok"}">${v.toLocaleString("ru-RU", {maximumFractionDigits: 0})} %</span>`;
+  const reps = eqReportsList(mon), cur = reps.some(x => x[0] === EQS.anRep) ? EQS.anRep : reps[0][0];
   body.innerHTML = `<div class="eqs">
-    <div class="eqs-head"><div><h2>Аналитика и отчёты</h2><span class="muted">Стоимость содержания и эффективность оборудования</span></div><span class="grow"></span>${eqYearSel("anYear", r.year)}
-      <button class="btn ghost" id="anPrint">${EQX.doc}Печать отчёта</button></div>
-    <div class="eqs-tiles eqs-tiles5">${eqTile(EQX.wrench, "Содержание за год", eqMoney(r.keep))}${eqTile(EQX.gear, "Ремонтов", r.repairs, r.repairs ? "warn" : "")}${eqTile(EQX.check, "Работ всего", r.works)}
-      ${mon ? eqTile(EQN.amort, "Амортизация за год", eqMoney(r.amort)) + eqTile(EQX.clock, "Кресло-час (амортизация и содержание)", eqMoney(r.chair_hour)) : eqTile(EQX.coins, "ТО", eqMoney(r.service))}</div>
-    <div class="eqs-g2"><section class="eqs-card"><h3>Стоимость содержания по месяцам</h3><div class="mtc-bars eqs-anbars">${r.by_month.map((m, i) => { const s = m.service + m.repair + m.diag;
-        return `<div class="mtc-bar" title="${ms[i]}: ${eqMoney(s)} — ТО ${eqMoney(m.service)}, ремонт ${eqMoney(m.repair)}, диагностика ${eqMoney(m.diag)}"><i>${["service", "repair", "diag"].map(k => m[k] ? `<u class="${k === "repair" ? "writeoff" : k === "diag" ? "treatment" : "service"}" style="height:${m[k] / top * 100}%"></u>` : "").join("")}</i><b>${s ? eqShortMoney(s).replace(" ₽", "") : ""}</b><small>${ms[i].toLowerCase()}</small></div>`; }).join("")}</div>
-        <div class="mtc-legend"><span class="service">ТО</span><span class="writeoff">Ремонт</span><span class="treatment">Диагностика</span></div></section>
-      <section class="eqs-card"><h3>Возраст парка</h3><div class="eqs-bars">${r.ages.map(a => `<div class="eqs-bar"><span>${esc(a.name)}</span><i><u style="width:${a.count / maxA * 100}%"></u></i><b>${a.count} шт.</b></div>`).join("")}</div>
-        <h3>Дороже всего в содержании</h3>${r.top.length ? `<div class="eqs-ev">${r.top.slice(0, 5).map(g => `<button data-e="${esc(g.id)}">${EQX.wrench}<span><b>${esc(g.name)}</b><small>${esc([g.inv_number, `работ: ${g.works}`, g.repairs ? `ремонтов: ${g.repairs}` : ""].filter(Boolean).join(" · "))}</small></span><em>${eqMoney(g.cost)}</em></button>`).join("")}</div>` : `<div class="muted">Работ с суммой за год не было</div>`}</section></div>
-    <section class="eqs-card eqs-tcard"><h3 class="eqs-tch">${EQX.list}По категориям</h3><table class="tbl eqs-reg" id="anCat"><thead><tr><th>Категория</th><th class="num">Единиц</th><th class="num">Работ (ремонтов)</th><th class="num">Содержание за год</th>${mon ? '<th class="num">Амортизация за год</th><th class="num">Итого затрат</th>' : ""}</tr></thead><tbody>${r.by_category.map(c => `<tr>
-      <td><b>${esc(c.name)}</b></td><td class="num">${c.count}</td><td class="num">${c.repairs}</td><td class="num">${eqMoney(c.keep)}</td>${mon ? `<td class="num">${eqMoney(c.amort)}</td><td class="num"><b>${eqMoney(c.keep + c.amort)}</b></td>` : ""}</tr>`).join("")}</tbody></table></section></div>`;
+    <div class="eqs-head eqs-hico"><i>${EQN.amort}</i><div><h2>Аналитика и отчёты</h2><span class="muted">Анализ использования, затрат, амортизации и эффективности оборудования</span></div><span class="grow"></span>${eqYearSel("anYear", r.year)}</div>
+    <div class="eqs-tiles eqs-tiles5">${tiles}</div>
+    <div class="eqs-g3a">
+      <section class="eqs-card"><h3>${mon ? "Динамика стоимости и амортизации" : "Работы по месяцам"}</h3>${mon ? (r.dynamics.length ? eqLineChart(r.dynamics, [{key: "cost", cls: "s1", title: "Общая стоимость"}, {key: "residual", cls: "s2", title: "Остаточная стоимость"}, {key: "accumulated", cls: "s3", title: "Накопленная амортизация"}]) : `<div class="muted">Год ещё не начался</div>`)
+        : `<div class="eqs-bars">${topc.length ? r.by_category.filter(x => x.works).map(x => `<div class="eqs-bar"><span>${esc(x.name)}</span><i><u style="width:${x.works / topMax * 100}%"></u></i><b>${x.works}</b></div>`).join("") : `<div class="muted">Работ за год не было</div>`}</div>`}</section>
+      <section class="eqs-card"><h3>Распределение по категориям <small class="muted">(${mon ? "стоимость" : "количество"})</small></h3>${parts.length ? `<div class="eqs-ringrow">${eqRing(parts.map((x, i) => ({value: pv(x), cls: "c" + (i + 1)})), mon ? eqShortMoney(ptot).replace(" ₽", "") : ptot, mon ? "₽" : "единиц")}
+        <ul class="eqs-legend">${parts.map((x, i) => `<li class="c${i + 1}"><span>${esc(x.name)}</span><b>${pct(pv(x), ptot)}</b></li>`).join("")}</ul></div>` : `<div class="muted">Оборудования пока нет</div>`}</section>
+      <section class="eqs-card"><h3>Статус оборудования</h3><div class="eqs-ringrow">${eqRing([{value: c.ok, cls: "ok"}, {value: c.service, cls: "warn"}, {value: c.faulty, cls: "bad"}], tot, "единиц")}
+        <ul class="eqs-legend"><li class="ok"><span>Исправно</span><b>${c.ok} (${pct(c.ok, tot)})</b></li><li class="warn"><span>На обслуживании</span><b>${c.service} (${pct(c.service, tot)})</b></li><li class="bad"><span>Требует ремонта</span><b>${c.faulty} (${pct(c.faulty, tot)})</b></li></ul></div></section></div>
+    <div class="eqs-g3a">
+      <section class="eqs-card"><h3>${mon ? "Топ затрат на обслуживание и ремонт" : "Больше всего работ"}</h3>${topc.length ? `<div class="eqs-bars">${topc.map(x => `<div class="eqs-bar"><span>${esc(x.name)}</span><i><u style="width:${(mon ? x.keep : x.works) / topMax * 100}%"></u></i><b>${mon ? eqMoney(x.keep) : x.works + " раб."}</b></div>`).join("")}</div>` : `<div class="muted">За ${r.year} год ${mon ? "затрат" : "работ"} на обслуживание не было</div>`}</section>
+      <section class="eqs-card"><h3>${EQX.cal}Ближайшие события</h3>${r.events.length ? `<div class="eqs-evk">${r.events.map(x => `<div>${evIc[x.icon] || EQX.cal}<span>${esc(x.title)}</span><em>${eqShortDate(x.date)}</em><b>${x.count} ед.</b></div>`).join("")}</div><small class="muted">Ближайшая дата и сколько единиц на 90 дней вперёд</small>` : `<div class="muted">На 90 дней вперёд ничего не запланировано</div>`}</section>
+      <section class="eqs-card"><h3>${EQX.ok}Ключевые выводы</h3><ul class="eqs-concl">${r.conclusions.map(x => `<li class="${x.level}">${x.level === "warn" ? EQX.warn : x.level === "info" ? EQR.info : EQX.ok}<span>${esc(x.text)}</span></li>`).join("")}</ul></section></div>
+    <div class="eqs-g2e">
+      <section class="eqs-card eqs-tcard"><h3 class="eqs-tch">Эффективность использования оборудования</h3>
+        ${effRows.length ? `<table class="tbl eqs-reg eqs-efft"><thead><tr><th>Оборудование</th><th class="num">Наработка (ч)</th><th class="num">Простой (ч)</th><th class="num">Загрузка</th>${mon ? '<th class="num">Затраты (ТО/ремонт)</th><th class="num">Себестоимость часа</th>' : '<th class="num">Работ</th>'}</tr></thead><tbody>${effRows.map(x => `<tr data-e="${esc(x.id)}">
+          <td><div class="sn-mat sm">${phHtml(x.photo_id)}<span><b>${esc(x.name)}</b><small class="muted" style="display:block">${esc(x.inv_number)}${x.inv_number ? " · " : ""}${x.chair ? esc(x.chair) : "часы клиники"}</small></span></div></td>
+          <td class="num">${x.hours.toLocaleString("ru-RU")}</td><td class="num">${x.downtime.toLocaleString("ru-RU")}</td><td class="num">${loadPill(x.load)}</td>
+          ${mon ? `<td class="num">${eqMoney(x.cost)}</td><td class="num">${x.hour_cost != null ? eqMoney(x.hour_cost) : "—"}</td>` : `<td class="num">${x.works}</td>`}</tr>`).join("")}</tbody></table>
+          <div class="eqs-foot muted">Наработка — часы приёмов в кресле кабинета (без кресла — часы работы клиники)${info.data_from ? ` с ${fmtDateShort(info.data_from)}` : ""}; простой — дни заявок в работе; загрузка — к нормативу ${info.norm_day.toLocaleString("ru-RU")} ч в день.
+            ${info.linked ? "" : `<button class="linkbtn" id="anChairs">Привязать кресла к кабинетам</button>`} ${r.efficiency.length > effRows.length ? `<button class="linkbtn" id="anEffAll">Все ${r.efficiency.length} — в отчёте</button>` : ""}</div>`
+          : `<div class="empty"><b>Нет данных о работе</b><span>Наработка считается по приёмам Dentist Plus</span></div>`}</section>
+      <section class="eqs-card"><h3>${EQX.doc}Отчёты</h3><div class="eqs-reps">${reps.map(([k, t, ic]) => `<button data-rep="${k}" class="${k === cur ? "on" : ""}">${ic}<span>${t}</span>${EQX.chev}</button>`).join("")}</div>
+        <div class="eqs-row eqs-repb"><button class="btn" id="anMake">${EQX.down}Сформировать отчёт</button><button class="btn ghost" id="anXls">${EQX.doc}Экспорт в Excel</button><button class="btn ghost" id="anPrint">${PRINT_ICON}Печать</button></div></section></div>
+    <div id="anHidden" hidden></div></div>`;
+  loadThumbs(body);
   $("#anYear").onchange = e => { EQS.anYear = +e.target.value; eqAnalyticsTab(); };
-  $$("[data-e]", body).forEach(b => b.onclick = () => openEquipment(b.dataset.e));
-  $("#anPrint").onclick = () => { $("#printArea").innerHTML = `<h2>Оборудование: стоимость содержания за ${r.year} год</h2><p>Содержание: ${eqMoney(r.keep)} (ТО ${eqMoney(r.service)}, ремонт ${eqMoney(r.repair)}, диагностика ${eqMoney(r.diag)})${mon ? `; амортизация: ${eqMoney(r.amort)}` : ""}</p>${$("#anCat").outerHTML}`; window.print(); };
+  $$("tr[data-e]", body).forEach(b => b.onclick = () => openEquipment(b.dataset.e));
+  $$("[data-rep]", body).forEach(b => b.onclick = () => { EQS.anRep = b.dataset.rep; $$("[data-rep]", body).forEach(x => x.classList.toggle("on", x === b)); eqReportShow(b.dataset.rep); });
+  $("#anMake").onclick = () => eqReportShow(EQS.anRep || cur);
+  $("#anXls").onclick = async () => { const x = await eqReportData(EQS.anRep || cur); $("#anHidden").innerHTML = eqReportTable(x, "anX"); exportTable(x.title, "#anX"); };
+  $("#anPrint").onclick = async () => eqReportPrint(await eqReportData(EQS.anRep || cur));
+  const ch = $("#anChairs"); if (ch) ch.onclick = async () => { if (!EQS.refs) EQS.refs = await api.equipment_refs(); eqRefEdit("places"); };
+  const all = $("#anEffAll"); if (all) all.onclick = () => { EQS.anRep = "eff"; eqReportShow("eff"); };
+}
+function eqReportsList(mon) {
+  return [["equip", "Отчёт по оборудованию", EQN.amort], ["inv", "Инвентаризационная ведомость", EQR.layers], mon && ["amort", "Отчёт по амортизации", EQN.amort],
+    ["renew", "Список на замену / обновление", EQX.cycle], ["costs", "Затраты на обслуживание и ремонт", EQX.wrench],
+    canAny("equipment", "stock_view", "equipment_approve") && ["third", "Отчёт по стороннему оборудованию", EQR.house], ["eff", "Анализ загрузки и эффективности", EQX.clock],
+    ["mgmt", "Управленческий отчёт (сводный)", EQX.doc]].filter(Boolean);
+}
+/** The data of a report: {title, head, rows, note}. Money columns only when the server sent them (with «Бухгалтерия»). */
+async function eqReportData(k) {
+  const r = EQS.an, mon = !!r.money, y = r.year, d = fmtDate(iso(new Date()));
+  const life = n => n ? (n % 12 ? `${n} мес.` : `${n / 12} ${plural(n / 12, "год", "года", "лет")}`) : "—";
+  const cond = e => e.status === "repair" ? "В ремонте" : e.condition_title || "";
+  if (["equip", "inv", "amort"].includes(k)) {
+    const l = await api.equipment_list("", false);
+    if (k === "equip") return {title: `Отчёт по оборудованию на ${d}`, head: ["Инв. №", "Наименование", "Категория", "Производитель, модель", "Место", "Состояние", "Принадлежность", ...(mon ? ["Стоимость", "Остаточная стоимость"] : [])],
+      rows: l.map(e => [e.inv_number, e.name, e.category, [e.manufacturer, e.model].filter(Boolean).join(" "), e.location_name, cond(e), e.ownership_title, ...(mon ? [eqMoney(e.price), e.amort && e.amort.on ? eqMoney(e.amort.residual) : eqMoney(e.price)] : [])])};
+    if (k === "inv") return {title: `Инвентаризационная ведомость на ${d}`, head: ["№", "Инв. №", "Наименование", "Серийный №", "Место", "Последняя проверка", "Фактически есть", "Отметка комиссии"],
+      rows: l.map((e, i) => [i + 1, e.inv_number, e.name, e.serial, e.location_name, e.last_inventory_date ? fmtDateShort(e.last_inventory_date) : "—", "", ""]), sign: true};
+    return {title: `Отчёт по амортизации на ${d}`, head: ["Инв. №", "Наименование", "Стоимость", "Срок", "В месяц", "Накоплено", "Остаточная", "Износ"],
+      rows: l.filter(e => e.amort && e.amort.on).map(e => [e.inv_number, e.name, eqMoney(e.price), life(e.useful_months), eqMoney(e.amort.monthly), eqMoney(e.amort.accumulated), eqMoney(e.amort.residual), `${e.amort.percent} %`]),
+      note: "Линейный метод; оборудование без срока службы, количественного учёта и стороннее не амортизируется."};
+  }
+  if (k === "renew") return {title: `Список на замену и обновление в ${y + 1} году`, head: ["Инв. №", "Наименование", "Категория", "Причина", "Неисправно", ...(mon ? ["Стоимость", "Остаточная"] : [])],
+    rows: r.renew.map(x => [x.inv_number, x.name, x.category, x.why, x.faulty ? "да" : "", ...(mon ? [eqMoney(x.price), eqMoney(x.residual)] : [])]),
+    note: "Срок службы заканчивается до конца следующего года или замена запланирована на него."};
+  if (k === "costs") return {title: `Затраты на обслуживание и ремонт за ${y} год`, head: ["Оборудование", "Инв. №", "Категория", "Работ", ...(mon ? ["Затраты", "Амортизация за год"] : [])],
+    rows: r.efficiency.filter(x => x.works).sort((a, b) => mon ? b.cost - a.cost : b.works - a.works).map(x => [x.name, x.inv_number, x.category, x.works, ...(mon ? [eqMoney(x.cost), eqMoney(x.amort)] : [])]),
+    note: mon ? `Всего: ТО ${eqMoney(r.service)}, ремонт ${eqMoney(r.repair)}, диагностика ${eqMoney(r.diag)}.` : ""};
+  if (k === "third") { const t = await api.equipment_third_party();
+    return {title: `Стороннее оборудование на ${d}`, head: ["Оборудование", "Инв. №", "Тип", "Владелец / контрагент", "Договор", "Начало", "Окончание", "Статус"],
+      rows: t.rows.map(x => [x.name, x.inv_number, x.ownership_title, x.contractor, x.contract_no, x.start ? fmtDateShort(x.start) : "", x.end ? fmtDateShort(x.end) : "бессрочно", x.status_title])}; }
+  if (k === "eff") return {title: `Загрузка и эффективность оборудования за ${y} год`, head: ["Оборудование", "Инв. №", "Источник наработки", "Наработка, ч", "Простой, ч", "Норматив, ч", "Загрузка", ...(mon ? ["Затраты", "Себестоимость часа"] : [])],
+    rows: r.efficiency.map(x => [x.name, x.inv_number, x.chair || "часы клиники", x.hours, x.downtime, x.norm, x.load == null ? "—" : `${x.load} %`, ...(mon ? [eqMoney(x.cost), x.hour_cost != null ? eqMoney(x.hour_cost) : "—"] : [])]),
+    note: "Наработка — часы приёмов в кресле кабинета; простой — дни заявок в работе × часы кресла в день; загрузка = наработка ÷ (норматив − простой)."};
+  const M = r.money || {};
+  return {title: `Управленческий отчёт по оборудованию за ${y} год`, head: ["Показатель", "Значение"],
+    rows: [["Количество оборудования", `${r.count} (в ${y - 1}: ${r.count_prev})`], ...(r.money ? [["Общая стоимость", eqMoney(M.cost)], ["Остаточная стоимость", eqMoney(M.residual)], ["Накопленная амортизация", eqMoney(M.accumulated)],
+      ["Степень износа", `${M.wear} %`], ["Амортизация за год", eqMoney(r.amort)], ["Затраты на обслуживание за год", eqMoney(r.keep)]] : []),
+      ["Исправно / на обслуживании / требует ремонта", `${r.condition.ok} / ${r.condition.service} / ${r.condition.faulty}`], ["Работ за год (ремонтов)", `${r.works} (${r.repairs})`],
+      ...r.events.map(x => [x.title, `${fmtDateShort(x.date)}, ${x.count} ед.`]), ...r.conclusions.map(x => ["Вывод", x.text]),
+      ...r.by_category.map(x => [`Категория «${x.name}»`, `${x.count} ед.${mon ? `, содержание ${eqMoney(x.keep)}, амортизация ${eqMoney(x.amort)}` : ""}`])]};
+}
+const eqReportTable = (x, id) => `<table class="tbl compact eqs-reg" id="${id}"><thead><tr>${x.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${x.rows.map(row => `<tr>${row.map(v => `<td>${esc(v ?? "")}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${x.head.length}" class="muted">Нет данных</td></tr>`}</tbody></table>`;
+async function eqReportPrint(x) {
+  $("#printArea").innerHTML = `${await clinicHead()}<h2 style="text-align:center">${esc(x.title)}</h2>${eqReportTable(x, "prX")}${x.note ? `<p>${esc(x.note)}</p>` : ""}${x.sign ? signLines([{role: "Председатель комиссии"}, {role: "Член комиссии"}, {role: "Член комиссии"}]) : ""}`;
+  window.print();
+}
+async function eqReportShow(k) {
+  let x; try { x = await eqReportData(k); } catch (e) { return toast(errText(e), true); }
+  const box = modal(`<div class="m-h"><h3>${esc(x.title)}</h3><button class="x" data-close>×</button></div>
+    <div class="m-b"><div class="eqs-etw">${eqReportTable(x, "eqRepT")}</div>${x.note ? `<div class="muted eqs-hint">${esc(x.note)}</div>` : ""}</div>
+    <div class="m-f"><span class="muted">${x.rows.length} ${plural(x.rows.length, "строка", "строки", "строк")}</span><span class="grow"></span><button class="btn ghost" data-xls="#eqRepT" data-xls-name="${esc(x.title)}">${EQX.down}Excel</button><button class="btn ghost" id="repPr">${PRINT_ICON}Печать</button><button class="btn" data-close>Закрыть</button></div>`, {wide: true});
+  $("#repPr", box).onclick = () => eqReportPrint(x);
 }
 
 /* ------------------------------------------------------------ «Справочники и настройки» (3.16, mockup 10) */

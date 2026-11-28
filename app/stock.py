@@ -2735,9 +2735,125 @@ class Stock:
                 "warranty": warr, "missing": [m for m in missing if m["lack"]]}
 
     # ------------------------------------------------------ 3.15: «Аналитика» --
+    _VISIT_OFF = re.compile(r"отмен|cancel|удал|не\s*приш|неявк|no.?show", re.I)
+
+    def _visit_hours(self, y):
+        """3.16 «наработка»: the hours of the appointments of year `y` that have begun (not cancelled, not «не пришёл») — by chair of
+        Dentist Plus and for the whole clinic (the union of all appointments: when at least one went on), by day."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        chairs, clinic = {}, {}
+        rows = []
+        if self._has("visits_archive"):
+            rows += [(r["start"], r["end"], r["chair"] or "", r["status"] or "") for r in self.db.q(
+                """SELECT start, "end", chair, status FROM visits_archive WHERE substr(start,1,4)=? AND start < ?""", (str(y), now))]
+        if self._has("local_visits"):  # made in the program and not yet in Dentist Plus: the clinic's hours only
+            rows += [(r["start"], r["end"], "", r["status"] or "") for r in self.db.q(
+                """SELECT start, "end", status FROM local_visits WHERE substr(start,1,4)=? AND start < ? AND COALESCE(transferred,0)=0""",
+                (str(y), now))]
+
+        def mins(s):
+            s = str(s or "")
+            return int(s[11:13]) * 60 + int(s[14:16]) if len(s) >= 16 and s[11:13].isdigit() and s[14:16].isdigit() else None
+        per = {}
+        for st, en, ch, status in rows:
+            if self._VISIT_OFF.search(status):
+                continue
+            a, b = mins(st), mins(en)
+            if a is None or b is None or b <= a:
+                continue
+            per.setdefault((st[:10], ch), []).append((a, b))
+            per.setdefault((st[:10], None), []).append((a, b))
+
+        def union(iv):
+            iv.sort()
+            tot, cs, ce = 0, None, None
+            for a, b in iv:
+                if cs is None or a > ce:
+                    tot += (ce - cs) if cs is not None else 0
+                    cs, ce = a, b
+                else:
+                    ce = max(ce, b)
+            return (tot + (ce - cs if cs is not None else 0)) / 60
+        for (d, ch), iv in per.items():
+            h = union(iv)
+            if ch is None:
+                clinic[d] = h
+            elif ch:
+                chairs.setdefault(ch, {})[d] = h
+        return chairs, clinic
+
+    def eq_efficiency(self, y, money=True):
+        """3.16 «Эффективность использования» (rules in the plan of 3.16): the runtime from the appointments in the chair of the
+        piece's cabinet (the clinic's hours for the common equipment), the downtime — the days of the requests in work, the load
+        against the norm of «часы кресла в месяц», the costs of service and repair and the cost of an hour (money only with
+        «Бухгалтерия»)."""
+        t = date.today()
+        y0, y1 = date(y, 1, 1), min(date(y, 12, 31), t)
+        if y1 < y0:
+            return {"rows": [], "chairs": [], "norm_day": 0}
+        chairs, clinic = self._visit_hours(y)
+        per_day = self.chair_hours() * 12 / 365
+        # the appointments the program keeps may start later than the year (the window of Dentist Plus): the norm and the
+        # downtime are counted from the first day with appointments, so the load is not understated
+        first = min(clinic) if clinic else None
+        if first:
+            y0 = max(y0, date.fromisoformat(first))
+        places = {p["id"]: p["chair"] or "" for p in self.db.q("SELECT id, chair FROM stock_locations")}
+        cost = {}
+        for r in self.db.q("""SELECT equipment_id, COALESCE(SUM(cost),0) AS c, COUNT(*) AS n FROM equipment_events WHERE kind IN ('service','repair','diag')
+                              AND substr(date,1,4)=? GROUP BY equipment_id""", (str(y),)):
+            cost[r["equipment_id"]] = (r["c"] or 0, r["n"])
+        down = {}
+        for r in self.db.q("""SELECT equipment_id, started_at, done_at, status FROM equipment_requests WHERE COALESCE(started_at,'')<>''
+                              AND status IN ('work','done')"""):
+            try:
+                a = date.fromisoformat(r["started_at"][:10])
+                b = date.fromisoformat(r["done_at"][:10]) if r["status"] == "done" and r["done_at"] else t
+            except ValueError:
+                continue
+            a, b = max(a, y0), min(b, y1)
+            if b >= a:
+                down.setdefault(r["equipment_id"], []).append((a, b))
+        months = [f"{y}-{m:02d}" for m in range(1, 13)]
+        out = []
+        for e in self.db.q("SELECT * FROM equipment"):
+            start = e.get("in_service") or e.get("purchase_date") or (e.get("created_at") or "")[:10]
+            try:
+                s0 = max(y0, date.fromisoformat(start[:10])) if start else y0
+                s1 = min(y1, date.fromisoformat(e["writeoff_date"][:10])) if e["status"] == "written_off" and e.get("writeoff_date") else y1
+            except ValueError:
+                continue
+            if s1 < s0:
+                continue
+            chair = places.get(e.get("location_id") or "", "")
+            src = chairs.get(chair, {}) if chair else clinic
+            lo, hi = s0.isoformat(), s1.isoformat()
+            hours = round(sum(h for d, h in src.items() if lo <= d <= hi), 1)
+            ddays = set()
+            for a, b in down.get(e["id"], []):
+                a, b = max(a, s0), min(b, s1)
+                ddays.update(a + timedelta(days=i) for i in range((b - a).days + 1)) if b >= a else None
+            downtime = round(len(ddays) * per_day, 1)
+            norm = round(((s1 - s0).days + 1) * per_day, 1)
+            avail = norm - downtime
+            c, n = cost.get(e["id"], (0, 0))
+            row = {"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "", "photo_id": e.get("photo_id") or "",
+                   "category": e["category"] or "", "chair": chair, "source": chair or "клиника", "hours": hours, "downtime": downtime,
+                   "norm": norm, "load": round(hours * 100 / avail, 1) if avail > 0 and first else None, "works": n,
+                   "status": e["status"]}
+            if money:
+                am = round(sum(amort_charge(e, m) for m in months), 2) if on_books(e) else 0.0
+                row.update(cost=round(c, 2), amort=am, hour_cost=round((c + am) / hours, 2) if hours else None)
+            out.append(row)
+        out.sort(key=lambda r: (-r["hours"], r["name"]))
+        return {"rows": out, "chairs": sorted(chairs), "norm_day": round(per_day, 2), "linked": sum(1 for v in places.values() if v),
+                "data_from": first or ""}
+
     def eq_analytics(self, year=None, money=True):
         """What the equipment costs to keep: service, repair and diagnostics by month and by category, the most expensive pieces to
-        maintain, the age of the fleet, the depreciation of the year and per chair hour (money only with «Бухгалтерия»)."""
+        maintain, the age of the fleet, the depreciation of the year and per chair hour (money only with «Бухгалтерия»).
+        3.16 (mockup 12): the tiles against the year before, the cost, the book value and the depreciation by month, the share of the
+        categories, the condition, the nearest events by kind, the conclusions by rules, the efficiency of use, what to renew."""
         t = date.today()
         y = int(year or t.year)
         eqs = {e["id"]: e for e in self.db.q("SELECT * FROM equipment")}
@@ -2750,9 +2866,10 @@ class Stock:
             by_m[mi][x["kind"]] = round(by_m[mi][x["kind"]] + (x["cost"] or 0), 2)
             e = eqs.get(x["equipment_id"]) or {}
             c = cats.setdefault(e.get("category") or "Без категории", {"name": e.get("category") or "Без категории", "count": 0, "keep": 0.0,
-                                                                        "repairs": 0, "amort": 0.0})
+                                                                        "repairs": 0, "amort": 0.0, "works": 0})
             c["keep"] = round(c["keep"] + (x["cost"] or 0), 2)
             c["repairs"] += 1 if x["kind"] == "repair" else 0
+            c["works"] += 1
             g = top.setdefault(x["equipment_id"], {"id": x["equipment_id"], "name": e.get("name") or "—", "inv_number": e.get("inv_number") or "",
                                                    "cost": 0.0, "repairs": 0, "works": 0})
             g["cost"] = round(g["cost"] + (x["cost"] or 0), 2)
@@ -2764,7 +2881,8 @@ class Stock:
         for e in eqs.values():
             if e["status"] == "written_off":
                 continue
-            c = cats.setdefault(e["category"] or "Без категории", {"name": e["category"] or "Без категории", "count": 0, "keep": 0.0, "repairs": 0, "amort": 0.0})
+            c = cats.setdefault(e["category"] or "Без категории", {"name": e["category"] or "Без категории", "count": 0, "keep": 0.0, "repairs": 0,
+                                                                  "amort": 0.0, "works": 0})
             c["count"] += 1
             if on_books(e):
                 a_ = round(sum(amort_charge(e, m) for m in months), 2)
@@ -2782,16 +2900,126 @@ class Stock:
                "repairs": sum(1 for x in ev if x["kind"] == "repair"), "works": len(ev),
                "by_category": sorted(cats.values(), key=lambda c: (-c["keep"], -c["count"])), "top": sorted(top.values(), key=lambda g: -g["cost"])[:8],
                "ages": [{"name": k, "count": v} for k, v in ages.items() if v or k != "дата не указана"]}
+        # 3.16: the fleet at the end of the year (today for this one) and of the year before
+        def alive(e, day):
+            st = e.get("in_service") or e.get("purchase_date") or (e.get("created_at") or "")[:10]
+            if st and st[:10] > day:
+                return False
+            return not (e["status"] == "written_off" and (e.get("writeoff_date") or "") <= day)
+        end = min(date(y, 12, 31), t).isoformat()
+        prev_end = date(y - 1, 12, 31).isoformat()
+        now_l = [e for e in eqs.values() if alive(e, end)]
+        prev_l = [e for e in eqs.values() if alive(e, prev_end)]
+        out["count"] = sum(e.get("qty") or 1 for e in now_l)
+        out["count_prev"] = sum(e.get("qty") or 1 for e in prev_l)
+        ov = self.equipment_overview(money=money)
+        out["condition"] = ov["condition"]
+        out["cat_share"] = [{"name": g["name"], "count": g["count"], **({"cost": g["cost"], "share": g["share"]} if money else {})} for g in ov["by_category"]]
+        lim = (t + timedelta(days=90)).isoformat()
+        kinds = {}
+        sched = self.eq_schedule()
+        live_ids = {e["id"] for e in eqs.values() if e["status"] != "written_off"}
+        add = lambda k, title, icon, d, eid: kinds.setdefault(k, {"kind": k, "title": title, "icon": icon, "dates": [], "ids": set()}) and (  # noqa: E731
+            kinds[k]["dates"].append(d), kinds[k]["ids"].add(eid))
+        for x in sched:
+            if t.isoformat() <= x["date"] <= lim:
+                add("service" if x["kind"] == "service" else "verify", "Плановое ТО" if x["kind"] == "service" else "Поверка и осмотр",
+                    "wrench" if x["kind"] == "service" else "check", x["date"], x["equipment_id"])
+        for e in eqs.values():
+            if e["id"] not in live_ids:
+                continue
+            if e.get("replace_date") and t.isoformat() <= e["replace_date"] <= lim:
+                add("replace", "Замена / ремонт", "cycle", e["replace_date"], e["id"])
+            if e.get("use_end") and t.isoformat() <= e["use_end"] <= lim:
+                add("use_end", {"lease": "Окончание аренды", "leasing": "Завершение лизинга"}.get(e["ownership"], "Окончание аренды"), "clock", e["use_end"], e["id"])
+            if e.get("warranty_until") and t.isoformat() <= e["warranty_until"] <= lim:
+                add("warranty", "Окончание гарантии", "ok", e["warranty_until"], e["id"])
+        for r in self.db.q("SELECT equipment_id, due FROM equipment_requests WHERE status IN ('new','work') AND kind='repair' AND COALESCE(due,'')<>''"):
+            if r["equipment_id"] in live_ids and r["due"] <= lim:
+                add("replace", "Замена / ремонт", "cycle", max(r["due"], t.isoformat()), r["equipment_id"])
+        order = ["service", "replace", "use_end", "warranty", "verify"]
+        out["events"] = [{"kind": k["kind"], "title": k["title"], "icon": k["icon"], "date": min(k["dates"]), "count": len(k["ids"])}
+                         for k in sorted(kinds.values(), key=lambda k: order.index(k["kind"]))]
+        # to renew next year: the useful life runs out by its end, or the replacement is planned for it
+        nxt = date(y + 1, 12, 31).isoformat()
+        renew = []
+        for e in eqs.values():
+            if e["id"] not in live_ids or not on_books(e):
+                continue
+            a = amortization(e)
+            why = ""
+            if e.get("replace_date") and e["replace_date"] <= nxt:
+                why = f"Замена запланирована на {_fmt_val(e['replace_date'], 'd')}"
+            elif a["on"] and a["last"] and a["last"] <= nxt[:7]:
+                why = "Амортизирован полностью" if a["done"] else f"Срок службы истекает в {a['last'][5:7]}.{a['last'][:4]}"
+            if why:
+                renew.append({"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "", "category": e["category"] or "",
+                              "why": why, "faulty": e["status"] == "repair" or e.get("condition") == "faulty",
+                              **({"residual": a["residual"], "price": e["price"] or 0} if money else {})})
+        out["renew"] = sorted(renew, key=lambda r: (not r["faulty"], r["name"]))
+        eff = self.eq_efficiency(y, money)
+        out["efficiency"] = eff["rows"]
+        out["eff_info"] = {"chairs": eff["chairs"], "norm_day": eff["norm_day"], "linked": eff.get("linked", 0), "data_from": eff.get("data_from", "")}
+        # the conclusions — by rules (the plan of 3.16), never written by hand
+        con = []
+        faulty = out["condition"]["faulty"]
         if money:
             hours = self.chair_hours()
             out.update(amort=round(amort_y, 2), total=round(amort_y + keep, 2), chair_hours=hours,
                        chair_hour=round((self.amort_month(t.strftime("%Y-%m")) + keep / 12) / hours, 2) if hours else 0.0)
+            own_now = [e for e in now_l if on_books(e)]
+            own_prev = [e for e in prev_l if on_books(e)]
+            cost_now = round(sum(e["price"] or 0 for e in own_now), 2)
+            cost_prev = round(sum(e["price"] or 0 for e in own_prev), 2)
+            acc = round(sum(amortization(e, end[:7])["accumulated"] for e in own_now), 2)
+            base = round(sum(e["price"] or 0 for e in own_now if amortization(e, end[:7])["on"]), 2)
+            out["money"] = {"cost": cost_now, "cost_prev": cost_prev, "accumulated": acc, "residual": round(cost_now - acc, 2),
+                            "wear": round(acc * 100 / base, 1) if base else 0.0,
+                            "growth": round((cost_now - cost_prev) * 100 / cost_prev, 1) if cost_prev else None}
+            dyn = []
+            for m in months:
+                if m > t.strftime("%Y-%m"):
+                    break
+                day = f"{m}-{calendar.monthrange(int(m[:4]), int(m[5:]))[1]:02d}"
+                lst = [e for e in eqs.values() if on_books(e) and alive(e, day)]
+                cst = round(sum(e["price"] or 0 for e in lst), 2)
+                ac = round(sum(amortization(e, m)["accumulated"] for e in lst), 2)
+                dyn.append({"month": m, "cost": cst, "accumulated": ac, "residual": round(cst - ac, 2)})
+            out["dynamics"] = dyn
+            g = out["money"]["growth"]
+            if g is not None:
+                con.append({"level": "ok" if g >= 0 else "warn", "text": f"Рост стоимости оборудования: {'+' if g > 0 else ''}{g:g} %".replace(".", ",")})
+            w = out["money"]["wear"]
+            con.append({"level": "ok" if w < 50 else "warn", "text": f"Средняя степень износа: {w:g} % ({'норма' if w < 50 else 'высокая' if w < 75 else 'критическая'})".replace(".", ",")})
+            if cost_now:
+                sh = round(keep * 100 / cost_now, 1)
+                con.append({"level": "ok" if sh <= 5 else "warn", "text": f"Доля затрат на обслуживание: {sh:g} % от стоимости ({'норма' if sh <= 5 else 'повышенная' if sh <= 10 else 'высокая'})".replace(".", ",")})
         else:
             for c in out["by_category"]:
                 c.pop("amort", None)
+            for k in ("keep", "service", "repair", "diag"):
+                out.pop(k, None)
+            for m in out["by_month"]:
+                for k in ("service", "repair", "diag"):
+                    m.pop(k, None)
+            for g in out["top"]:
+                g.pop("cost", None)
+            out["top"].sort(key=lambda g: -g["works"])
+            cp = out["count_prev"]
+            if cp:
+                gr = round((out["count"] - cp) * 100 / cp, 1)
+                con.append({"level": "ok", "text": f"Количество оборудования к {y - 1} году: {'+' if gr > 0 else ''}{gr:g} %".replace(".", ",")})
+        con.append({"level": "warn" if faulty else "ok", "text": f"{faulty} {'единица требует' if faulty % 10 == 1 and faulty % 100 != 11 else 'единицы требуют' if 2 <= faulty % 10 <= 4 and not 12 <= faulty % 100 <= 14 else 'единиц требуют'} ремонта"
+                    if faulty else "Неисправного оборудования нет"})
+        if renew:
+            n = len(renew)
+            con.append({"level": "info", "text": f"Рекомендуется обновить {n} {'единицу' if n % 10 == 1 and n % 100 != 11 else 'единицы' if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 'единиц'} в {y + 1} году"})
+        low = [r for r in out["efficiency"] if r["load"] is not None and r["load"] < 30 and r["norm"] > 0 and r["status"] != "written_off" and r["hours"] > 0]
+        if low:
+            con.append({"level": "info", "text": f"Загрузка ниже 30 %: {', '.join(r['name'] for r in low[:3])}{'…' if len(low) > 3 else ''}"})
+        out["conclusions"] = con
         return out
 
-    # ------------------------------------------------------ 3.15: «Журнал действий» --
     # what each kind of event is in the log: (the action, its icon, the module)
     EQ_ACTIONS = {"created": ("Создание", "plus", "Оборудование"), "receipt": ("Поступление", "plus", "Поступление"),
                   "move": ("Перемещение", "move", "Перемещения"), "edit": ("Редактирование", "pen", "Оборудование"),
