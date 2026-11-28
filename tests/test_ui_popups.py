@@ -87,6 +87,26 @@ check("the popups are fixed to the window (no frame cuts them)",
 check("they follow the button while anything scrolls and when the window changes",
       'addEventListener("scroll", popsFollow, {capture: true, passive: true})' in app and 'addEventListener("resize", popsFollow)' in app)
 
+# ---- 2b. monitors of any width: bars of tabs keep one line, wide tables scroll inside their frame
+fit = body(app, "function tabsFit(")
+check("tabsFit: the open tab stays on the bar", 'if (tabs[i].classList.contains("on")) continue;' in fit)
+check("tabsFit: a tab in «Ещё» clicks the tab it stands for", "const t = tabs[+x.dataset.fit]; if (t) t.click();" in fit)
+check("tabsFit: fitted again when the window changes size", "FIT_BARS.forEach(b => { if (!b.isConnected) FIT_BARS.delete(b); else tabsFit(b); })" in app)
+stock_js = src["stock.js"]
+check("the stock, equipment and inventory bars are fitted (the equipment's into its own «Ещё»)",
+      'tabsFit(tabs, a.more ? $("#eqMoreMenu") : null)' in body(stock_js, "function stockHead(")
+      and 'tabsFit($("#stockTabs"))' in body(stock_js, "function stockSetTab("))
+check("the patient card's tabs are fitted", 'tabsFit($("#patientCard .tabs"))' in app)
+resp = src["responsive.js"]
+check("a table wider than its frame scrolls inside it at any width",
+      'box.classList.toggle("x", t.offsetWidth > box.clientWidth + 1)' in resp and "requestAnimationFrame(fit)" in resp
+      and ".tbl-scroll.x{overflow-x:auto}" in css and ".tbl-scroll.x>.tbl th{position:static}" in css)
+check("the narrow menu hides the two-line «Склад и материалы» too",
+      '@media (max-width:1180px){.rail .nav[data-view="stock"] span{display:none}}' in css
+      and '.app.rail-mini .rail .nav[data-view="stock"] span{display:none}' in css)
+eqcss = (UI / "styles-eqcard.css").read_text(encoding="utf-8")
+check("the tabs of a card fit a narrow column", ".eqc-main{container-type:inline-size}" in eqcss and "@container (max-width:780px)" in eqcss)
+
 # ---- 3. the geometry of popPlace(), run in node with a tiny window
 geo = app[app.index("function popPlace("):app.index("/** Shows a popup by its button")]
 JS = r"""

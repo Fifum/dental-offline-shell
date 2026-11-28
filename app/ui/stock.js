@@ -50,11 +50,13 @@ function stockHead(area) {
     S.eqOpen = null; S.matOpen = null;  // 3.13: a tab opens its list, not the card left open
     loadStock();
   });
+  tabsFit(tabs, a.more ? $("#eqMoreMenu") : null);  // 3.17.2: one line on any monitor, the rest under «Ещё»
 }
 function stockSetTab(tab) {
   S.stockTab = tab; S.stockTabs[S.stockArea || "stock"] = tab;
   $$("#stockTabs button[data-k]").forEach(x => x.classList.toggle("on", x.dataset.k === tab));
   eqNavMark();
+  tabsFit($("#stockTabs"));  // the tab opened from «Ещё» comes back onto the bar
 }
 /** 3.15: «Ещё» shows the name of the tab opened from it. */
 function eqNavMark() {
@@ -93,6 +95,7 @@ function stockTabsByRights() {
   S.stockTabs[S.stockArea] = S.stockTab;
   $$("#stockTabs button[data-k]").forEach(b => b.classList.toggle("on", b.dataset.k === S.stockTab));
   eqNavMark();
+  tabsFit($("#stockTabs"));  // 3.17.2: after the rights: only the tabs this employee sees take room
 }
 
 async function loadStock() {

@@ -218,6 +218,56 @@ function popsFollow(e) {
 }
 addEventListener("scroll", popsFollow, {capture: true, passive: true});
 addEventListener("resize", popsFollow);
+document.addEventListener("animationend", () => { if (POPS.size) popsFollow(); }, true);  // a view that slid in stops moving its menus
+
+/* 3.17.2: a bar of tabs too wide for its window keeps one line: the last tabs that do not fit go into «Ещё» (the open
+   tab always stays on the bar) instead of wrapping to a second line or being cut. `menu` is a «Ещё» menu the bar
+   already has (the equipment's); without it the bar gets its own. A tab in the menu clicks the tab it stands for. */
+const FIT_BARS = new Set();
+function tabsFit(bar, menu) {
+  if (!bar || !bar.isConnected) return;
+  FIT_BARS.add(bar); bar._fitMenu = menu || bar._fitMenu || null;
+  if (!bar.offsetParent) return;  // a hidden view: fitted when it is drawn again
+  // the tabs this employee may see (rights hide the others with `hidden`); the ones put away here wear .fit-out
+  const tabs = [...bar.querySelectorAll(":scope > button[data-k], :scope > button[data-t]")].filter(b => !b.hidden);
+  let own = bar.querySelector(":scope > .tabs-more"), list;
+  if (!bar._fitMenu && !own) {
+    own = document.createElement("span"); own.className = "tabs-more"; own.hidden = true;
+    own.innerHTML = `<button type="button" class="tabs-mb"><span>Ещё</span><svg viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></svg></button><span class="tabs-menu" hidden></span>`;
+    bar.appendChild(own);
+    const b = own.firstElementChild, m = own.lastElementChild;
+    b.onclick = ev => { ev.stopPropagation(); m.hidden = !m.hidden; if (!m.hidden) { popOpen(m, b, {align: "end"}); setTimeout(() => document.addEventListener("click", () => { m.hidden = true; }, {once: true})); } };
+  }
+  list = bar._fitMenu || own.lastElementChild;
+  $$(":scope > [data-fit]", list).forEach(x => x.remove());
+  $$(":scope > .fit-out", bar).forEach(b => b.classList.remove("fit-out"));
+  if (own) own.hidden = true;
+  const others = [...bar.children].filter(x => !tabs.includes(x) && x !== own && !x.hidden && !x.matches("button[data-k], button[data-t]")
+    && x.getClientRects().length && !/absolute|fixed/.test(getComputedStyle(x).position));
+  const oneLine = () => {
+    const shown = [...tabs.filter(b => !b.classList.contains("fit-out")), ...others, ...(own && !own.hidden ? [own] : [])];
+    if (!shown.length) return true;
+    const t = shown.map(x => x.getBoundingClientRect()), top = Math.min(...t.map(r => r.top));
+    return t.every(r => r.top < top + r.height / 2) && bar.scrollWidth <= bar.clientWidth + 1;
+  };
+  const gone = [];
+  for (let i = tabs.length - 1; i > 0 && !oneLine(); i--) {
+    if (tabs[i].classList.contains("on")) continue;
+    tabs[i].classList.add("fit-out"); gone.unshift(tabs[i]);
+    if (own) own.hidden = false;
+  }
+  if (!gone.length) return;
+  list.insertAdjacentHTML("afterbegin", gone.map(b => `<button type="button" data-fit="${tabs.indexOf(b)}">${esc(b.firstChild && b.firstChild.nodeType === 3 ? b.firstChild.textContent.trim() : b.textContent.trim())}${b.querySelector(".cnt") && b.querySelector(".cnt").textContent ? ` <small class="muted">${esc(b.querySelector(".cnt").textContent)}</small>` : ""}</button>`).join(""));
+  $$(":scope > [data-fit]", list).forEach(x => x.onclick = ev => {
+    ev.stopPropagation(); list.hidden = true;
+    const t = tabs[+x.dataset.fit]; if (t) t.click();
+  });
+}
+let fitQueued = false;
+addEventListener("resize", () => {
+  if (fitQueued) return; fitQueued = true;
+  requestAnimationFrame(() => { fitQueued = false; FIT_BARS.forEach(b => { if (!b.isConnected) FIT_BARS.delete(b); else tabsFit(b); }); });
+});
 let REF = null;
 async function ref(force) { if (!REF || force) REF = await api.reference(); return REF; }
 const $ = (s, el = document) => el.querySelector(s);
@@ -1208,6 +1258,7 @@ function renderPatient(tab) {
   const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   on("#backBtn", () => show(S.prevView === "schedule" ? "schedule" : "patients"));
   $$("#patientCard .tab").forEach(b => b.onclick = () => renderPatient(b.dataset.t));
+  tabsFit($("#patientCard .tabs"));  // 3.17.2: one line of tabs on any monitor, the rest under «Ещё»
   $$("#patientCard .dd").forEach(dd => { $(".dd-btn", dd).onclick = e => { e.stopPropagation(); ddToggle(dd); }; });
   const book = () => openBooking({patient_id: p.id, patient_name: p.name, start: `${S.day} ${pad(Math.min(20, new Date().getHours() + 1))}:00`});
   const actions = {visit: book, rec: () => openRecord({...ctx, date: iso(new Date())}), plan: () => openInvoice({...ctx, kind: "plan"}),
