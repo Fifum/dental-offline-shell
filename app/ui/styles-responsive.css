@@ -146,3 +146,4 @@
    onto a line of its own */
 .stat-row>.stat{container-type:inline-size;min-width:0}
 @container (max-width:190px){.stat-row>.stat>b{font-size:18px;white-space:nowrap}}
+@container (max-width:135px){.stat-row>.stat>b{font-size:16px}}
