@@ -432,12 +432,28 @@ class Api:
     def write_off_equipment(self, f):
         return self.equipment(self._stock.write_off_equipment(f, self._who(), self._eq_money()))
 
-    def equipment_doc_add(self, eid, kind, name, data_b64, title=""):
+    def equipment_doc_add(self, eid, kind, name, data_b64, title="", meta=None):
+        """A document or a photo of the card. 3.16: `meta` — the number, the date, the term and the counterparty of a document
+        («Добавить документ» of the section «Документы»)."""
         import files
         self._stock._eq_live(eid)  # nothing is stored for a piece that is gone
+        if isinstance(meta, dict) and meta:  # checked before the file is stored
+            from stock import _day
+            dd_ = {k: _day(meta[k], t) for k, t in (("doc_date", "Дата документа"), ("valid_until", "Срок действия")) if meta.get(k)}
+            if len(dd_) == 2 and dd_["valid_until"] < dd_["doc_date"]:
+                raise ValueError("Срок действия раньше даты документа")
         fr = self._files.add_stock_file(name, files.b64_bytes(data_b64), self._who())
-        self._stock.equipment_doc_add(eid, kind, title or fr.get("title") or name, fr["id"], self._who())
+        did = self._stock.equipment_doc_add(eid, kind, title or fr.get("title") or name, fr["id"], self._who())
+        if isinstance(meta, dict) and meta:
+            self._stock.equipment_doc_save(did, {k: meta[k] for k in ("number", "doc_date", "valid_until", "counterparty") if k in meta}, self._who())
         return self.equipment(eid)
+
+    # 3.16 «Документы» (mockup 13)
+    def equipment_doc_save(self, did, f):
+        return self._stock.equipment_doc_save(did, f, self._who())
+
+    def equipment_doc_archive(self, ids, on=True):
+        return self._stock.equipment_doc_archive(ids, bool(on), self._who())
 
     def equipment_doc_delete(self, did):
         return self.equipment(self._stock.equipment_doc_delete(did, self._who()))

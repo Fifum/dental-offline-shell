@@ -267,6 +267,52 @@ for part in ("Динамика стоимости и амортизации", "�
              "Инвентаризационная ведомость", "Управленческий отчёт (сводный)"):
     check(f"UI analytics: {part}", part in sec)
 
+# ================================================ block 4: «Документы» --
+PDF = "data:application/pdf;base64,JVBERi0xLjQKJSVFT0YK"
+PNG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+check("new kinds of documents", {"cert", "license", "report", "manual", "lease_contract", "service_contract"} <= set(stockm.EQ_DOC_KINDS)
+      and "photo" in stockm.EQ_DOC_KINDS and len(stockm.EQ_DOC_MAIN) == 8)
+a.equipment_doc_add(eid, "contract", "Договор.pdf", PDF, "Договор поставки",
+                    {"number": "ДП-056/26", "doc_date": day(7), "valid_until": ahead(400), "counterparty": "ООО «МедОборудование»"})
+a.equipment_doc_add(eid, "cert", "Сертификат.pdf", PDF, "Сертификат соответствия", {"doc_date": day(500), "valid_until": ahead(10)})
+a.equipment_doc_add(eid, "warranty", "Гарантия.pdf", PDF, "Гарантийный талон", {"valid_until": day(3)})
+a.equipment_doc_add(eid, "photo", "Фото.png", PNG)
+refuses("a term before the date", lambda: a.equipment_doc_add(eid, "act", "Акт.pdf", PDF, "Акт", {"doc_date": day(1), "valid_until": day(10)}), "раньше")
+refuses("a wrong date", lambda: a.equipment_doc_add(eid, "act", "Акт.pdf", PDF, "Акт", {"doc_date": "32.13.2026"}), "Дата документа")
+check("a refused document is not stored", not d.one("SELECT 1 AS x FROM equipment_docs WHERE equipment_id=? AND title='Акт'", (eid,)))
+dd = a.equipment_all_docs()
+mine = {x["title"]: x for x in dd["docs"] if x["equipment_id"] == eid}
+check("the photos stay in the gallery", not any(x["kind"] == "photo" for x in dd["docs"]) and "photo" not in dd["kinds"])
+c_ = mine["Договор поставки"]
+check("the number, date, term and counterparty", c_["number"] == "ДП-056/26" and c_["doc_date"] == day(7) and c_["counterparty"] == "ООО «МедОборудование»"
+      and c_["status"] == "active" and c_["cat"] == "contracts" and c_["cat_title"] == "Договоры")
+check("soon expires", mine["Сертификат соответствия"]["status"] == "soon" and mine["Сертификат соответствия"]["cat"] == "certs")
+check("expired", mine["Гарантийный талон"]["status"] == "expired" and mine["Гарантийный талон"]["status_title"] == "Просрочен")
+check("tiles", dd["tiles"]["total"] == len(dd["docs"]) and dd["tiles"]["soon"] >= 1 and dd["tiles"]["expired"] >= 1
+      and sum(dd["tiles"][k] for k in ("active", "soon", "expired", "archived")) == dd["tiles"]["total"])
+check("categories", [c["key"] for c in dd["cats"]] == list(stockm.EQ_DOC_CATS) and sum(c["count"] for c in dd["cats"]) == len(dd["docs"]))
+did = c_["id"]
+a.equipment_doc_save(did, {"number": "ДП-057/26", "counterparty": "ООО «Дентал»", "valid_until": ahead(30)})
+ev = d.one("SELECT * FROM equipment_events WHERE equipment_id=? AND kind='doc' ORDER BY id DESC", (eid,))
+chs = {x["t"]: x for x in json.loads(ev["data"])["changes"]}
+check("an edit of a document is in the log", chs["Номер"]["old"] == "ДП-056/26" and chs["Номер"]["new"] == "ДП-057/26" and "Контрагент" in chs)
+check("…and its status follows the term", next(x for x in a.equipment_all_docs()["docs"] if x["id"] == did)["status"] == "soon")
+refuses("a photo is not edited here", lambda: a.equipment_doc_save(d.one("SELECT id FROM equipment_docs WHERE equipment_id=? AND kind='photo'", (eid,))["id"], {"title": "x"}), "галерее")
+n = a.equipment_doc_archive([did, mine["Гарантийный талон"]["id"]], True)
+dd = a.equipment_all_docs()
+check("to the archive", n == 2 and next(x for x in dd["docs"] if x["id"] == did)["status"] == "archived" and dd["tiles"]["archived"] >= 2)
+check("an archived contract is missing", any(m["id"] == eid and "Договор купли-продажи" in m["lack"] for m in dd["missing"]))
+check("archiving twice changes nothing", a.equipment_doc_archive([did], True) == 0)
+a.equipment_doc_archive([did], False)
+check("back from the archive", next(x for x in a.equipment_all_docs()["docs"] if x["id"] == did)["status"] != "archived")
+check("the archive is in the log", any(x["action_title"] in ("Документ в архив", "Документ из архива") for x in a.equipment_log({"object": eid})["rows"]))
+check("the replica takes the new columns of a document", {"number", "doc_date", "valid_until", "counterparty", "archived"} <= set(replica.CATCHUP_COLS["equipment_docs"]))
+for k_ in ("equipment_doc_save", "equipment_doc_archive"):
+    check(f"{k_} has a right and is audited", k_ in auth.METHOD_PERMS and k_ in auth.AUDITED)
+for part in ("Категории документов", "Добавить документ", "Шаблоны", "Скоро истекают", "Просроченные", "В архиве", "Информация о документе",
+             "Просмотр", "Скачать", "Редактировать", "Печать"):
+    check(f"UI docs: {part}", part in sec)
+
 print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
 for f in FAIL:
     print("  FAIL", f)

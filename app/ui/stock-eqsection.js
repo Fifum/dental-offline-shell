@@ -325,7 +325,7 @@ async function eqMovesTab() {
         <div class="auth-err" id="mvErr"></div><div class="eqs-wfoot"><span class="grow"></span><button class="btn ghost" id="mvClear">Отмена</button><button class="btn" id="mvOk">Создать перемещение →</button></div></section>` : ""}
       ${eqStages(sel ? `Этапы ${esc(sel.number)}` : "Этапы перемещения", MV_STAGES, sel ? (sel.status === "done" ? 5 : sel.stage) : 1)}</div>
     <div class="eqs-g2r"><section class="eqs-card eqs-tcard"><h3 class="eqs-tch">${EQN.eq_moves}Журнал перемещений${EQS.mvEq || EQS.mvFlt ? ` <button class="linkbtn" id="mvAll">${EQX.x}все</button>` : ""}</h3>
-        ${flt.length ? `<table class="tbl eqs-reg" id="mvJ"><thead><tr><th>№</th><th>Дата</th><th>Оборудование</th><th>Откуда</th><th>Куда</th><th>Основание</th><th>Статус</th><th></th></tr></thead><tbody>${flt.map(m => `<tr data-mv="${esc(m.id)}" class="${m.id === EQS.mvSel ? "sel" : ""}">
+        ${flt.length ? `<table class="tbl eqs-reg" id="mvJ"><thead><tr><th>№</th><th>Дата</th><th>Оборудование</th><th>Откуда</th><th>Куда</th><th>Основание</th><th>Статус</th></tr></thead><tbody>${flt.map(m => `<tr data-mv="${esc(m.id)}" class="${m.id === EQS.mvSel ? "sel" : ""}">
           <td><b>${esc(m.number)}</b></td><td>${fmtDateShort(m.date)}</td><td><div class="sn-mat sm">${phHtml(m.photo_id)}<span>${esc(m.equipment_name)}</span></div></td><td>${esc(m.from_name)}</td><td>${esc(m.to_name)}</td>
           <td class="muted">${esc(m.reason)}</td><td>${pill(m)}</td><td class="eqs-acts2">${[
             appr && m.status === "requested" && `<button class="linkbtn" data-a="approve">утвердить</button><button class="linkbtn danger-t" data-a="reject">отклонить</button>`,
@@ -590,7 +590,7 @@ async function eqPurchasesTab() {
   const acts = x => [edit && ["draft", "rejected"].includes(x.status) && ["edit", "изменить"], edit && ["draft", "rejected"].includes(x.status) && ["send", "на согласование"],
     appr && x.status === "pending" && ["approve", "согласовать"], appr && x.status === "pending" && ["reject", "отклонить"], edit && x.status === "approved" && ["bought", "куплено"],
     edit && ["pending", "approved"].includes(x.status) && ["draft", "в черновик"], edit && ["draft", "rejected"].includes(x.status) && ["delete", "удалить"]].filter(Boolean);
-  const plan = r.rows.length ? `<table class="tbl eqs-reg" id="puJ"><thead><tr><th>Оборудование / наименование</th><th>Причина закупки</th><th>Категория</th><th class="num">Бюджет</th><th>Период</th><th>Приоритет</th><th>Статус</th><th></th></tr></thead><tbody>${r.rows.map(x => `<tr data-pu="${esc(x.id)}">
+  const plan = r.rows.length ? `<table class="tbl eqs-reg" id="puJ"><thead><tr><th>Оборудование / наименование</th><th>Причина закупки</th><th>Категория</th><th class="num">Бюджет</th><th>Период</th><th>Приоритет</th><th>Статус</th></tr></thead><tbody>${r.rows.map(x => `<tr data-pu="${esc(x.id)}">
       <td><b>${esc(x.name)}</b><small class="muted" style="display:block">${esc([x.number, x.replace_name && "замена: " + x.replace_name, x.offers.length && `КП: ${x.offers.length}`].filter(Boolean).join(" · "))}</small></td>
       <td class="muted">${esc(x.reason || "")}</td><td>${x.category ? `<span class="eqs-cat">${esc(x.category)}</span>` : "—"}</td><td class="num"><b>${eqMoney(x.budget)}</b></td><td>${QN[(x.quarter || 1) - 1]} квартал</td>
       <td>${prio(x)}</td><td>${pill(x)}${x.answer && x.status === "rejected" ? `<small class="muted" style="display:block">${esc(x.answer)}</small>` : ""}</td>
@@ -704,26 +704,127 @@ async function eqThirdTab() {
     print: () => { const tb = $("#tpReg"); if (!tb) return toast("Нет данных"); $("#printArea").innerHTML = `<h2>Стороннее оборудование на ${fmtDate(iso(new Date()))}</h2>${tb.outerHTML}`; window.print(); }})[b.dataset.u]());
 }
 
-/* ------------------------------------------------------------ «Документы» */
+/* ------------------------------------------------------------ «Документы» (3.16, mockup 13) */
+const EQ_DOC_STC = {active: "ok", soon: "wait", expired: "bad", archived: "arch"};
+const eqDocIc = d => `<span class="eqs-fic ${d.image ? "img" : (d.ext || "") === ".pdf" ? "pdf" : "doc"}">${d.image ? "IMG" : (d.ext || ".pdf").slice(1, 4).toUpperCase()}</span>`;
+const eqDocPill = d => `<span class="eqs-dst ${EQ_DOC_STC[d.status]}">${d.status === "active" ? EQX.ok : d.status === "soon" ? EQX.clock : d.status === "expired" ? EQX.warn : EQX.box}${esc(d.status_title)}</span>`;
 async function eqDocsTab() {
   const body = $("#stockBody");
-  const r = await api.equipment_all_docs(), kind = EQS.docKind || "", q = (EQS.docQ || "").toLowerCase();
-  const rows = r.docs.filter(d => (!kind || d.kind === kind) && (!q || `${d.title} ${d.equipment_name} ${d.inv_number}`.toLowerCase().includes(q)));
+  const r = EQS.docs = await api.equipment_all_docs(), edit = can("equipment");
+  const cat = EQS.docCat || "", st = EQS.docSt || "", eq = EQS.docEq || "", q = (EQS.docQ || "").toLowerCase(), view = EQS.docView || "list", per = 10;
+  const rows = r.docs.filter(d => (!cat || d.cat === cat) && (!st || d.status === st) && (!eq || d.equipment_id === eq)
+    && (!q || `${d.title} ${d.number || ""} ${d.equipment_name} ${d.inv_number} ${d.counterparty || ""} ${d.kind_title}`.toLowerCase().includes(q)));
+  const pages = Math.max(1, Math.ceil(rows.length / per)), page = Math.min(EQS.docPage || 1, pages), shown = rows.slice((page - 1) * per, page * per);
+  const cur = r.docs.find(d => d.id === EQS.docSel) || null, chk = EQS.docChk = (EQS.docChk || []).filter(id => r.docs.some(d => d.id === id));
+  const T = r.tiles, tile = (k, ic, t, v, cls) => `<button class="eqs-tile eqs-tbtn ${cls} ${st === k ? "on" : ""}" data-st="${k}"><i>${ic}</i><span>${t}</span><b>${v}</b></button>`;
+  const pager = pages > 1 ? `<div class="eqs-pager"><span class="muted">Показано: ${shown.length} из ${rows.length}</span><span class="grow"></span><button data-pg="${page - 1}" ${page === 1 ? "disabled" : ""}><svg viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></svg></button>${[...new Set([1, pages, page - 1, page, page + 1])].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b).map((n, i, arr) => `${i && n - arr[i - 1] > 1 ? "<i>…</i>" : ""}<button data-pg="${n}" class="${n === page ? "on" : ""}">${n}</button>`).join("")}<button data-pg="${page + 1}" ${page === pages ? "disabled" : ""}>${EQX.chev}</button></div>`
+    : `<div class="eqs-foot muted">Показано: ${rows.length} из ${r.docs.length}</div>`;
+  const side = cur ? eqDocPanel(cur, edit) : `<aside class="eqs-side2"><section class="eqs-card"><h3>${EQX.warn}Гарантии</h3>${r.warranty.length ? `<div class="eqs-ev">${r.warranty.map(w => `<button data-e="${esc(w.id)}" class="${w.ended ? "late" : ""}">${EQX.cal}<span><b>${esc(w.name)}</b><small>${esc(w.inv_number)}</small></span><em>${w.ended ? "истекла · " : "до "}${eqShortDate(w.date)}</em></button>`).join("")}</div>` : `<div class="muted">Гарантии в ближайший месяц не истекают</div>`}</section>
+      <section class="eqs-card"><h3>${EQX.doc}Не хватает документов</h3>${r.missing.length ? `<div class="eqs-ev">${r.missing.slice(0, 8).map(m => `<button data-e="${esc(m.id)}">${EQX.doc}<span><b>${esc(m.name)}</b><small>нет: ${esc(m.lack.join(", ").toLowerCase())}</small></span>${EQX.chev}</button>`).join("")}</div>${r.missing.length > 8 ? `<div class="muted eqs-hint">И ещё ${r.missing.length - 8}</div>` : ""}` : `<div class="muted">У всего оборудования есть техпаспорт и договор</div>`}</section></aside>`;
   body.innerHTML = `<div class="eqs">
-    <div class="eqs-head"><div><h2>Документы</h2><span class="muted">Паспорта, договоры, акты, гарантии — все документы оборудования клиники</span></div></div>
-    <div class="eqs-tiles">${eqTile(EQX.doc, "Документов", r.docs.length)}${eqTile(EQX.list, "Паспортов", r.counts.passport || 0)}${eqTile(EQX.doc, "Договоров", r.counts.contract || 0)}${eqTile(EQX.warn, "Гарантия истекает", r.warranty.filter(w => !w.ended).length, r.warranty.some(w => !w.ended) ? "warn" : "")}</div>
-    <div class="eqs-g2r"><div class="eqs-col"><div class="eqs-bar2"><div class="eqs-seg eqs-wrap">${[["", `Все (${r.docs.length})`], ...Object.entries(r.kinds).filter(([k]) => r.counts[k]).map(([k, t]) => [k, `${t} (${r.counts[k]})`])].map(([k, t]) => `<button data-k="${k}" class="${k === kind ? "on" : ""}">${esc(t)}</button>`).join("")}</div>
-        <span class="grow"></span><div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="docQ" placeholder="Документ или оборудование" value="${esc(EQS.docQ || "")}"></div></div>
-      <section class="eqs-card eqs-tcard">${rows.length ? `<table class="tbl eqs-reg"><thead><tr><th>Документ</th><th>Вид</th><th>Оборудование</th><th>Добавлен</th><th>Кто</th></tr></thead><tbody>${rows.map(d => `<tr data-d="${esc(d.id)}">
-          <td><button class="linkbtn" data-open="${esc(d.id)}">${d.image ? EQI.ph : EQI.doc}${esc(d.title)}</button></td><td><span class="eqs-cat">${esc(d.kind_title)}</span></td>
-          <td><button class="linkbtn" data-e="${esc(d.equipment_id)}">${esc(d.equipment_name)}</button>${d.inv_number ? ` <small class="muted">${esc(d.inv_number)}</small>` : ""}</td><td>${fmtDT(d.created_at)}</td><td class="muted">${esc(d.created_by || "")}</td></tr>`).join("")}</tbody></table>`
-        : `<div class="empty"><b>Документов нет</b><span>Загружайте их в карточке оборудования, вкладка «Документы»</span></div>`}</section></div>
-      <div class="eqs-side2"><section class="eqs-card"><h3>${EQX.warn}Гарантии</h3>${r.warranty.length ? `<div class="eqs-ev">${r.warranty.map(w => `<button data-e="${esc(w.id)}" class="${w.ended ? "late" : ""}">${EQX.cal}<span><b>${esc(w.name)}</b><small>${esc(w.inv_number)}</small></span><em>${w.ended ? "истекла · " : "до "}${eqShortDate(w.date)}</em></button>`).join("")}</div>` : `<div class="muted">Гарантии в ближайший месяц не истекают</div>`}</section>
-        <section class="eqs-card"><h3>${EQX.doc}Не хватает документов</h3>${r.missing.length ? `<div class="eqs-ev">${r.missing.slice(0, 8).map(m => `<button data-e="${esc(m.id)}">${EQX.doc}<span><b>${esc(m.name)}</b><small>нет: ${esc(m.lack.join(", ").toLowerCase())}</small></span>${EQX.chev}</button>`).join("")}</div>${r.missing.length > 8 ? `<div class="muted eqs-hint">И ещё ${r.missing.length - 8}</div>` : ""}` : `<div class="muted">У всего оборудования есть техпаспорт и договор</div>`}</section></div></div></div>`;
-  $$(".eqs-bar2 .eqs-seg button", body).forEach(b => b.onclick = () => { EQS.docKind = b.dataset.k; eqDocsTab(); });
-  let t; $("#docQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { EQS.docQ = e.target.value; eqDocsTab().then(() => { const i = $("#docQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
+    <div class="eqs-head eqs-hico"><i>${EQX.doc}</i><div><h2>Документы</h2><span class="muted">Все документы по оборудованию: договоры, акты, паспорта, сертификаты, гарантии</span></div><span class="grow"></span>
+      ${edit ? `<button class="btn" id="docAdd">${EQX.plus}Добавить документ</button>` : ""}<button class="btn ghost" id="docTpl">${EQX.doc}Шаблоны</button></div>
+    <div class="eqs-tiles eqs-tiles5">${tile("", EQR.layers, "Всего документов", T.total, "")}${tile("active", EQX.ok, "Действующие", T.active, "ok")}${tile("soon", '<svg viewBox="0 0 24 24"><path d="M7 3.5h10M7 20.5h10M8 3.5c0 4 8 5 8 8.5s-8 4.5-8 8.5M16 3.5c0 4-8 5-8 8.5s8 4.5 8 8.5"/></svg>', "Скоро истекают", T.soon, T.soon ? "warn" : "")}
+      ${tile("expired", EQX.warn, "Просроченные", T.expired, T.expired ? "bad" : "")}${tile("archived", EQX.box, "В архиве", T.archived, "")}</div>
+    <div class="eqs-dgrid ${cur ? "with" : ""}">
+      <section class="eqs-card eqs-dcats"><h3>Категории документов</h3>${[{key: "", title: "Все документы", count: r.docs.length}, ...r.cats].map(c => `<button data-cat="${c.key}" class="${c.key === cat ? "on" : ""}">${EQX.doc}<span>${esc(c.title)}</span><b>${c.count}</b></button>`).join("")}</section>
+      <section class="eqs-card eqs-tcard"><div class="eqs-jt"><div class="eqs-seg"><button data-v="list" class="${view === "list" ? "on" : ""}">${EQX.list}Список</button><button data-v="cards" class="${view === "cards" ? "on" : ""}">${EQX.grid}Карточки</button></div><span class="grow"></span>
+          <select class="input eqs-dsel" id="docEqF"><option value="">Всё оборудование</option>${r.equipment.map(e => `<option value="${esc(e.id)}" ${e.id === eq ? "selected" : ""}>${esc(e.name)}${e.inv_number ? " · " + esc(e.inv_number) : ""}</option>`).join("")}</select>
+          <div class="search-row mini"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="docQ" placeholder="Поиск по документам…" value="${esc(EQS.docQ || "")}"></div></div>
+        ${chk.length && edit ? `<div class="eqs-bulk"><b>Выбрано: ${chk.length}</b><button class="btn ghost small" id="docArch">${EQX.box}В архив</button><button class="btn ghost small" id="docUnarch">Вернуть из архива</button><button class="linkbtn" id="docChkX">снять отметки</button></div>` : ""}
+        ${!rows.length ? `<div class="empty"><b>${r.docs.length ? "Ничего не найдено" : "Документов пока нет"}</b><span>${r.docs.length ? "Измените категорию, статус или поиск" : edit ? "«Добавить документ» — договор, паспорт, акт или сертификат с файлом" : "Документы загружают в карточке оборудования"}</span></div>`
+          : view === "cards" ? `<div class="eqs-dcards">${shown.map(d => `<button data-d="${esc(d.id)}" class="${cur && cur.id === d.id ? "on" : ""}">${eqDocIc(d)}<b>${esc(d.title)}</b><small>${esc(d.equipment_name)}</small><span class="eqs-dtype ${d.cat}">${esc(d.cat_title)}</span>${eqDocPill(d)}<small class="muted">${d.doc_date ? fmtDateShort(d.doc_date) : ""}${d.valid_until ? ` — ${fmtDateShort(d.valid_until)}` : ""}</small></button>`).join("")}</div>${pager}`
+          : `<table class="tbl eqs-reg eqs-doct"><thead><tr>${edit ? `<th><input type="checkbox" id="docAll" ${shown.every(d => chk.includes(d.id)) ? "checked" : ""}></th>` : ""}<th>Наименование</th><th>Оборудование</th><th>Тип</th><th>Дата</th><th>Срок действия</th><th>Статус</th></tr></thead><tbody>${shown.map(d => `<tr data-d="${esc(d.id)}" class="${cur && cur.id === d.id ? "sel" : ""}">
+              ${edit ? `<td><input type="checkbox" data-chk="${esc(d.id)}" ${chk.includes(d.id) ? "checked" : ""}></td>` : ""}<td><div class="eqs-dname">${eqDocIc(d)}<span><b>${esc(d.title)}</b>${d.number ? `<small class="muted">№ ${esc(d.number)}</small>` : ""}</span></div></td>
+              <td>${esc(d.equipment_name)}${d.inv_number ? `<small class="muted" style="display:block">${esc(d.inv_number)}</small>` : ""}</td><td><span class="eqs-dtype ${d.cat}">${esc(d.cat_title)}</span></td>
+              <td class="eqs-nw">${d.doc_date ? fmtDateShort(d.doc_date) : "—"}</td><td class="eqs-nw">${d.valid_until ? fmtDateShort(d.valid_until) : "—"}</td><td>${eqDocPill(d)}</td></tr>`).join("")}</tbody></table>${pager}`}</section>
+      ${side}</div>
+    <table id="docX" hidden><thead><tr><th>Документ</th><th>Номер</th><th>Вид</th><th>Категория</th><th>Оборудование</th><th>Инв. №</th><th>Дата</th><th>Срок действия</th><th>Контрагент</th><th>Статус</th></tr></thead><tbody>${rows.map(d => `<tr><td>${esc(d.title)}</td><td>${esc(d.number || "")}</td><td>${esc(d.kind_title)}</td><td>${esc(d.cat_title)}</td><td>${esc(d.equipment_name)}</td><td>${esc(d.inv_number)}</td><td>${d.doc_date ? fmtDateShort(d.doc_date) : ""}</td><td>${d.valid_until ? fmtDateShort(d.valid_until) : ""}</td><td>${esc(d.counterparty || "")}</td><td>${esc(d.status_title)}</td></tr>`).join("")}</tbody></table></div>`;
+  const redraw = () => eqDocsTab();
+  $$("[data-st]", body).forEach(b => b.onclick = () => { EQS.docSt = b.dataset.st === st ? "" : b.dataset.st; EQS.docPage = 1; redraw(); });
+  $$("[data-cat]", body).forEach(b => b.onclick = () => { EQS.docCat = b.dataset.cat; EQS.docPage = 1; redraw(); });
+  $$(".eqs-seg [data-v]", body).forEach(b => b.onclick = () => { EQS.docView = b.dataset.v; redraw(); });
+  $("#docEqF").onchange = e => { EQS.docEq = e.target.value; EQS.docPage = 1; redraw(); };
+  let t; $("#docQ").oninput = e => { clearTimeout(t); t = setTimeout(() => { EQS.docQ = e.target.value; EQS.docPage = 1; eqDocsTab().then(() => { const i = $("#docQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
+  $$("[data-pg]", body).forEach(b => b.onclick = () => { EQS.docPage = +b.dataset.pg; redraw(); });
+  $$("[data-d]", body).forEach(x => x.onclick = ev => { if (ev.target.closest("[data-chk]")) return; EQS.docSel = x.dataset.d; redraw(); });
+  $$("[data-chk]", body).forEach(c => c.onchange = () => { const s_ = new Set(EQS.docChk); c.checked ? s_.add(c.dataset.chk) : s_.delete(c.dataset.chk); EQS.docChk = [...s_]; redraw(); });
+  const all = $("#docAll"); if (all) all.onchange = () => { const s_ = new Set(EQS.docChk); shown.forEach(d => all.checked ? s_.add(d.id) : s_.delete(d.id)); EQS.docChk = [...s_]; redraw(); };
+  const bulk = on => async () => { try { const n = await api.equipment_doc_archive(EQS.docChk, on); toast(n ? `${on ? "В архив" : "Из архива"}: ${n}` : "Ничего не изменилось"); EQS.docChk = []; redraw(); } catch (e) { toast(errText(e), true); } };
+  const ba = $("#docArch"); if (ba) { ba.onclick = bulk(true); $("#docUnarch").onclick = bulk(false); $("#docChkX").onclick = () => { EQS.docChk = []; redraw(); }; }
+  const ad = $("#docAdd"); if (ad) ad.onclick = () => eqDocAdd(r);
+  $("#docTpl").onclick = () => eqTemplates();
   $$("[data-e]", body).forEach(b => b.onclick = ev => { ev.stopPropagation(); openEquipment(b.dataset.e, "docs"); });
-  $$("[data-open]", body).forEach(b => b.onclick = async ev => { ev.stopPropagation(); try { eqOpenFile(await api.equipment_doc_open(b.dataset.open)); } catch (x) { toast(errText(x), true); } });
+  if (cur) eqDocPanelWire(cur, edit);
+}
+function eqDocPanel(d, edit) {
+  const row = (ic, t, v) => `<dt>${ic}${t}:</dt><dd>${v}</dd>`;
+  return `<aside class="eqs-card eqs-det eqs-docp"><div class="eqs-deth"><h3>${eqDocIc(d)}<span>${esc(d.title)}${d.number ? ` №${esc(d.number)}` : ""}</span></h3><button class="x" id="docClose" title="Закрыть">×</button></div>
+    <div class="eqs-dpv"><div class="eqs-dprev" id="docPrev"><span class="muted">Загрузка…</span></div>
+      <div class="eqs-dacts"><button id="dView">${'<svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>'}Просмотр</button><button id="dDown">${EQX.down}Скачать</button>
+        ${edit ? `<button id="dEdit">${EQR.pen}Редактировать</button>` : ""}<button id="dPrint">${PRINT_ICON}Печать</button>${edit ? `<button id="dArch">${EQX.box}${d.archived ? "Из архива" : "В архив"}</button>` : ""}</div></div>
+    <h3>Информация о документе</h3><dl class="eqs-detl">${row(EQX.doc, "Тип", esc(d.kind_title))}${row(EQN.eq_moves, "Оборудование", `<button class="linkbtn" data-e="${esc(d.equipment_id)}">${esc(d.equipment_name)}</button>`)}
+      ${row(EQX.cal, "Дата документа", d.doc_date ? fmtDate(d.doc_date) : "—")}${row(EQX.cal, "Срок действия", d.valid_until ? fmtDate(d.valid_until) : "бессрочно")}
+      ${row(EQR.user, "Контрагент", esc(d.counterparty || "—"))}${row(EQX.ok, "Статус", eqDocPill(d))}${row(EQX.clock, "Добавлен", `${fmtDT(d.created_at)}${d.created_by ? ` · ${esc(d.created_by)}` : ""}`)}</dl></aside>`;
+}
+async function eqDocFile(d) { EQS.docFiles = EQS.docFiles || {}; return EQS.docFiles[d.id] || (EQS.docFiles[d.id] = await api.equipment_doc_open(d.id)); }
+function eqDocFrame(f) {
+  if ((f.mime || "").startsWith("image/")) return `<img src="${f.url}" alt="">`;
+  const bin = atob(f.url.split(",")[1] || ""), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return `<iframe class="eqs-pdf" src="${URL.createObjectURL(new Blob([u8], {type: "application/pdf"}))}#toolbar=1&view=FitH"></iframe>`;
+}
+function eqDocView(d, f, hint = "") {
+  modal(`<div class="m-h"><h3>${esc(d.title)}</h3><button class="x" data-close>×</button></div><div class="m-b eqs-dview">${hint ? `<div class="muted eqs-hint">${hint}</div>` : ""}${eqDocFrame(f)}</div>
+    <div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>Закрыть</button></div>`, {wide: true});
+}
+async function eqDocPanelWire(d, edit) {
+  $("#docClose").onclick = () => { EQS.docSel = null; eqDocsTab(); };
+  $$(".eqs-docp [data-e]").forEach(b => b.onclick = () => openEquipment(b.dataset.e, "docs"));
+  let f; try { f = await eqDocFile(d); const pv = $("#docPrev"); if (pv) pv.innerHTML = eqDocFrame(f); } catch (e) { const pv = $("#docPrev"); if (pv) pv.innerHTML = `<span class="muted">${esc(errText(e))}</span>`; }
+  const need = async () => f || (f = await eqDocFile(d));
+  $("#dView").onclick = async () => eqDocView(d, await need());
+  $("#dDown").onclick = async () => { const x = await need(); const ext = d.ext || ((x.mime || "").startsWith("image/") ? ".jpg" : ".pdf"); saveDataUrl(`${(d.title || "документ").replace(/[\\/:*?"<>|]/g, "-")}${ext}`, x.url); };
+  $("#dPrint").onclick = async () => { const x = await need();
+    if ((x.mime || "").startsWith("image/")) { $("#printArea").innerHTML = `<img src="${x.url}" style="max-width:100%">`; window.print(); }
+    else eqDocView(d, x, "Печать PDF — кнопкой принтера на панели просмотра."); };
+  const ed = $("#dEdit"); if (ed) ed.onclick = () => eqDocEdit(d);
+  const ar = $("#dArch"); if (ar) ar.onclick = async () => { try { await api.equipment_doc_archive([d.id], !d.archived); toast(d.archived ? "Возвращён из архива" : "В архиве"); eqDocsTab(); } catch (e) { toast(errText(e), true); } };
+}
+const eqDocFields = (d, kinds) => `<div class="eqs-form2"><label class="fl eqs-span2">Название *<input class="input" id="dfT" maxlength="200" value="${esc(d.title || "")}" placeholder="Договор поставки"></label>
+  <label class="fl">Вид документа<select class="input" id="dfK">${Object.entries(kinds).map(([k, t]) => `<option value="${k}" ${k === (d.kind || "contract") ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
+  <label class="fl">Номер<input class="input" id="dfN" maxlength="60" value="${esc(d.number || "")}" placeholder="ДП-056/26"></label>
+  <label class="fl">Дата документа<input class="input" type="date" id="dfD" value="${esc(d.doc_date || "")}"></label>
+  <label class="fl">Срок действия<input class="input" type="date" id="dfV" value="${esc(d.valid_until || "")}"></label>
+  <label class="fl eqs-span2">Контрагент<input class="input" id="dfC" maxlength="200" value="${esc(d.counterparty || "")}" placeholder="ООО «МедОборудование»"></label></div>`;
+const eqDocRead = () => ({title: $("#dfT").value, kind: $("#dfK").value, number: $("#dfN").value, doc_date: $("#dfD").value, valid_until: $("#dfV").value, counterparty: $("#dfC").value});
+function eqDocEdit(d) {
+  const box = modal(`<div class="m-h"><h3>Документ: ${esc(d.title)}</h3><button class="x" data-close>×</button></div><div class="m-b">${eqDocFields(d, EQS.docs.kinds)}<div class="auth-err" id="dfE"></div></div>
+    <div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="dfOk">Сохранить</button></div>`, {wide: true});
+  $("#dfOk", box).onclick = async () => { try { await api.equipment_doc_save(d.id, eqDocRead()); closeModal(); toast("Сохранено"); eqDocsTab(); } catch (e) { $("#dfE", box).textContent = errText(e); } };
+}
+function eqDocAdd(r) {
+  let file = null;
+  const box = modal(`<div class="m-h"><h3>Добавить документ</h3><button class="x" data-close>×</button></div>
+    <div class="m-b"><label class="fl">Оборудование *<select class="input" id="daE"><option value="">Выберите оборудование</option>${r.equipment.map(e => `<option value="${esc(e.id)}" ${e.id === EQS.docEq ? "selected" : ""}>${esc(e.name)}${e.inv_number ? " · " + esc(e.inv_number) : ""}</option>`).join("")}</select></label>
+      ${eqDocFields({kind: (r.cats.find(c => c.key === EQS.docCat) || {kinds: ["contract"]}).kinds[0]}, r.kinds)}
+      <div class="eqs-drop" id="daF">${EQX.down}<span>Перетащите PDF или фото сюда или <button class="linkbtn" id="daPick" type="button">выберите файл</button></span></div><div class="auth-err" id="daErr"></div></div>
+    <div class="m-f"><span class="grow"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="daOk">Добавить</button></div>`, {wide: true});
+  const set = f => { if (!f) return; if (f.size > 15 * 1024 * 1024) { $("#daErr", box).textContent = `${f.name}: больше 15 МБ`; return; } file = f; $("#daF span", box).textContent = `Файл: ${f.name}`; if (!$("#dfT", box).value) $("#dfT", box).value = f.name.replace(/\.[^.]+$/, ""); };
+  $("#daPick", box).onclick = () => { const i = document.createElement("input"); i.type = "file"; i.accept = "application/pdf,image/*"; i.onchange = () => set(i.files[0]); i.click(); };
+  const dz = $("#daF", box); dz.ondragover = e => { e.preventDefault(); dz.classList.add("on"); }; dz.ondragleave = () => dz.classList.remove("on");
+  dz.ondrop = e => { e.preventDefault(); dz.classList.remove("on"); set(e.dataTransfer.files[0]); };
+  $("#daOk", box).onclick = async () => {
+    const eid = $("#daE", box).value, f = eqDocRead();
+    if (!eid) return $("#daErr", box).textContent = "Выберите оборудование";
+    if (!file) return $("#daErr", box).textContent = "Приложите файл документа (PDF или фото)";
+    if (!f.title.trim()) return $("#daErr", box).textContent = "Укажите название документа";
+    try {
+      const rd = x => new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = bad; fr.readAsDataURL(x); });
+      const data = file.type.startsWith("image/") ? await shrinkImage(file, 1600).catch(() => rd(file)) : await rd(file);
+      await api.equipment_doc_add(eid, f.kind, file.name, data, f.title.trim(), {number: f.number, doc_date: f.doc_date, valid_until: f.valid_until, counterparty: f.counterparty});
+      closeModal(); toast("Документ добавлен"); eqDocsTab();
+    } catch (e) { $("#daErr", box).textContent = errText(e); }
+  };
 }
 
 /* ------------------------------------------------------------ «Аналитика и отчёты» (3.16, mockup 12) */

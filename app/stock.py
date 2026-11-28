@@ -2710,29 +2710,104 @@ class Stock:
                 "cost": round(sum(r["price"] for r in rows), 2), "events": ev[:6]}
 
     # ---------------------------------------------------------- 3.15: «Документы» --
+    @staticmethod
+    def doc_status(d, today=None):
+        """3.16: «В архиве» (the flag) → «Просрочен» (the term has passed) → «Скоро истекает» (30 days) → «Действует»."""
+        t = today or date.today().isoformat()
+        soon = (date.fromisoformat(t) + timedelta(days=DOC_SOON_DAYS)).isoformat()
+        v = d.get("valid_until") or ""
+        if d.get("archived"):
+            return "archived", "В архиве"
+        if v and v < t:
+            return "expired", "Просрочен"
+        if v and v <= soon:
+            return "soon", "Скоро истекает"
+        return "active", "Действует"
+
     def eq_all_docs(self):
         """Every document of the equipment in one list (passports, contracts, acts, warranties), the warranties that end within a
-        month or have ended, and the pieces without a technical passport or a contract."""
+        month or have ended, and the pieces without a technical passport or a contract.
+        3.16 (mockup 13): the number, the date, the term, the counterparty and the archive of a document, its status and category;
+        the photos stay in the cards' gallery."""
         t = date.today()
         today, soon = t.isoformat(), (t + timedelta(days=30)).isoformat()
-        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number, status, warranty_until, photo_id FROM equipment")}
+        eqs = {e["id"]: e for e in self.db.q("SELECT id, name, inv_number, status, warranty_until, photo_id, location, location_id FROM equipment")}
+        cat_of = {k: c for c, (_, ks) in EQ_DOC_CATS.items() for k in ks}
         docs = []
-        for d in self.db.q("""SELECT d.*, f.ext, f.size FROM equipment_docs d LEFT JOIN patient_files f ON f.id = d.file_id
-                              WHERE d.deleted=0 ORDER BY d.created_at DESC"""):
+        for d in self.db.q("""SELECT d.*, f.ext, f.size, f.orig_name FROM equipment_docs d LEFT JOIN patient_files f ON f.id = d.file_id
+                              WHERE d.deleted=0 AND d.kind<>'photo' ORDER BY COALESCE(d.doc_date, substr(d.created_at,1,10)) DESC, d.created_at DESC"""):
             e = eqs.get(d["equipment_id"]) or {}
-            docs.append({**d, "kind_title": EQ_DOC_KINDS.get(d["kind"], d["kind"]), "equipment_name": e.get("name") or "удалённое оборудование",
-                         "inv_number": e.get("inv_number") or "", "image": (d.get("ext") or "") in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")})
+            st = self.doc_status(d, today)
+            cat = cat_of.get(d["kind"], "other")
+            docs.append({**d, "archived": int(d.get("archived") or 0), "kind_title": EQ_DOC_KINDS.get(d["kind"], d["kind"]),
+                         "cat": cat, "cat_title": EQ_DOC_CATS[cat][0], "status": st[0], "status_title": st[1],
+                         "equipment_name": e.get("name") or "удалённое оборудование", "inv_number": e.get("inv_number") or "",
+                         "equipment_live": bool(e) and e.get("status") != "written_off",
+                         "image": (d.get("ext") or "") in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")})
         have = {}
         for d in docs:
-            have.setdefault(d["equipment_id"], set()).add(d["kind"])
+            if not d["archived"]:
+                have.setdefault(d["equipment_id"], set()).add(d["kind"])
         live = [e for e in eqs.values() if e["status"] != "written_off"]
         warr = sorted(({"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "", "date": e["warranty_until"],
                         "ended": e["warranty_until"] < today} for e in live if e["warranty_until"] and e["warranty_until"] <= soon),
                       key=lambda x: x["date"])
         missing = [{"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or "",
                     "lack": [EQ_DOC_KINDS[k] for k in ("passport", "contract") if k not in have.get(e["id"], set())]} for e in live]
-        return {"docs": docs, "kinds": EQ_DOC_KINDS, "counts": {k: sum(1 for d in docs if d["kind"] == k) for k in EQ_DOC_KINDS},
-                "warranty": warr, "missing": [m for m in missing if m["lack"]]}
+        tiles = {k: sum(1 for d in docs if d["status"] == k) for k in ("active", "soon", "expired", "archived")}
+        return {"docs": docs, "kinds": {k: v for k, v in EQ_DOC_KINDS.items() if k != "photo"},
+                "counts": {k: sum(1 for d in docs if d["kind"] == k) for k in EQ_DOC_KINDS if k != "photo"},
+                "cats": [{"key": c, "title": t_, "kinds": list(ks), "count": sum(1 for d in docs if d["cat"] == c)} for c, (t_, ks) in EQ_DOC_CATS.items()],
+                "tiles": {"total": len(docs), **tiles}, "warranty": warr, "missing": [m for m in missing if m["lack"]],
+                "equipment": sorted([{"id": e["id"], "name": e["name"], "inv_number": e["inv_number"] or ""} for e in live], key=lambda x: x["name"])}
+
+    _DOC_FIELDS = (("title", "Название", ""), ("kind", "Вид", EQ_DOC_KINDS), ("number", "Номер", ""), ("doc_date", "Дата документа", "d"),
+                   ("valid_until", "Срок действия", "d"), ("counterparty", "Контрагент", ""))
+
+    def equipment_doc_save(self, did, f, user=""):
+        """3.16: the details of a document — its title, kind, number, date, term and counterparty (the file stays)."""
+        f = f if isinstance(f, dict) else {}
+        d = self.db.one("SELECT * FROM equipment_docs WHERE id=? AND deleted=0", (str(did or ""),))
+        if not d:
+            raise ValueError("Документ не найден")
+        if d["kind"] == "photo":
+            raise ValueError("Фото меняется в галерее карточки")
+        new = {"title": _clean(f.get("title"), 200) or d["title"] if "title" in f else d["title"],
+               "kind": f.get("kind") if f.get("kind") in EQ_DOC_KINDS and f.get("kind") != "photo" else d["kind"],
+               "number": _clean(f.get("number"), 60) if "number" in f else (d.get("number") or ""),
+               "doc_date": _day(f.get("doc_date"), "Дата документа") if "doc_date" in f else (d.get("doc_date") or ""),
+               "valid_until": _day(f.get("valid_until"), "Срок действия") if "valid_until" in f else (d.get("valid_until") or ""),
+               "counterparty": _clean(f.get("counterparty"), 200) if "counterparty" in f else (d.get("counterparty") or "")}
+        if new["doc_date"] and new["valid_until"] and new["valid_until"] < new["doc_date"]:
+            raise ValueError("Срок действия раньше даты документа")
+        ch = [{"t": t, "old": _fmt_val(d.get(k), kind), "new": _fmt_val(new[k], kind)} for k, t, kind in self._DOC_FIELDS
+              if str(d.get(k) or "") != str(new[k] or "")]
+        if not ch:
+            return d["id"]
+        with self.db.tx() as c:
+            c.execute("""UPDATE equipment_docs SET title=?, kind=?, number=?, doc_date=?, valid_until=?, counterparty=?, updated_at=? WHERE id=?""",
+                      (new["title"], new["kind"], new["number"], new["doc_date"], new["valid_until"], new["counterparty"], _now(), d["id"]))
+            self._ev(c, d["equipment_id"], "doc", f"Документ изменён: {EQ_DOC_KINDS.get(new['kind'], new['kind'])} — {new['title']}", user,
+                     data={"module": "Документы", "doc": d["id"], "action": "Изменение документа", "changes": ch})
+        return d["id"]
+
+    def equipment_doc_archive(self, ids, on=True, user=""):
+        """3.16 «В архив» (one document or the ticked ones) and back; an archived document leaves the counts of «действующие»."""
+        ids = [str(x) for x in (ids if isinstance(ids, list) else [ids]) if x][:500]
+        rows = [r for r in (self.db.one("SELECT * FROM equipment_docs WHERE id=? AND deleted=0", (i,)) for i in ids) if r and r["kind"] != "photo"]
+        if not rows:
+            raise ValueError("Документ не найден")
+        n = 0
+        with self.db.tx() as c:
+            for d in rows:
+                if bool(d.get("archived")) == bool(on):
+                    continue
+                c.execute("UPDATE equipment_docs SET archived=?, updated_at=? WHERE id=?", (1 if on else 0, _now(), d["id"]))
+                self._ev(c, d["equipment_id"], "doc", f"{'В архив' if on else 'Из архива'}: {EQ_DOC_KINDS.get(d['kind'], d['kind'])} — {d['title']}", user,
+                         data={"module": "Документы", "doc": d["id"], "action": "Документ в архив" if on else "Документ из архива",
+                               "changes": [{"t": "Статус", "old": "В архиве" if not on else "Действует", "new": "В архиве" if on else "Действует"}]})
+                n += 1
+        return n
 
     # ------------------------------------------------------ 3.15: «Аналитика» --
     _VISIT_OFF = re.compile(r"отмен|cancel|удал|не\s*приш|неявк|no.?show", re.I)
