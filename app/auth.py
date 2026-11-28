@@ -361,6 +361,7 @@ METHOD_PERMS = {
     "equipment_ref_save": "equipment", "equipment_module_save": "equipment", "equipment_place_chair": "equipment", "equipment_refs_export": ("equipment", "equipment_approve"),
     "equipment_refs_import": "equipment", "equipment_due": ("equipment", "stock_view", "equipment_approve", "stock_ops"),
     "equipment_rights": ("staff", "equipment_approve"), "equipment_integrations": ("equipment", "equipment_approve", "settings"),
+    "equipment_doc_save": "equipment", "equipment_doc_archive": "equipment",
     # 3.14: the material card by the mockup — its quick fields, label, documents, analogs and the orders to suppliers
     "material_set": "stock_edit", "material_qr": ("stock_view", "stock_edit", "stock_ops"),
     "material_label": ("stock_edit", "stock_ops"), "material_doc_add": ("stock_edit", "stock_ops"), "material_doc_delete": "stock_edit",
@@ -494,6 +495,7 @@ AUDITED = {
     "equipment_refs_save": "Оборудование: категории и нормативы",
     "equipment_ref_save": "Оборудование: справочник", "equipment_module_save": "Оборудование: настройки модуля",
     "equipment_place_chair": "Оборудование: кресло кабинета",
+    "equipment_doc_save": "Документ оборудования изменён", "equipment_doc_archive": "Документ оборудования: архив",
     "equipment_refs_import": "Оборудование: импорт справочников",
     "equipment_receipt_save": "Поступление оборудования", "equipment_receipt_accept": "Оборудование введено в эксплуатацию",
     "equipment_receipt_cancel": "Поступление оборудования отменено", "equipment_move_save": "Перемещение оборудования",

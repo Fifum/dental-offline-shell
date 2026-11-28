@@ -182,8 +182,138 @@ for part in ("Справочники оборудования", "Быстрые 
              "Настройки системы", "Пользователи и права", "Интеграции", "Журнал изменений"):
     check(f"UI: {part}", part in sec)
 
-if __name__ == "__main__" and "--block1" in sys.argv:
-    print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
-    for f in FAIL:
-        print("  FAIL", f)
-    sys.exit(1 if FAIL else 0)
+# ================================================ block 2: «Журнал действий» --
+lg = a.equipment_log({"from": day(0), "to": day(0)})
+check("the log of today", lg["rows"] and all(x["at"][:10] == day(0) for x in lg["rows"]))
+check("tiles", lg["tiles"]["total"] == len(lg["rows"]) and lg["tiles"]["users"] >= 1 and lg["tiles"]["today"] >= lg["tiles"]["total"])
+ed = next(x for x in lg["rows"] if x["action"] == "edit" and x["equipment_id"] == eid)
+check("an edit: the action, the module, the cabinet, the changes", ed["action_title"] == "Редактирование" and ed["module"] == "Оборудование"
+      and ed["changes"] and ed["object"] == "Установка Sirona C8" and ed["inv_number"] == "СТ-001", ed)
+check("the suspicious edit", ed["suspicious"] and lg["tiles"]["suspicious"] >= 1)
+check("only the suspicious", all(x["suspicious"] for x in a.equipment_log({"from": day(0), "suspicious": True})["rows"]))
+st = next(x for x in lg["rows"] if x["kind"] == "settings")
+check("a change of the settings: its object and module", st["object"] and st["module"] in ("Настройки", "Справочники") and st["equipment_id"] == "")
+check("filters: user, action, object, module", all(x["user_name"] == "Ковалев А.В." for x in a.equipment_log({"user": "Ковалев А.В."})["rows"])
+      and all(x["action_title"] == "Редактирование" for x in a.equipment_log({"action": "Редактирование"})["rows"])
+      and all(x["equipment_id"] == eid for x in a.equipment_log({"object": eid})["rows"])
+      and all(x["module"] == "Обслуживание" for x in a.equipment_log({"module": "Обслуживание"})["rows"]))
+check("lists of the filters", {"users", "actions", "objects", "modules", "places"} <= set(lg["lists"]) and any(o["id"] == eid for o in lg["lists"]["objects"]))
+hidden = S.eq_log({"object": eid}, money=False)
+ch = [c for x in hidden["rows"] for c in x["changes"] if c.get("m")]
+check("without «Бухгалтерия» the sums are hidden", ch and all(c["old"] == "скрыто" and c["new"] == "скрыто" for c in ch) and all(not x["cost"] for x in hidden["rows"]))
+rq_ = next(x for x in a.equipment_log({"object": eid})["rows"] if x["kind"] == "service")
+check("the checklist of a work in the log", rq_["checklist"] and rq_["module"] == "Обслуживание")
+pid_ = a.equipment_purchase_save({"name": "Новый автоклав", "budget": 500000, "year": date.today().year + 1, "quarter": 1, "justification": "Старый изношен"})
+a.equipment_purchase_status(pid_, "send")
+pu = [x for x in a.equipment_log({"module": "Планирование"})["rows"] if x["kind"] == "purchase"]
+check("the purchase plan in the log", len(pu) >= 2 and any(x["action_title"] == "Создание" and "План закупок" in x["object"] for x in pu)
+      and any(x["action_title"] == "На согласование" for x in pu), pu[:2])
+ev_ = d.one("SELECT id FROM equipment_events WHERE equipment_id=? ORDER BY id DESC", (eid,))["id"]
+d.conn.execute("UPDATE equipment_events SET created_at=? WHERE id=?", (day(0) + " 23:40:00", ev_)); d.conn.commit()
+check("an action at night is suspicious", "ночью" in next(x for x in a.equipment_log({"object": eid})["rows"] if x["id"] == ev_)["suspicious"])
+old_card = {"ownership": None, "accounting": None, "qty": None, "name": "x"}
+check("an empty column of an old card is not a change", stockm.eq_changes(old_card, {"ownership": "own", "accounting": "amort", "qty": 1, "name": "x"}) == [])
+for part in ("Журнал действий", "Детали действия", "История изменений по объекту", "Подозрительных действий", "Активных пользователей"):
+    check(f"UI log: {part}", part in sec)
+
+# ================================================ block 3: «Аналитика и отчёты» --
+y = date.today().year
+# a chair of Dentist Plus in the cabinet: its appointments are the runtime of the piece there
+lid = S.save_location({"name": "Кабинет 316", "kind": "cabinet"})
+a.equipment_place_chair(lid, "Кресло 9")
+eff_id = a.save_equipment({"name": "Микроскоп Leica", "category": "Диагностическое оборудование", "location_id": lid, "price": 600000,
+                           "useful_months": 60, "in_service": f"{y - 1}-06-01"})
+d.conn.execute("DELETE FROM visits_archive")
+base = date.today() - timedelta(days=3)
+for i, (ch, st, en, status) in enumerate([("Кресло 9", "09:00", "10:30", "Завершён"), ("Кресло 9", "10:00", "11:00", "Завершён"),  # overlap → 2 h
+                                          ("Кресло 9", "12:00", "13:00", "Отменён"), ("Кресло 1", "14:00", "16:00", "Завершён")]):
+    d.conn.execute("""INSERT INTO visits_archive(id, start, "end", chair, status) VALUES(?,?,?,?,?)""",
+                   (f"va{i}", f"{base} {st}", f"{base} {en}", ch, status))
+d.conn.commit()
+chairs, clinic = S._visit_hours(y)
+check("the hours of a chair: overlaps once, cancelled not", abs(chairs["Кресло 9"][base.isoformat()] - 2.0) < 1e-9, chairs)
+check("the clinic's hours: the union of every chair", abs(clinic[base.isoformat()] - 4.0) < 1e-9, clinic)
+rid_ = a.equipment_request_save({"equipment_id": eff_id, "kind": "repair", "description": "Не включается"})
+a.equipment_request_status(rid_, "work")
+d.conn.execute("UPDATE equipment_requests SET started_at=? WHERE id=?", (f"{date.today() - timedelta(days=1)} 09:00:00", rid_)); d.conn.commit()
+an = a.equipment_analytics(y)
+row = next(x for x in an["efficiency"] if x["id"] == eff_id)
+per_day = S.chair_hours() * 12 / 365
+check("runtime from the chair of the cabinet", row["chair"] == "Кресло 9" and row["hours"] == 2.0, row)
+check("downtime: the days of a request in work", abs(row["downtime"] - round(2 * per_day, 1)) < 0.11, row)
+check("the norm from the first day with appointments", abs(row["norm"] - round(4 * per_day, 1)) < 0.11 and an["eff_info"]["data_from"] == base.isoformat(), row)
+check("the load against the norm less the downtime", row["load"] == round(2.0 * 100 / (row["norm"] - row["downtime"]), 1), row)
+common = next(x for x in an["efficiency"] if x["chair"] == "" and x["status"] != "written_off")
+check("the common equipment takes the clinic's hours", common["hours"] == 4.0 and common["source"] == "клиника", common)
+check("money: the cost of an hour", "hour_cost" in row and row["amort"] > 0 and row["hour_cost"] == round((row["cost"] + row["amort"]) / row["hours"], 2))
+check("tiles against the year before", an["count"] >= 1 and "count_prev" in an and {"cost", "residual", "accumulated", "wear", "growth"} <= set(an["money"]))
+check("residual = cost − accumulated", abs(an["money"]["residual"] - (an["money"]["cost"] - an["money"]["accumulated"])) < 0.02)
+check("dynamics by month up to now", len(an["dynamics"]) == date.today().month and all(abs(m["residual"] - (m["cost"] - m["accumulated"])) < 0.02 for m in an["dynamics"]))
+check("the share of the categories and the condition", an["cat_share"] and set(an["condition"]) == {"ok", "service", "faulty"})
+check("the conclusions are rules", an["conclusions"] and any("износа" in c["text"] for c in an["conclusions"])
+      and any("требу" in c["text"] and "ремонт" in c["text"] for c in an["conclusions"]))
+a.save_equipment({"id": eff_id, "name": "Микроскоп Leica", "category": "Диагностическое оборудование", "location_id": lid, "price": 600000,
+                  "useful_months": 18, "in_service": f"{y - 1}-06-01"})
+an = a.equipment_analytics(y)
+check("what to renew next year", any(x["id"] == eff_id for x in an["renew"]) and any("обновить" in c["text"] for c in an["conclusions"]))
+S.eq_plan_save({"equipment_id": eff_id, "kind": "service", "every_months": 6, "next_date": ahead(10)})
+an = a.equipment_analytics(y)
+check("the nearest events by kind", any(x["kind"] == "service" and x["count"] >= 1 for x in an["events"]))
+nm = S.eq_analytics(y, money=False)
+check("without «Бухгалтерия» no money in the analytics", "money" not in nm and "dynamics" not in nm and "keep" not in nm
+      and all("cost" not in x and "hour_cost" not in x for x in nm["efficiency"]) and all("cost" not in x for x in nm["cat_share"]))
+for part in ("Динамика стоимости и амортизации", "Распределение по категориям", "Статус оборудования", "Топ затрат на обслуживание и ремонт",
+             "Ближайшие события", "Ключевые выводы", "Эффективность использования оборудования", "Сформировать отчёт",
+             "Инвентаризационная ведомость", "Управленческий отчёт (сводный)"):
+    check(f"UI analytics: {part}", part in sec)
+
+# ================================================ block 4: «Документы» --
+PDF = "data:application/pdf;base64,JVBERi0xLjQKJSVFT0YK"
+PNG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+check("new kinds of documents", {"cert", "license", "report", "manual", "lease_contract", "service_contract"} <= set(stockm.EQ_DOC_KINDS)
+      and "photo" in stockm.EQ_DOC_KINDS and len(stockm.EQ_DOC_MAIN) == 8)
+a.equipment_doc_add(eid, "contract", "Договор.pdf", PDF, "Договор поставки",
+                    {"number": "ДП-056/26", "doc_date": day(7), "valid_until": ahead(400), "counterparty": "ООО «МедОборудование»"})
+a.equipment_doc_add(eid, "cert", "Сертификат.pdf", PDF, "Сертификат соответствия", {"doc_date": day(500), "valid_until": ahead(10)})
+a.equipment_doc_add(eid, "warranty", "Гарантия.pdf", PDF, "Гарантийный талон", {"valid_until": day(3)})
+a.equipment_doc_add(eid, "photo", "Фото.png", PNG)
+refuses("a term before the date", lambda: a.equipment_doc_add(eid, "act", "Акт.pdf", PDF, "Акт", {"doc_date": day(1), "valid_until": day(10)}), "раньше")
+refuses("a wrong date", lambda: a.equipment_doc_add(eid, "act", "Акт.pdf", PDF, "Акт", {"doc_date": "32.13.2026"}), "Дата документа")
+check("a refused document is not stored", not d.one("SELECT 1 AS x FROM equipment_docs WHERE equipment_id=? AND title='Акт'", (eid,)))
+dd = a.equipment_all_docs()
+mine = {x["title"]: x for x in dd["docs"] if x["equipment_id"] == eid}
+check("the photos stay in the gallery", not any(x["kind"] == "photo" for x in dd["docs"]) and "photo" not in dd["kinds"])
+c_ = mine["Договор поставки"]
+check("the number, date, term and counterparty", c_["number"] == "ДП-056/26" and c_["doc_date"] == day(7) and c_["counterparty"] == "ООО «МедОборудование»"
+      and c_["status"] == "active" and c_["cat"] == "contracts" and c_["cat_title"] == "Договоры")
+check("soon expires", mine["Сертификат соответствия"]["status"] == "soon" and mine["Сертификат соответствия"]["cat"] == "certs")
+check("expired", mine["Гарантийный талон"]["status"] == "expired" and mine["Гарантийный талон"]["status_title"] == "Просрочен")
+check("tiles", dd["tiles"]["total"] == len(dd["docs"]) and dd["tiles"]["soon"] >= 1 and dd["tiles"]["expired"] >= 1
+      and sum(dd["tiles"][k] for k in ("active", "soon", "expired", "archived")) == dd["tiles"]["total"])
+check("categories", [c["key"] for c in dd["cats"]] == list(stockm.EQ_DOC_CATS) and sum(c["count"] for c in dd["cats"]) == len(dd["docs"]))
+did = c_["id"]
+a.equipment_doc_save(did, {"number": "ДП-057/26", "counterparty": "ООО «Дентал»", "valid_until": ahead(30)})
+ev = d.one("SELECT * FROM equipment_events WHERE equipment_id=? AND kind='doc' ORDER BY id DESC", (eid,))
+chs = {x["t"]: x for x in json.loads(ev["data"])["changes"]}
+check("an edit of a document is in the log", chs["Номер"]["old"] == "ДП-056/26" and chs["Номер"]["new"] == "ДП-057/26" and "Контрагент" in chs)
+check("…and its status follows the term", next(x for x in a.equipment_all_docs()["docs"] if x["id"] == did)["status"] == "soon")
+refuses("a photo is not edited here", lambda: a.equipment_doc_save(d.one("SELECT id FROM equipment_docs WHERE equipment_id=? AND kind='photo'", (eid,))["id"], {"title": "x"}), "галерее")
+n = a.equipment_doc_archive([did, mine["Гарантийный талон"]["id"]], True)
+dd = a.equipment_all_docs()
+check("to the archive", n == 2 and next(x for x in dd["docs"] if x["id"] == did)["status"] == "archived" and dd["tiles"]["archived"] >= 2)
+check("an archived contract is missing", any(m["id"] == eid and "Договор купли-продажи" in m["lack"] for m in dd["missing"]))
+check("archiving twice changes nothing", a.equipment_doc_archive([did], True) == 0)
+a.equipment_doc_archive([did], False)
+check("back from the archive", next(x for x in a.equipment_all_docs()["docs"] if x["id"] == did)["status"] != "archived")
+check("the archive is in the log", any(x["action_title"] in ("Документ в архив", "Документ из архива") for x in a.equipment_log({"object": eid})["rows"]))
+check("the replica takes the new columns of a document", {"number", "doc_date", "valid_until", "counterparty", "archived"} <= set(replica.CATCHUP_COLS["equipment_docs"]))
+for k_ in ("equipment_doc_save", "equipment_doc_archive"):
+    check(f"{k_} has a right and is audited", k_ in auth.METHOD_PERMS and k_ in auth.AUDITED)
+for part in ("Категории документов", "Добавить документ", "Шаблоны", "Скоро истекают", "Просроченные", "В архиве", "Информация о документе",
+             "Просмотр", "Скачать", "Редактировать", "Печать"):
+    check(f"UI docs: {part}", part in sec)
+
+print(f"OK: {OK[0]} FAIL: {len(FAIL)}")
+for f in FAIL:
+    print("  FAIL", f)
+sys.exit(1 if FAIL else 0)

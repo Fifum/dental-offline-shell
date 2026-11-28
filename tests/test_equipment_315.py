@@ -431,6 +431,7 @@ for k_ in ("equipment_all_docs", "equipment_analytics", "equipment_log"):
     check(f"{k_} has a right", k_ in auth.METHOD_PERMS)
 sec = (ROOT / "app" / "ui" / "stock-eqsection.js").read_text(encoding="utf-8")
 js = (ROOT / "app" / "ui" / "stock.js").read_text(encoding="utf-8")
+# 3.16: the analytics follow the mockup 12; the monthly keep, the age of the fleet and the most expensive go to «Управленческий отчёт»
 for part in ("Не хватает документов", "Гарантии", "Стоимость содержания по месяцам", "Возраст парка", "Дороже всего в содержании", "Журнал действий"):
     check(f"UI: {part}", part in sec)
 check("«Ещё» has every section of the mockups", all(t in js for t in ('"eq_purchases"', '"eq_third"', '"disposed"', '"inv"', '"eq_docs"', '"eq_analytics"', '"eq_log"', '"eq_refs"', '"steril"')))
