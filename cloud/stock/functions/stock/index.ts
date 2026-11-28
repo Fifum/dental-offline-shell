@@ -232,9 +232,12 @@ async function keyHashes(f: any): Promise<string[]> {
   return [...new Set(await Promise.all(keys.map((k: string) => sha("DDK" + k))))];
 }
 
+// (the hashes go as one string: hex, no commas — a text[] parameter reaches the database as a bare string)
+const hashArr = (hs: string[]) => hs.join(",");
+
 async function bindKeys(tenant: string, f: any) {
   const hs = await keyHashes(f);
-  if (hs.length) await sql`select dd.bind_keys(${tenant}, ${sql.array(hs)}::text[])`;
+  if (hs.length) await sql`select dd.bind_keys(${tenant}, string_to_array(${hashArr(hs)}::text, ','))`;
 }
 
 async function newLaptop(t: any, f: any) {
@@ -279,7 +282,7 @@ async function register(req: Request, f: any) {
   const demo = !!f.demo;
   const name = clean(f.clinic, 100);
   const reg = async (create: boolean) =>
-    (await sql`select dd.register(${sql.array(hs)}::text[], ${demo ? (name ? "Демо · " + name : "Демо-клиника") : name}, ${demo}, ${create}) as r`)[0].r;
+    (await sql`select dd.register(string_to_array(${hashArr(hs)}::text, ','), ${demo ? (name ? "Демо · " + name : "Демо-клиника") : name}::text, ${demo}::boolean, ${create}::boolean) as r`)[0].r;
   let r = await reg(false);
   if (!r.tenant) {
     if (!f.create) return { tenant: null };
