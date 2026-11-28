@@ -302,21 +302,21 @@ async function loadLocalAi() {
   let st;
   try { st = await api.local_ai_status(); } catch (e) { box.innerHTML = `<div class="warn-line bad">${esc(errText(e))}</div>`; return; }
   const ai = (await api.speech_status()).ai;
-  const busy = st.task, mb = n => n >= 1000 ? (n / 1000).toFixed(1).replace(".", ",") + " ГБ" : n + " МБ";
+  const task = st.task, mb = n => n >= 1000 ? (n / 1000).toFixed(1).replace(".", ",") + " ГБ" : n + " МБ";
   const prog = () => `<div class="vm-bar"><i style="width:${st.progress}%"></i></div><small>${st.progress}%</small>`;
   box.innerHTML = `<div class="la-step">
       <div class="grow"><b>1. Программа ИИ (Ollama)</b><small class="muted">${st.installed ? "установлена в папку программы" : st.external ? "используется Ollama, уже установленная на компьютере" : `скачивается один раз, ≈${mb(st.ollama_mb)}`}</small></div>
-      ${busy === "install" ? `<div class="la-prog">${prog()}</div>` : st.installed || st.external ? '<span class="pill st-ok">готово</span>'
-        : `<button class="btn small" id="laInstall" ${busy ? "disabled" : ""}>Установить</button>`}</div>
+      ${task === "install" ? `<div class="la-prog">${prog()}</div>` : st.installed || st.external ? '<span class="pill st-ok">готово</span>'
+        : `<button class="btn small" id="laInstall" ${task ? "disabled" : ""}>Установить</button>`}</div>
     <div class="la-step"><div class="grow"><b>2. Модель</b><small class="muted">память этого компьютера: ${st.memory_gb ? String(st.memory_gb).replace(".", ",") + " ГБ" : "неизвестно"}</small></div></div>
     <div class="voice-models">${Object.entries(st.models).map(([k, m]) => {
       const used = ai.provider === "local" && ai.model === k && m.ready;
       const low = st.memory_gb && st.memory_gb < m.ram;
       return `<div class="vm ${used ? "on" : ""}">
         <div><b>${esc(m.title)}</b><small class="muted">${esc(m.desc)} · ≈${mb(m.mb)}</small>${low ? `<small class="bad-t">нужно от ${m.ram} ГБ памяти</small>` : ""}</div>
-        ${busy === "pull:" + k ? prog()
+        ${task === "pull:" + k ? prog()
           : m.ready ? (used ? '<span class="pill st-ok">используется</span>' : `<span class="row la-btns"><button class="btn ghost small" data-lause="${k}">Использовать</button><button class="btn ghost small" data-ladel="${k}" title="Удалить модель с компьютера">×</button></span>`)
-          : `<button class="btn ghost small" data-lapull="${k}" ${busy || !(st.installed || st.external) ? "disabled" : ""}>Скачать</button>`}</div>`;
+          : `<button class="btn ghost small" data-lapull="${k}" ${task || !(st.installed || st.external) ? "disabled" : ""}>Скачать</button>`}</div>`;
     }).join("")}</div>
     ${st.error ? `<div class="warn-line bad">${esc(st.error)}</div>` : ""}
     <p class="hint">Файлы лежат в <code>${esc(st.folder)}</code> (папки <code>ollama</code> и <code>models\\ollama</code>) — их можно скопировать на другой компьютер флешкой.</p>`;
@@ -333,6 +333,6 @@ async function loadLocalAi() {
     act(() => api.local_ai_delete(b.dataset.ladel))();
   });
   clearTimeout(localAiPoll);
-  if (busy) { localAiBusy = true; localAiPoll = setTimeout(() => { if (S.view === "settings") loadLocalAi(); }, 1500); }
+  if (task) { localAiBusy = true; localAiPoll = setTimeout(() => { if (S.view === "settings") loadLocalAi(); }, 1500); }
   else if (localAiBusy) { localAiBusy = false; loadVoiceSettings(); }  // a model was just downloaded and switched on
 }

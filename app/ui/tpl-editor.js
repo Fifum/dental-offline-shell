@@ -137,7 +137,7 @@ function editDocTemplate(t) {
 
   // tables
   const ddT = $("#teTable", box);
-  $(".dd-btn", ddT).onclick = e => { e.stopPropagation(); ddT.classList.toggle("open"); };
+  $(".dd-btn", ddT).onclick = e => { e.stopPropagation(); ddToggle(ddT); };
   $$("[data-t]", ddT).forEach(b => b.addEventListener("mousedown", e => e.preventDefault()));
   $$("[data-t]", ddT).forEach(b => b.onclick = async () => {
     ddT.classList.remove("open");

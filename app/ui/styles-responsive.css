@@ -98,3 +98,7 @@
   .topbar{min-height:48px;padding-top:5px;padding-bottom:5px}
   .top{padding-top:8px;padding-bottom:6px}
 }
+
+/* 3.17.2: popup menus are pinned to their button by popOpen() (app.js): fixed to the window, so a scrolling
+   table, a modal's body or a bar of tabs never cuts them, and a closed menu never makes a frame scroll */
+.dd-menu,.eqc-menu,.eqnav-menu,.eqs-perpop,.sn-menu,.rec-dmenu,.user-menu{position:fixed;max-width:calc(100vw - 16px)}

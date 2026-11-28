@@ -161,6 +161,63 @@ async function busy(btn, fn) {
 const reqId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 const money = n => (Math.round((+n || 0) * 100) / 100).toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2}) + " ₽";
 const nowLocal = () => { const d = new Date(); return `${iso(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+/* 3.17.2: a popup menu is pinned to its button, the same way everywhere: under it (over it when there is no room
+   below), by the button's right edge (align "end") or left edge ("start"), turned the other way at the window's edge,
+   never out of the window; it follows the button while the page, a table or a modal scrolls and when the window
+   changes size, and it hides while its button is scrolled out of sight. */
+const POPS = new Map();
+function popPlace(pop, anchor, o = {}) {
+  if (!pop || !anchor || !pop.isConnected || !anchor.isConnected) return;
+  const M = 8, gap = o.gap ?? 6, de = document.documentElement, vw = de.clientWidth, vh = de.clientHeight, s = pop.style;
+  s.position = "fixed"; s.right = s.bottom = "auto"; s.left = s.top = "0px"; s.maxHeight = s.overflowY = ""; s.maxWidth = `${vw - 2 * M}px`;
+  // where a fixed box really starts: the window, or a moved ancestor (a drawer with a transform)
+  const pr = document.createElement("i"); pr.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden";
+  pop.parentNode.insertBefore(pr, pop); const cb = pr.getBoundingClientRect(); pr.remove();
+  const a = anchor.getBoundingClientRect(), w = pop.offsetWidth; let h = pop.offsetHeight;
+  const below = vh - a.bottom - gap - M, above = a.top - gap - M;
+  const up = o.prefer === "up" ? !(h > above && below > above) : h > below && above > below;
+  const room = Math.max(80, up ? above : below);
+  if (h > room) { s.maxHeight = `${room}px`; s.overflowY = "auto"; h = room; }
+  const start = o.align === "start";
+  let left = start ? a.left : a.right - w;
+  if (start && left + w > vw - M) left = a.right - w;  // no room to the right: open to the left
+  if (!start && left < M) left = a.left;               // no room to the left: open to the right
+  left = Math.max(M, Math.min(left, vw - M - w));
+  s.left = `${Math.round(left - cb.left)}px`; s.top = `${Math.round((up ? a.top - gap - h : a.bottom + gap) - cb.top)}px`;
+  s.transformOrigin = `${left + w / 2 < a.left + a.width / 2 ? "right" : "left"} ${up ? "bottom" : "top"}`;
+  pop.classList.toggle("pop-up", up);
+  s.visibility = popAnchorSeen(anchor, a, vh) ? "" : "hidden";
+}
+/** The button is in sight: not scrolled away inside a table, a modal's body or the page. */
+function popAnchorSeen(el, r, vh) {
+  if (!r.width && !r.height) return false;
+  if (r.bottom <= 0 || r.top >= vh) return false;
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const cs = getComputedStyle(p);
+    if (!/auto|scroll|hidden|clip/.test(cs.overflowX + cs.overflowY)) continue;
+    const q = p.getBoundingClientRect();
+    if (r.bottom <= q.top + 2 || r.top >= q.bottom - 2 || r.right <= q.left + 2 || r.left >= q.right - 2) return false;
+  }
+  return true;
+}
+/** Shows a popup by its button and keeps it there. o: {align: "end" | "start", prefer: "up", gap}. */
+function popOpen(pop, anchor, o = {}) {
+  if (!pop || !anchor) return;
+  POPS.set(pop, {anchor, o});
+  popPlace(pop, anchor, o);
+  requestAnimationFrame(() => popPlace(pop, anchor, o));  // after fonts and pictures inside have their size
+}
+const popShown = p => p.isConnected && !p.hidden && p.getClientRects().length > 0 && (!p.closest(".dd") || p.closest(".dd").classList.contains("open"));
+function popsFollow(e) {
+  POPS.forEach(({anchor, o}, pop) => {
+    if (!popShown(pop) || !anchor.isConnected) { POPS.delete(pop); return; }
+    if (e && e.type === "scroll" && e.target !== document && pop.contains(e.target)) return;  // the menu's own list scrolls
+    popPlace(pop, anchor, o);
+  });
+}
+addEventListener("scroll", popsFollow, {capture: true, passive: true});
+addEventListener("resize", popsFollow);
 let REF = null;
 async function ref(force) { if (!REF || force) REF = await api.reference(); return REF; }
 const $ = (s, el = document) => el.querySelector(s);
@@ -538,8 +595,14 @@ function renderList(visits) {
   $$("#list tr[data-id]").forEach(el => el.onclick = () => openVisit(el.dataset.id));
 }
 /* dropdowns */
+/** Opens a «.dd» dropdown (the others close) with its menu pinned to the button, or closes it. */
+function ddToggle(dd, open = !dd.classList.contains("open")) {
+  $$(".dd.open").forEach(x => { if (x !== dd) x.classList.remove("open"); });
+  dd.classList.toggle("open", open);
+  if (open) popOpen($(".dd-menu", dd), $(".dd-btn", dd), {align: dd.classList.contains("right") ? "end" : "start", gap: 4});
+}
 $$(".dd").forEach(dd => {
-  $(".dd-btn", dd).onclick = e => { e.stopPropagation(); const open = dd.classList.contains("open"); $$(".dd.open").forEach(x => x.classList.remove("open")); if (!open) dd.classList.add("open"); };
+  $(".dd-btn", dd).onclick = e => { e.stopPropagation(); ddToggle(dd); };
   $(".dd-menu", dd).addEventListener("click", e => { if (!dd.id.includes("Docs")) dd.classList.remove("open"); e.stopPropagation(); });
 });
 document.addEventListener("click", () => $$(".dd.open").forEach(x => x.classList.remove("open")));
@@ -1145,7 +1208,7 @@ function renderPatient(tab) {
   const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   on("#backBtn", () => show(S.prevView === "schedule" ? "schedule" : "patients"));
   $$("#patientCard .tab").forEach(b => b.onclick = () => renderPatient(b.dataset.t));
-  $$("#patientCard .dd").forEach(dd => { $(".dd-btn", dd).onclick = e => { e.stopPropagation(); const o = dd.classList.contains("open"); $$(".dd.open").forEach(x => x.classList.remove("open")); if (!o) dd.classList.add("open"); }; });
+  $$("#patientCard .dd").forEach(dd => { $(".dd-btn", dd).onclick = e => { e.stopPropagation(); ddToggle(dd); }; });
   const book = () => openBooking({patient_id: p.id, patient_name: p.name, start: `${S.day} ${pad(Math.min(20, new Date().getHours() + 1))}:00`});
   const actions = {visit: book, rec: () => openRecord({...ctx, date: iso(new Date())}), plan: () => openInvoice({...ctx, kind: "plan"}),
     inv: () => openInvoice(ctx), doc: () => openDocPicker(ctx), note: () => renderPatient("notes")};
@@ -1469,7 +1532,7 @@ $$("[data-theme-seg] button").forEach(b => b.onclick = e => { e.stopPropagation(
 $$(".um-theme").forEach(el => el.onclick = e => e.stopPropagation());
 document.addEventListener("dd-theme", syncThemeSeg);
 syncThemeSeg();
-$("#ucBtn").onclick = e => { e.stopPropagation(); $("#ucMenu").hidden = !$("#ucMenu").hidden; };
+$("#ucBtn").onclick = e => { e.stopPropagation(); const m = $("#ucMenu"); m.hidden = !m.hidden; if (!m.hidden) popOpen(m, e.currentTarget, {align: "end"}); };
 document.addEventListener("click", () => { $("#ucMenu").hidden = true; });
 $("#ucOut").onclick = async () => { try { await authApi.logout(); } catch (e) {} ME = null; TOKEN = ""; sessionStorage.removeItem(SESSION_KEY); showLogin(); };
 $("#ucServer").onclick = () => window.pywebview.api.open_setup();

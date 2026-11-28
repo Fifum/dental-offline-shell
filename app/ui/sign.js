@@ -62,11 +62,11 @@ function signHere(o, after) {
       <label class="fl">Кем приходится<select class="input" id="sgRole"><option value="patient">Пациент</option><option value="representative">Законный представитель</option><option value="doctor">Врач</option></select></label></div>
       ${sigPadHtml("sgPad")}<p class="hint">Распишитесь в поле мышью, пером или пальцем (на сенсорном экране).</p></div>
     <div class="m-f"><span class="muted"></span><button class="btn ghost" data-close>Отмена</button><button class="btn" id="sgOk">Подписать</button></div>`);
-  const pad = signaturePad($("#sgPad", box));
-  $("[data-clear]", box).onclick = () => pad.clear();
+  const sigPad = signaturePad($("#sgPad", box));
+  $("[data-clear]", box).onclick = () => sigPad.clear();
   $("#sgOk", box).onclick = async () => {
-    if (pad.isEmpty()) return toast("Распишитесь в поле", true);
-    try { await api.document_sign(o.document_id, $("#sgWho", box).value, pad.toDataURL(), $("#sgRole", box).value); closeModal(); toast("Документ подписан"); if (after) after(); }
+    if (sigPad.isEmpty()) return toast("Распишитесь в поле", true);
+    try { await api.document_sign(o.document_id, $("#sgWho", box).value, sigPad.toDataURL(), $("#sgRole", box).value); closeModal(); toast("Документ подписан"); if (after) after(); }
     catch (e) { toast(errText(e), true); }
   };
 }
@@ -132,14 +132,14 @@ async function openQuestionnaire(p) {
     const x = $(".q-x", r); if (x) { x.hidden = b.dataset.v !== "1"; if (!x.hidden) x.focus(); }
     r.classList.remove("q-miss");
   }));
-  const pad = signaturePad($("#qPad", box));
-  $("[data-clear]", box).onclick = () => pad.clear();
+  const sigPad = signaturePad($("#qPad", box));
+  $("[data-clear]", box).onclick = () => sigPad.clear();
   $("#qOk", box).onclick = async () => {
     const miss = $$(".q-row", box).filter(r => !ans[r.dataset.k]);
     if (miss.length) { miss.forEach(r => r.classList.add("q-miss")); miss[0].scrollIntoView({block: "center"}); return toast("Ответьте на все вопросы", true); }
-    if (pad.isEmpty()) return toast("Пациент должен расписаться", true);
+    if (sigPad.isEmpty()) return toast("Пациент должен расписаться", true);
     $$(".q-row", box).forEach(r => { const x = $(".q-x", r); if (x) ans[r.dataset.k].text = x.value; });
-    try { const r = await api.questionnaire_save(p.id, ans, pad.toDataURL()); closeModal(); toast(`Анкета сохранена${r.alerts.length ? ": " + r.alerts.join("; ") : ""}`); reload(); }
+    try { const r = await api.questionnaire_save(p.id, ans, sigPad.toDataURL()); closeModal(); toast(`Анкета сохранена${r.alerts.length ? ": " + r.alerts.join("; ") : ""}`); reload(); }
     catch (e) { toast(errText(e), true); }
   };
 }

@@ -27,9 +27,9 @@ function eqNavHtml(a) {
 }
 function eqNavWire() {
   const b = $("#eqMoreBtn"), m = $("#eqMoreMenu"); if (!b || !m) return;
-  b.onclick = ev => { ev.stopPropagation(); m.hidden = !m.hidden; if (!m.hidden) setTimeout(() => document.addEventListener("click", () => { m.hidden = true; }, {once: true})); };
+  b.onclick = ev => { ev.stopPropagation(); m.hidden = !m.hidden; if (!m.hidden) popOpen(m, b, {align: "end"}); if (!m.hidden) setTimeout(() => document.addEventListener("click", () => { m.hidden = true; }, {once: true})); };
   const bb = $("#eqBell"), bm = $("#eqBellMenu");
-  if (bb) bb.onclick = ev => { ev.stopPropagation(); bm.hidden = !bm.hidden; if (!bm.hidden) setTimeout(() => document.addEventListener("click", e => { if (!bm.contains(e.target)) bm.hidden = true; }, {once: true})); };
+  if (bb) bb.onclick = ev => { ev.stopPropagation(); bm.hidden = !bm.hidden; if (!bm.hidden) popOpen(bm, bb, {align: "end"}); if (!bm.hidden) setTimeout(() => document.addEventListener("click", e => { if (!bm.contains(e.target)) bm.hidden = true; }, {once: true})); };
   eqBellDraw();
 }
 /** 3.16 «Контроль сроков ТО и уведомления»: the bell of the section — what is overdue and what comes within the set days. */
@@ -1302,7 +1302,7 @@ function eqPeriodHtml(id, f) {
 }
 function eqPeriodWire(id, cb) {
   const b = $("#" + id), pop = $("#" + id + "Pop"); if (!b) return;
-  b.onclick = ev => { ev.stopPropagation(); pop.hidden = !pop.hidden; };
+  b.onclick = ev => { ev.stopPropagation(); pop.hidden = !pop.hidden; if (!pop.hidden) popOpen(pop, b, {align: "end"}); };
   pop.onclick = ev => ev.stopPropagation();
   document.addEventListener("click", () => { pop.hidden = true; }, {once: true});
   const d = new Date(), y = d.getFullYear(), m = d.getMonth();

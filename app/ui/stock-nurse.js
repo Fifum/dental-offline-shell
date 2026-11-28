@@ -230,8 +230,7 @@ function snMoreMenu(btn, m) {
   menu.className = "sn-menu dd-menu";
   menu.innerHTML = items.map(([k, t]) => `<button data-a="${k}">${t}</button>`).join("");
   document.body.appendChild(menu);
-  const r = btn.getBoundingClientRect();
-  menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 8, r.bottom + 4)}px`; menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+  popOpen(menu, btn, {align: "end", gap: 4});
   const close = () => { menu.remove(); document.removeEventListener("mousedown", out, true); };
   const out = e => { if (!menu.contains(e.target)) close(); };
   setTimeout(() => document.addEventListener("mousedown", out, true), 0);

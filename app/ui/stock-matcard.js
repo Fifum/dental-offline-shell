@@ -276,9 +276,9 @@ function mtCodesMenu(btn, m) {
   const old = $(".eqc-menu"); if (old) { old.remove(); return; }
   const menu = document.createElement("div"); menu.className = "eqc-menu mtc-codes-menu";
   menu.innerHTML = `<button data-k="label">Печать наклейки 40 × 30 мм</button><button data-k="qr">Скачать QR-код (PNG)</button>${m.ean ? `<button data-k="ean">Скачать штрихкод (SVG)</button>` : ""}`;
-  btn.parentElement.style.position = "relative"; btn.parentElement.appendChild(menu);
+  btn.parentElement.appendChild(menu); popOpen(menu, btn, {align: "end"});
   const close = () => { menu.remove(); document.removeEventListener("click", out, true); };
-  const out = ev => { if (!menu.contains(ev.target) && ev.target !== btn) close(); };
+  const out = ev => { if (!menu.contains(ev.target) && !btn.contains(ev.target)) close(); };
   setTimeout(() => document.addEventListener("click", out, true));
   $$("[data-k]", menu).forEach(b => b.onclick = () => { close(); mtCodeDownload(m, b.dataset.k); });
 }
@@ -358,9 +358,9 @@ function mtMoreMenu(btn, m) {
   const old = $(".eqc-menu"); if (old) { old.remove(); return; }
   const menu = document.createElement("div"); menu.className = "eqc-menu";
   menu.innerHTML = items.map(([k, t]) => `<button data-m="${k}" class="${k === "del" ? "danger-t" : ""}">${t}</button>`).join("");
-  btn.parentElement.appendChild(menu);
+  btn.parentElement.appendChild(menu); popOpen(menu, btn, {align: "end"});
   const close = () => { menu.remove(); document.removeEventListener("click", out, true); };
-  const out = ev => { if (!menu.contains(ev.target) && ev.target !== btn) close(); };
+  const out = ev => { if (!menu.contains(ev.target) && !btn.contains(ev.target)) close(); };
   setTimeout(() => document.addEventListener("click", out, true));
   $$("[data-m]", menu).forEach(b => b.onclick = async () => { close();
     const k = b.dataset.m;

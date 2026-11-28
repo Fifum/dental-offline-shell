@@ -280,9 +280,7 @@ function recDocMenu(btn, items, pick) {
   m.className = "rec-dmenu";
   m.innerHTML = items.map(([v, t]) => `<button data-v="${esc(v)}">${esc(t)}</button>`).join("");
   document.body.appendChild(m);
-  const r = btn.getBoundingClientRect();
-  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + "px";
-  m.style.top = Math.max(8, r.top - m.offsetHeight - 6) + "px";
+  popOpen(m, btn, {align: "start", prefer: "up"});
   m.onclick = e => { const b = e.target.closest("button"); if (!b) return; m.remove(); pick(b.dataset.v); };
   setTimeout(() => document.addEventListener("click", function h(ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener("click", h); } }), 0);
 }
